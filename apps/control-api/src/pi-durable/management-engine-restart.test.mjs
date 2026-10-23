@@ -246,10 +246,10 @@ test('engine restart after an unknown effect retains one decision and never rese
     // the retained identity re-used the exact decision and made no new call.
     expect(portExecutions).toBe(2)
     expect(counts).toEqual({ calls: 1, issued: 1 })
-    expect(boundaries.slice(0, 3)).toEqual(['admission', 'approval', 'effect'])
+    expect(boundaries.slice(0, 4)).toEqual(['admission', 'approval', 'approval', 'effect'])
     // The restart re-validates current authority but never re-runs the effect
     // boundary or the transport for the retained identity.
-    expect(boundaries.slice(3)).toEqual(['admission', 'approval'])
+    expect(boundaries.slice(4)).toEqual(['admission', 'approval'])
     const reopenedDatabase = new DatabaseSync(databasePath)
     const reopenedStore = new SqlitePiDurableManagementCallStore(reopenedDatabase)
     const retainedAfterRestart = await reopenedStore.get(identityKey)
