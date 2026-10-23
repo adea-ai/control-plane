@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.107.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.106.12...workspace-v1.107.0) (2026-10-23)
+
+
+### Features
+
+* **context:** qualify decision context consumers ([#558](https://github.com/adea-ai/control-plane/issues/558)) ([#1218](https://github.com/adea-ai/control-plane/issues/1218)) ([77b93eb](https://github.com/adea-ai/control-plane/commit/77b93eb77603b462a01094b6916479318c844018))
+
 ## [1.106.12](https://github.com/adea-ai/control-plane/compare/workspace-v1.106.11...workspace-v1.106.12) (2026-10-23)
 
 
