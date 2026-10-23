@@ -214,6 +214,7 @@ test('qualified readers reproduce the independently pinned historical bytes with
     { bun: '1.4.3', icu: '78.1' },
     { bun: '1.4.3', icu: '78.3' },
     { bun: '1.4.4', icu: '78.3' },
+    { bun: '1.4.4', icu: '78.1' },
   ]).toContainEqual({ bun: process.versions.bun, icu: process.versions.icu })
   for (const [locale, receipts] of [
     ['en-US', historicalLocaleReceiptBytes.enUS],
@@ -244,7 +245,6 @@ test('unknown Bun and ICU tuples reject legacy receipts while preserving code-po
   for (const runtime of [
     { bun: '1.4.5', icu: '78.3' },
     { bun: '1.4.4', icu: '78.4' },
-    { bun: '1.4.4', icu: '78.1' },
     { bun: '1.4.3', icu: '79.0' },
     { bun: undefined, icu: '78.3' },
   ]) {
@@ -877,7 +877,6 @@ describe('policy-controlled durable tool execution', () => {
       { bun: '1.4.3', icu: '78.4' },
       { bun: '1.4.2', icu: '79.0' },
       { bun: '1.4.3', icu: '79.0' },
-      { bun: '1.4.4', icu: '78.1' },
       { bun: undefined, icu: '78.1' },
     ]) {
       await assertUnqualifiedLegacyLocaleRuntime(runtimeVersions)

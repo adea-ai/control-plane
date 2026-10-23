@@ -205,6 +205,68 @@ describe('SQLite standalone durability repositories', () => {
     })
   })
 
+  test('orders equal-time pending graph events before limiting and after reopen', async () => {
+    await withReopen(
+      async ({ current, reopened }) => {
+        const repository = new SqliteExecutionEventRepository(current())
+        const service = new ExecutionEventService(repository)
+        // Reverse storage-key order deliberately disagrees with append order.
+        const eventIds = ['V', 'W', 'X', 'Y'].map(
+          (suffix) => `evt_01ARZ3NDEKTSV4RRFFQ69G5FA${suffix}`
+        )
+        const storageKey = (id) => createHash('sha256').update(id).digest('hex')
+        eventIds.sort((left, right) => (storageKey(left) < storageKey(right) ? 1 : -1))
+        const types = [
+          'graph.started',
+          'graph.node_started',
+          'graph.node_completed',
+          'graph.completed',
+        ]
+        const events = []
+        for (const [index, type] of types.entries()) {
+          events.push(await service.append({ ...eventDraft(eventIds[index]), type }))
+        }
+        const dueAt = '2026-08-30T12:10:00.000Z'
+        events[2] = await service.recordPublicationFailure({
+          eventId: events[2].eventId,
+          expectedPublicationVersion: 1,
+          attemptedAt: now,
+          nextAttemptAt: dueAt,
+          errorReference: 'delivery://agent-hq/unavailable',
+        })
+        const published = await service.append(eventDraft('evt_01BRZ3NDEKTSV4RRFFQ69G5FAV'))
+        await service.markPublished({
+          eventId: published.eventId,
+          expectedPublicationVersion: 1,
+          publishedAt: now,
+        })
+        const archived = await service.append(eventDraft('evt_01CRZ3NDEKTSV4RRFFQ69G5FAV'))
+        await repository.archive(archived.eventId, '2100-01-01T00:00:00.000Z')
+        const deferred = await service.append(eventDraft('evt_01DRZ3NDEKTSV4RRFFQ69G5FAV'))
+        await service.recordPublicationFailure({
+          eventId: deferred.eventId,
+          expectedPublicationVersion: 1,
+          attemptedAt: now,
+          nextAttemptAt: '2026-08-30T12:11:00.000Z',
+          errorReference: 'delivery://agent-hq/unavailable',
+        })
+        const assertPending = async (pending) => {
+          expect(await pending.queryPending(20, dueAt)).toEqual(events)
+          expect((await pending.queryPending(20, dueAt)).map(({ type }) => type)).toEqual(types)
+          expect((await pending.queryPending(20, dueAt)).map(({ sequence }) => sequence)).toEqual([
+            1, 2, 3, 4,
+          ])
+          expect(await pending.queryPending(2, dueAt)).toEqual(events.slice(0, 2))
+          expect(await pending.queryPending(20, now)).toEqual([events[0], events[1], events[3]])
+        }
+        await assertPending(repository)
+        await reopened()
+        await assertPending(new SqliteExecutionEventRepository(current()))
+      },
+      { now: () => new Date(now) }
+    )
+  })
+
   test('round-trips event sensitivity metadata and keeps legacy events valid', async () => {
     await withReopen(async ({ current, reopened }) => {
       const repository = new SqliteExecutionEventRepository(current())
@@ -488,17 +550,17 @@ function fencedEffectSink(provider, calls = []) {
   )
 }
 
-async function withReopen(run) {
+async function withReopen(run, options = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'control-plane-sqlite-durability-'))
   const path = join(directory, 'control-plane.sqlite')
-  let provider = new SqlitePersistenceProvider({ path })
+  let provider = new SqlitePersistenceProvider({ path, ...options })
   try {
     await provider.migrate()
     await run({
       current: () => provider,
       reopened: async () => {
         provider.close()
-        provider = new SqlitePersistenceProvider({ path })
+        provider = new SqlitePersistenceProvider({ path, ...options })
         await provider.migrate()
       },
     })
