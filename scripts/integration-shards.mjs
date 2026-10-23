@@ -79,6 +79,7 @@ export const INTEGRATION_SHARDS = [
           'src/retention-hold-activation.integration.test.mjs',
           'src/retention-ancestry.integration.test.mjs',
           'src/operations-measurements.integration.test.mjs',
+          'src/project-state-digest-postgres.integration.test.mjs',
         ],
       },
     ],
