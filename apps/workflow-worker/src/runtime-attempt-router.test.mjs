@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test'
+import { RuntimeConnectionDiscoveryReadModelSchema } from '@control-plane/contracts'
 import { createExecutionPlanTestFixture } from '@control-plane/execution-plan/testing'
 import { RuntimeDiscoveryAttemptRouter } from './index.js'
 
@@ -368,6 +369,74 @@ describe('no implicit cloud rerouting (TDD-A377)', () => {
     }
   })
 
+  test('every fixture connection satisfies the runtime discovery schema', () => {
+    const fixtures = [
+      localDevice(),
+      offlineLocalDevice(),
+      revokedLocalDevice(),
+      remoteHostDevice(),
+      offlineRemoteHostDevice(),
+      revokedRemoteHostDevice(),
+      cloudRuntime(),
+    ]
+    for (const fixture of fixtures) {
+      expect(RuntimeConnectionDiscoveryReadModelSchema.safeParse(fixture).success).toBe(true)
+    }
+    expect(remoteHostDevice()).toMatchObject({
+      location: 'local_device',
+      node: { location: 'remote_host' },
+    })
+  })
+
+  test('an offline or revoked remote_host that matches the harness pin still blocks cloud', async () => {
+    const plan = createExecutionPlanTestFixture()
+    for (const remoteHost of [offlineRemoteHostDevice(), revokedRemoteHostDevice()]) {
+      const router = new RuntimeDiscoveryAttemptRouter({
+        discovery: { listRuntimeConnections: async () => [remoteHost, cloudRuntime()] },
+        now: () => '2026-08-28T12:00:00.000Z',
+        pinnedHarnessId: 'pi',
+      })
+
+      await expect(
+        router.resolve({ execution: execution(plan), executionPlan: plan })
+      ).rejects.toThrow('WORKFLOW_RUNTIME_REMOTE_HOST_UNAVAILABLE_NO_FALLBACK')
+    }
+  })
+
+  test('an offline or revoked remote_host with a different harness family does not block cloud', async () => {
+    const plan = createExecutionPlanTestFixture({ runtimeFamilies: ['pi', 'managed-pi'] })
+    const cloud = cloudRuntime()
+    for (const remoteHost of [
+      offlineRemoteHostDevice({ family: 'managed-pi' }),
+      revokedRemoteHostDevice({ family: 'managed-pi' }),
+    ]) {
+      const router = new RuntimeDiscoveryAttemptRouter({
+        discovery: { listRuntimeConnections: async () => [remoteHost, cloud] },
+        now: () => '2026-08-28T12:00:00.000Z',
+        pinnedHarnessId: 'pi',
+      })
+
+      const selected = await router.resolve({ execution: execution(plan), executionPlan: plan })
+
+      expect(selected.runtimeConnectionId).toBe(cloud.runtimeConnectionId)
+    }
+  })
+
+  test('an offline or revoked local device that matches the harness pin still blocks cloud', async () => {
+    const plan = createExecutionPlanTestFixture()
+    for (const local of [offlineLocalDevice(), revokedLocalDevice()]) {
+      const router = new RuntimeDiscoveryAttemptRouter({
+        discovery: { listRuntimeConnections: async () => [local, cloudRuntime()] },
+        now: () => '2026-08-28T12:00:00.000Z',
+        pinnedHarnessId: 'pi',
+      })
+
+      await expect(
+        router.resolve({ execution: execution(plan), executionPlan: plan })
+      ).rejects.toThrow('WORKFLOW_RUNTIME_LOCAL_UNAVAILABLE_NO_FALLBACK')
+    }
+  })
+
   test('an offline local device with no remote alternative stays unavailable', async () => {
     const plan = createExecutionPlanTestFixture()
     const router = new RuntimeDiscoveryAttemptRouter({
@@ -540,8 +609,10 @@ function revokedLocalDevice() {
 }
 
 function remoteHostDevice(overrides = {}) {
+  // Discovery locations are local_device | agent_hq_cloud; an enrolled remote host is a
+  // local_device connection whose node location is remote_host.
   return runtimeConnection('rtc_01JABCDEF0123456789ABCDEFC', {
-    location: 'remote_host',
+    location: 'local_device',
     node: runtimeNode({ location: 'remote_host' }),
     ...overrides,
   })
@@ -556,12 +627,13 @@ function offlineRemoteHostDevice(overrides = {}) {
   })
 }
 
-function revokedRemoteHostDevice() {
+function revokedRemoteHostDevice(overrides = {}) {
   return remoteHostDevice({
     status: 'revoked',
     node: runtimeNode({ location: 'remote_host', status: 'revoked', health: 'revoked' }),
     connection: { status: 'revoked', health: 'unavailable', availability: 'revoked' },
     compatibility: { state: 'revoked', limitations: [] },
+    ...overrides,
   })
 }
 

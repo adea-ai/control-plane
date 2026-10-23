@@ -218,6 +218,16 @@ function harnessIdsOf(connection: RuntimeConnectionDiscoveryReadModel): readonly
   return availableRuntimesFromDiscovery([connection])[0]?.harnessIds ?? []
 }
 
+/**
+ * The harness identity a connection would expose if it were available. The discovery family is the
+ * harness id (see availableRuntimesFromDiscovery), but that mapper drops unavailable and revoked
+ * records, so it cannot answer whether an offline or revoked connection matches a pin. Matching is
+ * still exact family identity; only the availability filter is left out.
+ */
+function staticHarnessIdsOf(connection: RuntimeConnectionDiscoveryReadModel): readonly string[] {
+  return [connection.family]
+}
+
 function isEnrolledRemoteHost(connection: RuntimeConnectionDiscoveryReadModel): boolean {
   return connection.node?.location === 'remote_host'
 }
@@ -255,7 +265,7 @@ function canRuntimeServePlanIfAvailable(
   return (
     locationAllowed(connection, plan.constraints.runtime.allowedLocations) &&
     runtimeFamilyAllowed(connection.family, plan.constraints.runtime.allowedFamilies) &&
-    (pinnedHarnessId === undefined || harnessIdsOf(connection).includes(pinnedHarnessId)) &&
+    (pinnedHarnessId === undefined || staticHarnessIdsOf(connection).includes(pinnedHarnessId)) &&
     connection.access.entitlement.state !== 'denied' &&
     !['incompatible', 'capability_missing'].includes(connection.compatibility.state) &&
     capabilityDecisionOf(connection, plan).eligible
