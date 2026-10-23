@@ -19,6 +19,11 @@ import {
   integrationFileArguments,
   selectIntegrationShard,
 } from '../scripts/integration-shards.mjs'
+import {
+  describePostgresProbeFailure,
+  isProbeTimeout,
+  POSTGRES_RECOVERY_CEILING_SECONDS,
+} from '../scripts/postgres-probe-diagnostics.mjs'
 
 const repository = fileURLToPath(new URL('..', import.meta.url))
 const runner = join(repository, 'scripts/run-integration-tests.mjs')
@@ -542,6 +547,10 @@ for (const script of ['run-integration-tests.mjs', 'run-postgres-disruption-dril
       Date: { now: () => (clockReads++ === 0 ? 0 : now) },
       process: { cwd: () => repository },
       runnerEnvironment: {},
+      POSTGRES_RECOVERY_CEILING_SECONDS,
+      describePostgresProbeFailure,
+      isProbeTimeout,
+      readContainerState: () => '',
       spawnSync: (_command, _args, options) => {
         timeouts.push(options.timeout)
         now += options.timeout ?? 5000
