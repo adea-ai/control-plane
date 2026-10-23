@@ -124,6 +124,14 @@ function trackedBuffer(options) {
       for (const packet of packets) verify(packet)
       return packets
     },
+    deferUndelivered(packet) {
+      buffer.deferUndelivered(packet)
+    },
+    sealDeferred() {
+      const packet = buffer.sealDeferred()
+      if (packet) verify(packet)
+      return packet
+    },
     stats() {
       return buffer.stats()
     },
@@ -1716,6 +1724,182 @@ describe('bounded lead delivery backlog', () => {
     expect(packet).toBeDefined()
     expect(packet.childSnapshots).toHaveLength(1)
     expect(packet.childSnapshots[0].observedEventCount).toBe(3)
+  })
+})
+
+describe('child snapshots refused under packet pressure', () => {
+  const childA = { delegationId: ids.delegationIdA, childExecutionId: ids.childExecutionIdA }
+  const childB = { delegationId: ids.delegationIdB, childExecutionId: ids.childExecutionIdB }
+  const childEvent = (child, overrides = {}) =>
+    runningEvent({
+      delegationId: child.delegationId,
+      childExecutionId: child.childExecutionId,
+      ...overrides,
+    })
+  const humanInput = (offsetMs) => ({
+    interactionId: ids.interactionId,
+    kind: 'input',
+    receivedAt: at(offsetMs),
+  })
+  const snapshotsOf = (deliveries) =>
+    deliveries.flatMap((delivery) =>
+      delivery.kind === 'evidence' ? delivery.packet.childSnapshots : []
+    )
+
+  test('the latest snapshot of a child sealed away by child-count pressure is redelivered after the lead drains', () => {
+    const dispatcher = new ChildProgressLeadDispatcher({
+      buffer: trackedBuffer({ parentExecutionId: ids.parentExecutionId, maximumChildren: 1 }),
+      maximumCoalescedEventsPerDelivery: 128,
+      maximumPendingDeliveries: 1,
+    })
+    dispatcher.acceptHumanInput(humanInput(0))
+    dispatcher.acceptProgress(childEvent(childA, { observedAt: at(1) }))
+    dispatcher.acceptProgress(childEvent(childA, { observedAt: at(2) }))
+    // B takes the only child slot: A's window is sealed under pressure, and the
+    // full backlog refuses that routine delivery.
+    dispatcher.acceptProgress(childEvent(childB, { observedAt: at(3) }))
+    expect(dispatcher.stats().refusedRoutineDeliveryCount).toBe(1)
+
+    const first = dispatcher.takeDeliveries()
+    expect(first.map((delivery) => delivery.kind)).toStrictEqual(['human_input'])
+
+    // Without another A event, A's accepted t+2 snapshot still reaches the lead.
+    const second = dispatcher.takeDeliveries()
+    expect(second).toHaveLength(1)
+    expect(second[0].kind).toBe('evidence')
+    expect(second[0].packet.childSnapshots).toHaveLength(1)
+    expect(second[0].packet.childSnapshots[0]).toMatchObject({
+      delegationId: ids.delegationIdA,
+      observedEventCount: 2,
+      lastObservedAt: at(2),
+    })
+
+    // B's open window is still delivered by the owner's deadline.
+    const packet = dispatcher.flushDeadline()
+    expect(packet.childSnapshots).toHaveLength(1)
+    expect(packet.childSnapshots[0]).toMatchObject({
+      delegationId: ids.delegationIdB,
+      lastObservedAt: at(3),
+    })
+    expect(dispatcher.takeDeliveries()).toHaveLength(1)
+    expect(dispatcher.stats().deferredSnapshotCount).toBe(0)
+  })
+
+  test('a newer event for the refused child supersedes the deferred snapshot', () => {
+    const dispatcher = new ChildProgressLeadDispatcher({
+      buffer: trackedBuffer({ parentExecutionId: ids.parentExecutionId, maximumChildren: 1 }),
+      maximumCoalescedEventsPerDelivery: 128,
+      maximumPendingDeliveries: 1,
+    })
+    dispatcher.acceptHumanInput(humanInput(0))
+    dispatcher.acceptProgress(childEvent(childA, { observedAt: at(1) }))
+    dispatcher.acceptProgress(childEvent(childB, { observedAt: at(2) }))
+    expect(dispatcher.stats().deferredSnapshotCount).toBe(1)
+
+    // A reports again: the open window now carries A's newest state, so the
+    // deferred copy of A is dropped (B, sealed away by A, is deferred instead).
+    dispatcher.acceptProgress(childEvent(childA, { observedAt: at(3) }))
+    expect(dispatcher.stats().deferredSnapshotCount).toBe(1)
+
+    const deliveries = []
+    for (let round = 0; round < 4; round += 1) {
+      deliveries.push(...dispatcher.takeDeliveries())
+      dispatcher.flushDeadline()
+    }
+    deliveries.push(...dispatcher.takeDeliveries())
+    const snapshotsOfA = snapshotsOf(deliveries).filter(
+      (snapshot) => snapshot.delegationId === ids.delegationIdA
+    )
+    // A is delivered once, with its newest state, not once per refused seal.
+    expect(snapshotsOfA).toHaveLength(1)
+    expect(snapshotsOfA[0]).toMatchObject({ observedEventCount: 2, lastObservedAt: at(3) })
+    expect(
+      snapshotsOf(deliveries).some((snapshot) => snapshot.delegationId === ids.delegationIdB)
+    ).toBe(true)
+    expect(dispatcher.stats().deferredSnapshotCount).toBe(0)
+  })
+
+  test('a child that terminates after its snapshot was refused is never redelivered as running', () => {
+    const dispatcher = new ChildProgressLeadDispatcher({
+      buffer: trackedBuffer({ parentExecutionId: ids.parentExecutionId, maximumChildren: 1 }),
+      maximumCoalescedEventsPerDelivery: 128,
+      maximumPendingDeliveries: 1,
+    })
+    dispatcher.acceptHumanInput(humanInput(0))
+    dispatcher.acceptProgress(childEvent(childA, { observedAt: at(1) }))
+    dispatcher.acceptProgress(childEvent(childB, { observedAt: at(2) }))
+    expect(dispatcher.stats().deferredSnapshotCount).toBe(1)
+    dispatcher.acceptProgress(
+      childEvent(childA, {
+        phase: 'completed',
+        observedAt: at(3),
+        terminalResultRef: ids.resultRefA,
+      })
+    )
+
+    const deliveries = []
+    for (let round = 0; round < 4; round += 1) {
+      deliveries.push(...dispatcher.takeDeliveries())
+      dispatcher.flushDeadline()
+    }
+    deliveries.push(...dispatcher.takeDeliveries())
+    const phasesOfA = snapshotsOf(deliveries)
+      .filter((snapshot) => snapshot.delegationId === ids.delegationIdA)
+      .map((snapshot) => snapshot.phase)
+    expect(phasesOfA).toStrictEqual(['completed'])
+    expect(
+      deliveries.some(
+        (delivery) =>
+          delivery.kind === 'evidence' &&
+          delivery.packet.entries.some((entry) => entry.delegationId === ids.delegationIdA)
+      )
+    ).toBe(true)
+    // B's refused snapshot is still delivered.
+    expect(
+      snapshotsOf(deliveries).some((snapshot) => snapshot.delegationId === ids.delegationIdB)
+    ).toBe(true)
+    expect(dispatcher.stats().deferredSnapshotCount).toBe(0)
+  })
+
+  test('deferred snapshots stay bounded by the tracked children and are packed within the packet bounds', () => {
+    const dispatcher = new ChildProgressLeadDispatcher({
+      buffer: trackedBuffer({ parentExecutionId: ids.parentExecutionId, maximumChildren: 1 }),
+      maximumCoalescedEventsPerDelivery: 128,
+      maximumPendingDeliveries: 1,
+    })
+    dispatcher.acceptHumanInput(humanInput(0))
+    const children = [childA, childB]
+    // Alternate the two children so each is repeatedly sealed away and refused.
+    for (let index = 1; index <= 12; index += 1) {
+      dispatcher.acceptProgress(childEvent(children[index % 2], { observedAt: at(index) }))
+    }
+    expect(dispatcher.stats().deferredSnapshotCount).toBeLessThanOrEqual(2)
+    expect(dispatcher.stats().pendingDeliveries).toBe(1)
+
+    const delivered = []
+    for (let round = 0; round < 6; round += 1) {
+      delivered.push(...dispatcher.takeDeliveries())
+      dispatcher.flushDeadline()
+    }
+    delivered.push(...dispatcher.takeDeliveries())
+    expect(dispatcher.stats().deferredSnapshotCount).toBe(0)
+    const latest = new Map()
+    for (const snapshot of snapshotsOf(delivered)) {
+      const present = latest.get(snapshot.delegationId)
+      if (!present || snapshot.observedEventCount >= present.observedEventCount) {
+        latest.set(snapshot.delegationId, snapshot)
+      }
+    }
+    // Both children's final accepted states (A: events at 2,4,..,12; B: 1,3,..,11)
+    // reach the lead without any further events.
+    expect(latest.get(ids.delegationIdA)).toMatchObject({
+      observedEventCount: 6,
+      lastObservedAt: at(12),
+    })
+    expect(latest.get(ids.delegationIdB)).toMatchObject({
+      observedEventCount: 6,
+      lastObservedAt: at(11),
+    })
   })
 })
 

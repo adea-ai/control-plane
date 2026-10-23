@@ -474,6 +474,16 @@ export class ChildProgressEvidenceBuffer {
   readonly #seenEventIds = new Map<string, string>()
   readonly #windows = new Map<string, DelegationWindow>()
   readonly #ready: ChildProgressEvidencePacket[] = []
+  /**
+   * Delegations whose latest accepted snapshot was sealed into a routine packet
+   * the owner could not deliver (see {@link deferUndelivered}). The snapshot
+   * itself is never copied: delivery reads the delegation's current window, so
+   * a deferred child always reports its newest accepted state. Bounded by the
+   * tracked delegations, one entry each.
+   */
+  readonly #deferred = new Set<string>()
+  /** Delivery counters of the refused packets, carried onto the redelivery. */
+  readonly #deferredCounters = { coalesced: 0, duplicate: 0, rejected: 0 }
   #open: OpenWindow | undefined
   /** Observation time of the accept in flight; seeds windows it creates. */
   #pendingEventTime: string | undefined
@@ -657,6 +667,106 @@ export class ChildProgressEvidenceBuffer {
     return this.#seal()
   }
 
+  /**
+   * Takes back a sealed routine packet the owner could not deliver (for
+   * example because the lead's pending backlog was full). A packet sealed under
+   * packet pressure leaves the open window, so without this the latest accepted
+   * snapshot of its children would exist nowhere until each child happened to
+   * report again. Each child that has no newer state waiting in the open window
+   * is marked deferred; {@link sealDeferred} later seals those children's
+   * current snapshots into a fresh packet. Packets that retain an entry are
+   * material and must be delivered, never deferred.
+   */
+  deferUndelivered(packet: ChildProgressEvidencePacket): void {
+    if (packet.parentExecutionId !== this.#parentExecutionId) {
+      throw new ChildProgressEvidenceError(
+        'CONFIGURATION',
+        "A deferred packet must belong to this buffer's parent execution"
+      )
+    }
+    if (packet.entries.length > 0) {
+      throw new ChildProgressEvidenceError(
+        'CONFIGURATION',
+        'Only a routine packet without retained entries can be deferred'
+      )
+    }
+    let deferredAny = false
+    for (const snapshot of packet.childSnapshots) {
+      const waiting = this.#open?.childSnapshots.some(
+        (candidate) => candidate.delegationId === snapshot.delegationId
+      )
+      // A newer snapshot of this child already waits in the open window and
+      // will ride its own delivery.
+      if (waiting || !this.#windows.has(snapshot.delegationId)) continue
+      this.#deferred.add(snapshot.delegationId)
+      deferredAny = true
+    }
+    if (!deferredAny) return
+    this.#deferredCounters.coalesced += packet.coalescedEventCount
+    this.#deferredCounters.duplicate += packet.duplicateEventCount
+    this.#deferredCounters.rejected += packet.rejectedEventCount
+  }
+
+  /**
+   * Seals the deferred children's current snapshots into one packet, within the
+   * configured child and byte bounds, leaving the open window untouched.
+   * Children that do not fit stay deferred for the next call; returns
+   * `undefined` when nothing is deferred.
+   */
+  sealDeferred(): ChildProgressEvidencePacket | undefined {
+    const window = emptyWindow()
+    const included: string[] = []
+    for (const delegationId of this.#deferred) {
+      const snapshot = this.#windows.get(delegationId)?.snapshot
+      if (snapshot === undefined) {
+        this.#deferred.delete(delegationId)
+        continue
+      }
+      if (included.length >= this.#maximumChildren) break
+      const previous = {
+        childSnapshots: window.childSnapshots,
+        firstEventAt: window.firstEventAt,
+        lastEventAt: window.lastEventAt,
+      }
+      window.childSnapshots = [...window.childSnapshots, snapshot].toSorted((left, right) =>
+        compareCodePointOrder(left.delegationId, right.delegationId)
+      )
+      // The packet spans the observations its snapshots reflect.
+      if (
+        window.firstEventAt === '' ||
+        compareChronologicalTimestamps(snapshot.lastObservedAt, window.firstEventAt) < 0
+      ) {
+        window.firstEventAt = snapshot.lastObservedAt
+      }
+      if (
+        window.lastEventAt === '' ||
+        compareChronologicalTimestamps(snapshot.lastObservedAt, window.lastEventAt) > 0
+      ) {
+        window.lastEventAt = snapshot.lastObservedAt
+      }
+      if (this.#fitsInPacket({}, { window })) {
+        included.push(delegationId)
+      } else {
+        Object.assign(window, previous)
+      }
+    }
+    if (included.length === 0) return undefined
+    for (const delegationId of included) this.#deferred.delete(delegationId)
+    const { coalesced, duplicate, rejected } = this.#deferredCounters
+    this.#deferredCounters.coalesced = 0
+    this.#deferredCounters.duplicate = 0
+    this.#deferredCounters.rejected = 0
+    // The refused packets' delivery counters ride along only while the packet
+    // stays within its byte budget.
+    const counted = {
+      ...window,
+      coalescedEventCount: coalesced,
+      duplicateEventCount: duplicate,
+      rejectedEventCount: rejected,
+    }
+    return this.#sealWindow(this.#fitsInPacket({}, { window: counted }) ? counted : window)
+  }
+
   /** Delivery-side counters for telemetry and tests. */
   stats(): {
     readonly readyPacketCount: number
@@ -664,6 +774,7 @@ export class ChildProgressEvidenceBuffer {
     readonly trackedDelegations: number
     readonly pendingEntries: number
     readonly pendingCoalescedEventCount: number
+    readonly deferredSnapshotCount: number
     readonly lifetimeDuplicateCount: number
     readonly lifetimeRejectionCount: number
   } {
@@ -673,6 +784,7 @@ export class ChildProgressEvidenceBuffer {
       trackedDelegations: this.#windows.size,
       pendingEntries: this.#open?.entries.length ?? 0,
       pendingCoalescedEventCount: this.#open?.coalescedEventCount ?? 0,
+      deferredSnapshotCount: this.#deferred.size,
       lifetimeDuplicateCount: this.#lifetimeDuplicates,
       lifetimeRejectionCount: this.#lifetimeRejections,
     }
@@ -945,10 +1057,11 @@ export class ChildProgressEvidenceBuffer {
       readonly firstEventAt?: string
       readonly lastEventAt?: string
     },
-    projection: { readonly freshWindow?: boolean } = {}
+    projection: { readonly freshWindow?: boolean; readonly window?: OpenWindow } = {}
   ): boolean {
     const open =
-      projection.freshWindow || this.#open === undefined
+      projection.window ??
+      (projection.freshWindow || this.#open === undefined
         ? {
             ...freshProjectionWindow(),
             // The window actually created mid-accept is seeded with the
@@ -957,7 +1070,7 @@ export class ChildProgressEvidenceBuffer {
             firstEventAt: this.#pendingEventTime ?? TIMESTAMP_PLACEHOLDER,
             lastEventAt: this.#pendingEventTime ?? TIMESTAMP_PLACEHOLDER,
           }
-        : this.#open
+        : this.#open)
     const entries =
       candidate.entry !== undefined ? [...open.entries, candidate.entry] : open.entries
     const snapshot = candidate.snapshot
@@ -989,6 +1102,14 @@ export class ChildProgressEvidenceBuffer {
   }
 
   #replaceSnapshotInOpenWindow(snapshot: ChildProgressSnapshot): void {
+    // The open window now carries this child's newest state; a deferred copy
+    // would only repeat an older one.
+    this.#deferred.delete(snapshot.delegationId)
+    if (this.#deferred.size === 0) {
+      this.#deferredCounters.coalesced = 0
+      this.#deferredCounters.duplicate = 0
+      this.#deferredCounters.rejected = 0
+    }
     this.#withOpenWindow((open) => {
       const index = open.childSnapshots.findIndex(
         (candidate) => candidate.delegationId === snapshot.delegationId
@@ -1024,6 +1145,10 @@ export class ChildProgressEvidenceBuffer {
     const open = this.#open
     this.#open = undefined
     if (!open || isEmptyWindow(open)) return undefined
+    return this.#sealWindow(open)
+  }
+
+  #sealWindow(open: OpenWindow): ChildProgressEvidencePacket {
     this.#sequence += 1
     const body = {
       schemaVersion: 2 as const,
@@ -1142,7 +1267,12 @@ export type ChildProgressLeadDelivery =
       readonly kind: 'evidence'
       readonly sequence: number
       readonly packet: ChildProgressEvidencePacket
-      readonly trigger: 'critical' | 'packet_pressure' | 'coalescing_pressure' | 'deadline'
+      readonly trigger:
+        | 'critical'
+        | 'packet_pressure'
+        | 'coalescing_pressure'
+        | 'deadline'
+        | 'deferred_redelivery'
     }
 
 export interface ChildProgressLeadDispatcherOptions {
@@ -1310,6 +1440,14 @@ export class ChildProgressLeadDispatcher {
   takeDeliveries(): ChildProgressLeadDelivery[] {
     const deliveries = [...this.#outbox]
     this.#outbox.length = 0
+    // The backlog has room again: children whose routine snapshot was refused
+    // while it was full are redelivered now, without waiting for them to
+    // report again. They ride the next take, bounded like any routine delivery.
+    while (!this.#atPendingBound()) {
+      const packet = this.#buffer.sealDeferred()
+      if (!packet) break
+      this.#enqueueEvidence(packet, 'deferred_redelivery')
+    }
     return deliveries
   }
 
@@ -1332,6 +1470,11 @@ export class ChildProgressLeadDispatcher {
      * these; the overrun is counted so the operator can see it.
      */
     readonly overBoundDeliveryCount: number
+    /**
+     * Children whose latest snapshot was refused with a full backlog and
+     * awaits redelivery once the lead drains it.
+     */
+    readonly deferredSnapshotCount: number
     readonly maximumPendingDeliveries: number
   } {
     return {
@@ -1341,6 +1484,7 @@ export class ChildProgressLeadDispatcher {
       deliveredHumanInputCount: this.#deliveredHumanInputs,
       refusedRoutineDeliveryCount: this.#refusedRoutineDeliveries,
       overBoundDeliveryCount: this.#overBoundDeliveries,
+      deferredSnapshotCount: this.#buffer.stats().deferredSnapshotCount,
       maximumPendingDeliveries: this.#maximumPendingDeliveries,
     }
   }
@@ -1375,8 +1519,12 @@ export class ChildProgressLeadDispatcher {
       // The backlog is full of deliveries the lead has not taken yet. Routine
       // progress is coalesced state, so the newest snapshot supersedes it:
       // refusing keeps the pending deliveries bounded and keeps the lead's
-      // input latency bounded by the bound rather than by the backlog.
+      // input latency bounded by the bound rather than by the backlog. The
+      // packet leaves the buffer's open window when it is sealed, so the buffer
+      // takes its children back: their latest snapshots are redelivered once the
+      // lead drains the backlog.
       this.#refusedRoutineDeliveries += 1
+      this.#buffer.deferUndelivered(packet)
       return false
     }
     this.#sequence += 1

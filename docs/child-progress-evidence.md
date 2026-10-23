@@ -26,7 +26,16 @@ stay wired to the canonical durable paths rather than a parallel ledger.
   request) and every human input are delivered even when the backlog is full.
   A refused routine delivery is counted (`refusedRoutineDeliveryCount`), and
   the open window is kept open instead of being sealed, so the newest coalesced
-  snapshot for every child rides the next delivery rather than being dropped;
+  snapshot for every child rides the next delivery rather than being dropped.
+  A packet the buffer already sealed under packet pressure (for example when
+  another child takes the only child slot) cannot stay in the window, so the
+  refused packet's children are handed back to the buffer
+  (`deferUndelivered`): their current snapshots are sealed again
+  (`sealDeferred`) and redelivered as `deferred_redelivery` once the lead
+  drains the backlog, without waiting for those children to report again. A
+  newer snapshot of the same child supersedes the deferred one, and the
+  deferred set is at most one entry per tracked child
+  (`deferredSnapshotCount`);
   an admitted material delivery past the bound is counted as well
   (`overBoundDeliveryCount`), so no loss is silent.
 - **`ChildProgressLeadFeed`** is the live wiring: it implements the canonical
