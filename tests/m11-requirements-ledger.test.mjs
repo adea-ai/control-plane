@@ -26,6 +26,7 @@ import {
   validateFormatterVersion,
   validateReconciliationRecord,
   validateRequirementsLedger,
+  validateWorkerContentBinding,
   validateWorkerEvidence,
 } from '../scripts/requirements-ledger.mjs'
 
@@ -1934,5 +1935,187 @@ describe('requirements provenance fetch (#186/#195)', () => {
     const [candidate] = fetchProvenanceObjects(fixture, { root: '/unused', spawnSync: spawn })
     expect(candidate.status).toBe('unavailable')
     expect(candidate.reason).toBe('the fetched object does not carry the recorded name')
+  })
+})
+
+describe('worker evidence content binding record (#186/#195)', () => {
+  const blob = (character) => character.repeat(40)
+  const recordPath = 'docs/requirements/cp186-195-reconciliation-2026-10-21.md'
+  const inventory = {
+    complete: true,
+    entries: [
+      { worker: 'W1', path: 'a.md', headBlob: blob('1'), treeBlob: blob('2'), state: 'differs' },
+      {
+        worker: 'W2',
+        path: recordPath,
+        headBlob: blob('3'),
+        treeBlob: blob('4'),
+        state: 'differs',
+      },
+      {
+        worker: 'W3',
+        path: 'same.md',
+        headBlob: blob('5'),
+        treeBlob: blob('5'),
+        state: 'identical',
+      },
+      {
+        worker: 'W4',
+        path: 'gone.md',
+        headBlob: blob('6'),
+        treeBlob: null,
+        state: 'absent-in-tree',
+      },
+    ],
+  }
+  const recordWith = ({ rows, lanes = 'Lanes with such a path: 2 of 7 (W1, W2).' }) =>
+    [
+      '### Worker evidence content binding',
+      '',
+      lanes,
+      '',
+      '| Worker | Path | Blob at the lane head | Blob in this tree |',
+      '| ------ | ---- | --------------------- | ----------------- |',
+      ...rows,
+      '',
+      '## Next section',
+    ].join('\n')
+  const goodRows = [
+    `| W1 | \`a.md\` | \`${blob('1')}\` | \`${blob('2')}\` |`,
+    `| W2 | \`${recordPath}\` | \`${blob('3')}\` | not recorded (this record) |`,
+  ]
+
+  test('accepts a table that lists exactly the differing paths with their lane blobs', () => {
+    const result = validateWorkerContentBinding(recordWith({ rows: goodRows }), inventory, {
+      workerCount: 7,
+    })
+    expect(result.errors).toEqual([])
+    expect(result.provenance).toEqual([])
+  })
+
+  test('rejects an omitted path, an invented row and a wrong lane blob', () => {
+    const omitted = validateWorkerContentBinding(
+      recordWith({ rows: goodRows.slice(1), lanes: 'Lanes with such a path: 1 of 7 (W2).' }),
+      inventory,
+      { workerCount: 7 }
+    )
+    expect(omitted.errors).toContain(
+      'reconciliation record omits the differing worker evidence path W1 a.md'
+    )
+    const invented = validateWorkerContentBinding(
+      recordWith({
+        rows: [...goodRows, `| W3 | \`same.md\` | \`${blob('5')}\` | \`${blob('5')}\` |`],
+        lanes: 'Lanes with such a path: 2 of 7 (W1, W2).',
+      }),
+      inventory,
+      { workerCount: 7 }
+    )
+    expect(invented.errors).toContain(
+      'reconciliation record lists W3 same.md as differing, but its content is not different from the recorded head'
+    )
+    const wrongBlob = validateWorkerContentBinding(
+      recordWith({
+        rows: [`| W1 | \`a.md\` | \`${blob('9')}\` | \`${blob('2')}\` |`, goodRows[1]],
+      }),
+      inventory,
+      { workerCount: 7 }
+    )
+    expect(wrongBlob.errors).toContain(
+      `reconciliation record W1 a.md lists lane blob ${blob('9')}, the recorded head carries ${blob('1')}`
+    )
+  })
+
+  test('rejects a wrong lane count and a missing statement', () => {
+    const wrongCount = validateWorkerContentBinding(
+      recordWith({ rows: goodRows, lanes: 'Lanes with such a path: 4 of 7 (W1, W2).' }),
+      inventory,
+      { workerCount: 7 }
+    )
+    expect(wrongCount.errors).toContain(
+      'reconciliation record says 4 lanes have a differing path, the recorded heads show 2'
+    )
+    const wrongTotal = validateWorkerContentBinding(recordWith({ rows: goodRows }), inventory, {
+      workerCount: 9,
+    })
+    expect(wrongTotal.errors).toContain(
+      'reconciliation record says 7 lanes in total, the ledger records 9'
+    )
+    const missing = validateWorkerContentBinding(
+      recordWith({ rows: goodRows, lanes: 'Several lanes.' }),
+      inventory,
+      { workerCount: 7 }
+    )
+    expect(missing.errors).toContain(
+      'reconciliation record must state "Lanes with such a path: N of M"'
+    )
+    expect(validateWorkerContentBinding('## nothing', inventory).errors).toEqual([
+      'reconciliation record is missing the "Worker evidence content binding" section',
+    ])
+  })
+
+  test('reports a stale tree-side blob as provenance and exempts the record itself', () => {
+    const stale = validateWorkerContentBinding(
+      recordWith({
+        rows: [`| W1 | \`a.md\` | \`${blob('1')}\` | \`${blob('8')}\` |`, goodRows[1]],
+      }),
+      inventory,
+      { workerCount: 7 }
+    )
+    expect(stale.errors).toEqual([])
+    expect(stale.provenance).toEqual([
+      `reconciliation record W1 a.md lists tree blob ${blob('8')}, this tree carries ${blob('2')}`,
+    ])
+  })
+
+  test('builds its inventory from the blobs of the recorded head and the tree', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'requirements-binding-'))
+    try {
+      const git = (...args) =>
+        execFileSync(
+          'git',
+          ['-c', 'user.name=fixture', '-c', 'user.email=fixture@example.test', ...args],
+          { cwd: directory, encoding: 'utf8' }
+        ).trim()
+      git('init', '-q')
+      writeFileSync(resolve(directory, 'rewritten.md'), 'recorded\n')
+      writeFileSync(resolve(directory, 'same.md'), 'same\n')
+      writeFileSync(resolve(directory, 'removed.md'), 'removed\n')
+      git('add', '.')
+      git('commit', '-q', '-m', 'lane head')
+      const head = git('rev-parse', 'HEAD')
+      writeFileSync(resolve(directory, 'rewritten.md'), 'later\n')
+      git('rm', '-q', 'removed.md')
+      git('commit', '-q', '-am', 'later')
+      const fixture = {
+        workerEvidence: [
+          {
+            id: 'W1',
+            lane: 'fixture',
+            status: 'received',
+            head,
+            issueRefs: [1],
+            evidence: ['rewritten.md', 'same.md', 'removed.md'].map((path) => ({
+              path,
+              commit: head,
+            })),
+          },
+        ],
+      }
+      const result = validateWorkerEvidence(fixture, directory, false)
+      expect(result.inventory.complete).toBe(true)
+      expect(result.inventory.entries.map(({ path, state }) => [path, state])).toEqual([
+        ['rewritten.md', 'differs'],
+        ['same.md', 'identical'],
+        ['removed.md', 'absent-in-tree'],
+      ])
+      const unresolved = validateWorkerEvidence(
+        { workerEvidence: [{ ...fixture.workerEvidence[0], head: 'a'.repeat(40) }] },
+        directory,
+        true
+      )
+      expect(unresolved.inventory.complete).toBe(false)
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
   })
 })

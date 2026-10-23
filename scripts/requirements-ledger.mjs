@@ -172,6 +172,7 @@ export async function validateRequirementsLedger(ledger, options = {}) {
   let candidateAvailable = false
   let committedArtifacts = new Set()
   const shallowRepository = isShallowRepository(root, options.shallowRepository)
+  let workerInventory = { entries: [], complete: false }
   if (ledger.schemaVersion !== 1) errors.push('schemaVersion must equal 1')
   if (!/^[0-9a-f]{40}$/.test(ledger.candidate?.commit ?? '')) {
     errors.push('candidate.commit must be a full Git commit')
@@ -328,6 +329,7 @@ export async function validateRequirementsLedger(ledger, options = {}) {
   errors.push(...workerEvidence.errors)
   warnings.push(...workerEvidence.warnings)
   provenance.push(...workerEvidence.provenance)
+  workerInventory = workerEvidence.inventory
   errors.push(...(await validateFigureLineage(ledger, root)))
   provenance.push(...profileJoinProvenance(ledger))
 
@@ -462,7 +464,7 @@ export async function validateRequirementsLedger(ledger, options = {}) {
   if (!Array.isArray(ledger.verificationRuns) || ledger.verificationRuns.length === 0) {
     errors.push('verificationRuns must identify exact commands and results')
   }
-  return { errors, warnings, provenance }
+  return { errors, warnings, provenance, workerInventory }
 }
 
 export async function listGitHubIssues(options = {}) {
@@ -1262,11 +1264,14 @@ export function validateWorkerEvidence(ledger, root, shallowRepository) {
     spawnSync('git', ['cat-file', '-e', `${head}^{commit}`], { cwd: root, encoding: 'utf8' })
       .status === 0
   const unverifiedHeads = new Set()
+  const unavailableHeads = new Set()
+  const inventory = []
   const blobPairs = []
   for (const worker of workers) {
     if (worker.status === 'pending') continue
     if (!/^[0-9a-f]{40}$/.test(worker.head ?? '')) continue
     if (!headAvailable(worker.head)) {
+      unavailableHeads.add(worker.id)
       if (shallowRepository) unverifiedHeads.add(worker.id)
       continue
     }
@@ -1325,6 +1330,13 @@ export function validateWorkerEvidence(ledger, root, shallowRepository) {
         continue
       }
       const treeBlob = blobs.get(`HEAD:${entry.path}`)
+      inventory.push({
+        worker: worker.id,
+        path: entry.path,
+        headBlob,
+        treeBlob: treeBlob ?? null,
+        state: !treeBlob ? 'absent-in-tree' : headBlob === treeBlob ? 'identical' : 'differs',
+      })
       if (treeBlob && headBlob !== treeBlob)
         diverged.push(`${entry.path} (${headBlob} at ${worker.head}, ${treeBlob} at HEAD)`)
     }
@@ -1346,7 +1358,90 @@ export function validateWorkerEvidence(ledger, root, shallowRepository) {
       }
     }
   }
-  return { errors, warnings, provenance }
+  // The inventory is complete only when every received lane's head resolved, so a
+  // record bound to it is never checked against a partial answer.
+  return {
+    errors,
+    warnings,
+    provenance,
+    inventory: { entries: inventory, complete: unavailableHeads.size === 0 },
+  }
+}
+
+// The reconciliation record lists every worker evidence path whose content in the
+// tree differs from the content at the lane's recorded head, with both blob
+// identities. The lane-side identity is immutable, so it is an error when it is
+// wrong. A path or lane that is missing from, or invented by, the table is an
+// error too. The tree-side identity follows later commits, so a stale one is
+// returned as provenance instead. The record cannot name its own tree identity, so
+// the row for the record itself is exempt from the blob comparison.
+export function validateWorkerContentBinding(record, inventory, options = {}) {
+  const errors = []
+  const provenance = []
+  if (record === undefined) return { errors, provenance }
+  const recordPath =
+    options.recordPath ?? 'docs/requirements/cp186-195-reconciliation-2026-10-21.md'
+  const heading = '### Worker evidence content binding'
+  const start = record.indexOf(heading)
+  if (start === -1) {
+    errors.push(`reconciliation record is missing the "${heading.slice(4)}" section`)
+    return { errors, provenance }
+  }
+  const rest = record.slice(start + heading.length)
+  const next = rest.search(/\n#{2,3} /)
+  const section = next === -1 ? rest : rest.slice(0, next)
+  const cell = (line, index) => line.split('|')[index]?.trim().replaceAll('`', '') ?? ''
+  const rows = section
+    .split('\n')
+    .filter((line) => line.startsWith('| ') && /^W\d+$/.test(cell(line, 1)))
+    .map((line) => ({
+      worker: cell(line, 1),
+      path: cell(line, 2),
+      headBlob: cell(line, 3),
+      treeBlob: cell(line, 4),
+    }))
+  const expected = inventory.entries.filter(({ state }) => state === 'differs')
+  const key = (worker, path) => `${worker} ${path}`
+  const recorded = new Map(rows.map((row) => [key(row.worker, row.path), row]))
+  const actual = new Map(expected.map((entry) => [key(entry.worker, entry.path), entry]))
+  for (const [id, entry] of actual) {
+    const row = recorded.get(id)
+    if (!row) {
+      errors.push(
+        `reconciliation record omits the differing worker evidence path ${entry.worker} ${entry.path}`
+      )
+      continue
+    }
+    if (row.headBlob !== entry.headBlob)
+      errors.push(
+        `reconciliation record ${entry.worker} ${entry.path} lists lane blob ${row.headBlob}, the recorded head carries ${entry.headBlob}`
+      )
+    if (entry.path !== recordPath && row.treeBlob !== entry.treeBlob)
+      provenance.push(
+        `reconciliation record ${entry.worker} ${entry.path} lists tree blob ${row.treeBlob}, this tree carries ${entry.treeBlob}`
+      )
+  }
+  for (const [id, row] of recorded) {
+    if (!actual.has(id))
+      errors.push(
+        `reconciliation record lists ${row.worker} ${row.path} as differing, but its content is not different from the recorded head`
+      )
+  }
+  const lanes = /Lanes with such a path: (\d+) of (\d+)/.exec(section)
+  const expectedLanes = new Set(expected.map(({ worker }) => worker)).size
+  if (!lanes) {
+    errors.push('reconciliation record must state "Lanes with such a path: N of M"')
+  } else {
+    if (Number(lanes[1]) !== expectedLanes)
+      errors.push(
+        `reconciliation record says ${lanes[1]} lanes have a differing path, the recorded heads show ${expectedLanes}`
+      )
+    if (options.workerCount !== undefined && Number(lanes[2]) !== options.workerCount)
+      errors.push(
+        `reconciliation record says ${lanes[2]} lanes in total, the ledger records ${options.workerCount}`
+      )
+  }
+  return { errors, provenance }
 }
 
 // The profile and requirement rows are joined in two directions: a requirement row
@@ -2218,9 +2313,10 @@ async function main() {
       divergences.push(...compareGitHubIssueSnapshot(ledger, issues))
     }
   }
-  const { errors, warnings, provenance } = await validateRequirementsLedger(ledger, {
-    repositoryRoot: new URL('..', import.meta.url),
-  })
+  const { errors, warnings, provenance, workerInventory } = await validateRequirementsLedger(
+    ledger,
+    { repositoryRoot: new URL('..', import.meta.url) }
+  )
   errors.push(...(await validateCanonicalSourceLineage(repositoryRoot)))
   if (!write && !refreshIssues) {
     errors.push(...(await validateCanonicalCrosswalk(ledger, repositoryRoot)))
@@ -2241,6 +2337,17 @@ async function main() {
       )
       if (crosswalkErrors.length === 0) {
         errors.push(...validateReconciliationRecord(record, ledger, crosswalk))
+      }
+      if (workerInventory.complete) {
+        const binding = validateWorkerContentBinding(record, workerInventory, {
+          workerCount: (ledger.workerEvidence ?? []).length,
+        })
+        errors.push(...binding.errors)
+        provenance.push(...binding.provenance)
+      } else {
+        warnings.push(
+          'the reconciliation record worker content binding was not checked because not every recorded worker head is resolvable'
+        )
       }
     }
   }
