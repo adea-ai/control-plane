@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.110.3](https://github.com/adea-ai/control-plane/compare/workspace-v1.110.2...workspace-v1.110.3) (2026-10-23)
+
+
+### Documentation
+
+* **requirements:** reconcile CP [#186](https://github.com/adea-ai/control-plane/issues/186)/[#195](https://github.com/adea-ai/control-plane/issues/195) evidence ([#1219](https://github.com/adea-ai/control-plane/issues/1219)) ([42320f5](https://github.com/adea-ai/control-plane/commit/42320f59a79ba3df6e8d97b6cbf9009750a52fe8))
+
 ## [1.110.2](https://github.com/adea-ai/control-plane/compare/workspace-v1.110.1...workspace-v1.110.2) (2026-10-23)
 
 
