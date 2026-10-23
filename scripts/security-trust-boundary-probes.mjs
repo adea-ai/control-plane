@@ -747,34 +747,47 @@ probe(
 
 probe(
   'CP190-P21',
-  'No composition builds the relay host adapter or the metadata processor, and no metadata effect implementation ships',
+  'No file under apps/ or packages/ outside the relay package builds the relay host adapter or the metadata processor, and no metadata effect implementation ships',
   ['STA-L46-09', 'STA-L52-01'],
   async () => {
-    const roots = ['apps']
+    // Recursive static scan. It covers every TypeScript or JavaScript source file under
+    // apps/ and packages/ except the relay package itself (which defines these constructs),
+    // test files and declaration files. It proves nothing about code outside those paths,
+    // generated code or code loaded at run time.
+    const markers = [
+      'new RelayMetadataCommandProcessor',
+      'new RemoteControlHostAdapter',
+      'createRelayExecutionMetadataCommandProcessor(',
+    ]
+    const skippedDirectories = new Set(['node_modules', 'dist', 'coverage', '.turbo'])
+    const sourcePattern = /\.(?:ts|tsx|mts|cts|mjs|cjs|js)$/
     const hits = []
-    for (const root of roots) {
-      const entries = await readdir(new URL(`../${root}/`, import.meta.url), {
+    let scanned = 0
+    async function scan(directory) {
+      const entries = await readdir(new URL(`../${directory}/`, import.meta.url), {
         withFileTypes: true,
       })
       for (const entry of entries) {
-        if (!entry.isDirectory()) continue
-        const source = await readSource(`${root}/${entry.name}/src/`).catch(() => undefined)
-        void source
-        const files = await readdir(new URL(`../${root}/${entry.name}/src/`, import.meta.url), {
-          withFileTypes: true,
-        }).catch(() => [])
-        for (const file of files) {
-          if (!file.isFile() || !file.name.endsWith('.ts')) continue
-          const text = await readSource(`${root}/${entry.name}/src/${file.name}`).catch(() => '')
-          for (const marker of [
-            'new RelayMetadataCommandProcessor',
-            'new RemoteControlHostAdapter',
-          ]) {
-            if (text.includes(marker))
-              hits.push(`${root}/${entry.name}/src/${file.name}: ${marker}`)
-          }
+        const path = `${directory}/${entry.name}`
+        if (entry.isDirectory()) {
+          if (skippedDirectories.has(entry.name) || path === 'packages/remote-control-relay')
+            continue
+          await scan(path)
+          continue
+        }
+        if (!entry.isFile() || !sourcePattern.test(entry.name)) continue
+        if (entry.name.endsWith('.d.ts') || /\.test\./.test(entry.name)) continue
+        const text = await readSourceStrict(path)
+        scanned += 1
+        for (const marker of markers) {
+          if (text.includes(marker)) hits.push(`${path}: ${marker}`)
         }
       }
+    }
+    await scan('apps')
+    await scan('packages')
+    if (scanned === 0) {
+      return { reproduced: false, harness: true, detail: 'the scan found no source files' }
     }
     const relay = await readSource('packages/remote-control-relay/src/relay.ts')
     const adapter = await readSource('packages/remote-control-relay/src/adapter.ts')
@@ -787,7 +800,7 @@ probe(
     )
     return {
       reproduced: hits.length === 0 && onlyFake && injectedEffect && injectedAccept,
-      detail: `application constructions of the relay adapter or metadata processor = ${hits.length}; the only relay client implementation is the test fake = ${onlyFake}; the metadata processor is injected = ${injectedEffect}; the metadata effect callback is injected = ${injectedAccept}. No shipped approve, deny or cancel effect exists, so no deployed unauthenticated approval path is claimed.`,
+      detail: `source files scanned under apps/ and packages/ (excluding packages/remote-control-relay, tests and declarations) = ${scanned}; constructions of the relay adapter or metadata processor, or calls to the execution metadata-processor factory, found there = ${hits.length}; the only relay client implementation is the test fake = ${onlyFake}; the metadata processor is injected = ${injectedEffect}; the metadata effect callback is injected = ${injectedAccept}. No shipped approve, deny or cancel effect was found, so no deployed unauthenticated approval path is claimed. The scan does not cover code outside apps/ and packages/, generated code or run-time loading.`,
     }
   }
 )

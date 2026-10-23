@@ -382,7 +382,7 @@
       "area": "remote Runtime Gateway versus product relay",
       "result": "gap",
       "findings": ["CP190-F01", "CP190-F02", "CP190-F07", "CP190-F16", "CP190-F17"],
-      "notes": "Traced per payload type. create_execution is idempotent through the CommandInbox because the acceptance request extends the context schema that carries idempotencyKey. submit_input carries no idempotency key. The metadata effect is an injected callback with no shipped implementation, and no composition builds the relay host adapter. The relay receipt layer adds no idempotency beyond the command identifier and only in-memory receipt repositories ship."
+      "notes": "Traced per payload type. create_execution is idempotent through the CommandInbox because the acceptance request extends the context schema that carries idempotencyKey. submit_input carries no idempotency key. The metadata effect is an injected callback with no shipped implementation, and no file scanned by CP190-P21 (apps/ and packages/, excluding the relay package, tests and declarations) builds the relay host adapter. The relay receipt layer adds no idempotency beyond the command identifier and only in-memory receipt repositories ship."
     },
     {
       "area": "HPKE AAD, recipient, replay and expiry",
@@ -423,7 +423,7 @@
       "id": "CP190-F01",
       "title": "The relay host processor applies no authentication of its own to metadata-only commands",
       "severity": "medium",
-      "releaseImpact": "Does not block the current release. The Control Plane ships the transport and validation layer only: no composition builds the relay host adapter or the metadata processor, the only relay client implementation is a test fake, and the approve, deny, cancel, resume and status effects are injected callbacks with no shipped implementation. What remains is that the processor offers no defence in depth of its own, so a claim that the Control Plane verifies the metadata transport cannot be made.",
+      "releaseImpact": "Does not block the current release. The Control Plane ships the transport and validation layer only: no file scanned by CP190-P21 (apps/ and packages/, excluding the relay package, tests and declarations) builds the relay host adapter or the metadata processor, the only relay client implementation is a test fake, and the approve, deny, cancel, resume and status effects are injected callbacks with no shipped implementation. What remains is that the processor offers no defence in depth of its own, so a claim that the Control Plane verifies the metadata transport cannot be made.",
       "obligations": ["STA-L46-09", "STA-L66-01", "STA-L68-02", "STA-L52-04"],
       "entrypoints": [
         "packages/remote-control-relay/src/relay.ts:379-424",
@@ -435,7 +435,7 @@
       "regression": "The processor must not be able to accept a metadata command that its caller has not authenticated, and a composition must refuse to start a relay adapter whose client does not assert authentication. Regression test: a metadata command with no authenticated-transport provenance is rejected by the processor, and the composition fails closed when the supplied client declares no authentication.",
       "reachability": "configured-only",
       "reachabilityClass": "Reachable only after an operator configures the optional component; the component ships disabled or is not composed by default.",
-      "reachabilityNote": "Traced end to end: the only consumer of a metadata command is RemoteControlHostAdapter.#pollOnce (packages/remote-control-relay/src/adapter.ts:154-173), which is itself an injected option of the Local and Hosted compositions (apps/local-control-plane/src/composition.ts:249-250,508-512; apps/hosted-control-plane/src/composition.ts:220-223,371-375) and is reported as 'disabled' when absent (:152, :164). No application constructs RelayMetadataCommandProcessor or RemoteControlHostAdapter, and the only OutboundOpaqueRelayClient implementation is the test fake FakeOpaqueRelay (packages/remote-control-relay/src/relay.ts:45). The metadata effect callback is injected (packages/remote-control-relay/src/relay.ts:376-379), so the Control Plane ships no approve, deny or cancel effect at all: those names are schema operations, not shipped behaviour. An integrator must supply the relay client, the effect and the adapter. **No deployed attacker-controlled ingress exists and no deployed unauthenticated approval path is claimed.** The residual is that the processor adds no provenance check of its own and relies on its caller having authenticated the transport, which docs/remote-control-relay.md assigns to the concrete relay client.",
+      "reachabilityNote": "Traced end to end: the only consumer of a metadata command is RemoteControlHostAdapter.#pollOnce (packages/remote-control-relay/src/adapter.ts:154-173), which is itself an injected option of the Local and Hosted compositions (apps/local-control-plane/src/composition.ts:249-250,508-512; apps/hosted-control-plane/src/composition.ts:220-223,371-375) and is reported as 'disabled' when absent (:152, :164). No file scanned by CP190-P21 (apps/ and packages/, excluding the relay package, tests and declarations) constructs RelayMetadataCommandProcessor or RemoteControlHostAdapter, and the only OutboundOpaqueRelayClient implementation is the test fake FakeOpaqueRelay (packages/remote-control-relay/src/relay.ts:45). The metadata effect callback is injected (packages/remote-control-relay/src/relay.ts:376-379), so the Control Plane ships no approve, deny or cancel effect at all: those names are schema operations, not shipped behaviour. An integrator must supply the relay client, the effect and the adapter. **No deployed attacker-controlled ingress exists and no deployed unauthenticated approval path is claimed.** The residual is that the processor adds no provenance check of its own and relies on its caller having authenticated the transport, which docs/remote-control-relay.md assigns to the concrete relay client.",
       "counterevidence": "docs/remote-control-relay.md states that metadata-only operations use a separate strict, authenticated command schema and that authentication of that metadata transport remains the responsibility of the concrete relay client. The obligation is documented and delegated, so this is a contract and defence-in-depth gap rather than a deployed unauthenticated-approval path."
     },
     {
@@ -469,7 +469,7 @@
         "apps/runtime-gateway/src/runtime-inventory-ingestion.ts:387",
         "apps/workflow-worker/src/runtime-attempt-router.ts:179-184",
         "packages/acp-adapter/src/acp-driver-execution.ts",
-        "packages/managed-pi-adapter/src/managed-pi-driver.ts",
+        "packages/managed-pi-adapter/src/index.ts:322",
         "packages/managed-pi-adapter/src/process-client.ts"
       ],
       "probes": ["CP190-P08", "CP190-P09", "CP190-P10", "CP190-P24"],
@@ -685,9 +685,9 @@
     },
     {
       "id": "CP190-F16",
-      "title": "The Control Plane repository ships a RuntimeNode credential issuer",
+      "title": "The Control Plane repository ships a RuntimeNode credential issuer CLI",
       "severity": "medium",
-      "releaseImpact": "The operator issuer private key lives on Control Plane infrastructure. Credential-class separation and rotation acceptance stay open.",
+      "releaseImpact": "Credential-class separation: issuer signing code is co-located with the verifier-only gateway's repository and image build context. That an issuer private key is present on Control Plane infrastructure is not shown by the source and is an evidence gap. Rotation and credential-class separation acceptance stay open.",
       "obligations": ["STA-L15-01", "STA-L46-04", "STA-L46-05", "STA-L59-03"],
       "entrypoints": [
         "scripts/runtime-node-identity-admin.mjs:303-399",
@@ -695,9 +695,11 @@
       ],
       "probes": [],
       "routedTo": "W1 (runtime node identity operations)",
-      "regression": "Move issuance to a separate operator-controlled surface and keep the gateway verifier-only. Regression test: the Control Plane image must not contain an issuer private key path.",
+      "regression": "Proposed evidence request, not a gate: inspect the built image manifest for the issuer CLI and any issuer key path without reading key material. If the image carries the issuer CLI, move issuance to a separate operator surface and keep the gateway verifier-only.",
       "reachability": "configured-only",
-      "reachabilityClass": "Reachable only after an operator configures the optional component; the component ships disabled or is not composed by default."
+      "reachabilityClass": "Reachable only after an operator configures the optional component; the component ships disabled or is not composed by default.",
+      "reachabilityNote": "Source shows: scripts/runtime-node-identity-admin.mjs signs credentials with an Ed25519 private key read from an operator-supplied absolute path (--issuer-private-key; the file must be a private regular file owned by the invoking user), and both infrastructure/containers/Dockerfile and Dockerfile.hosted copy scripts/ into the build context (Dockerfile:7, Dockerfile.hosted:7 and :94). docs/runtime-node-identity-operations.md states that key registration and credential issuance are deliberately offline operator actions and that the issuer private half is kept offline or in the operator's protected key service; only the public PEM belongs on the gateway. Source does not show: where any issuer private key is stored, or that one exists on Control Plane infrastructure. That placement is an evidence gap. No key material was read.",
+      "evidenceGap": "Deployed placement of the issuer private key is not established by the repository."
     },
     {
       "id": "CP190-F17",
@@ -878,9 +880,9 @@
     },
     {
       "id": "CP190-F28",
-      "title": "Staging and production share one R2 bucket credential slot and are separated by a key prefix only",
+      "title": "Staging and production share one R2 bucket and are separated by a key prefix in source; whether their credentials are distinct is not shown",
       "severity": "medium",
-      "releaseImpact": "The asserted environment credential separation is a naming convention, not an enforced control. STA-L31-01, STA-L31-02 and STA-L40-11 acceptance stay open.",
+      "releaseImpact": "Environment separation of object keys rests on a prefix, which is visible in source. Whether staging and production hold distinct bucket-scoped credentials is not shown by the source and is an evidence gap. STA-L31-01, STA-L31-02 and STA-L40-11 acceptance stay open.",
       "obligations": ["STA-L31-01", "STA-L31-02", "STA-L40-11"],
       "entrypoints": [
         ".railway/railway.ts:82-89",
@@ -889,9 +891,11 @@
       ],
       "probes": [],
       "routedTo": "W1 (deployment) with the operations owner",
-      "regression": "Provision distinct bucket-scoped R2 credentials per environment. Regression test: the production credential must not read a staging object and the staging credential must not read a production object.",
+      "regression": "Proposed evidence request, not a gate: the operations owner states whether staging and production credentials are distinct. If they are shared, provision distinct bucket-scoped credentials and add a cross-environment read-denied test.",
       "reachability": "configured-only",
-      "reachabilityClass": "Reachable only after an operator configures the optional component; the component ships disabled or is not composed by default."
+      "reachabilityClass": "Reachable only after an operator configures the optional component; the component ships disabled or is not composed by default.",
+      "reachabilityNote": "Source shows: .railway/railway.ts:82-89 and :133-139 declare R2_BUCKET 'ctrl-plane' for both environments and add R2_PREFIX 'staging/' only when not production, and packages/object-store/src/index.ts:140-142 applies the prefix to every address. R2_ACCESS_KEY_ID and R2_SECRET_ACCESS_KEY are declared with preserve() in both, meaning the value is kept in Railway and not set by source. Source does not show: whether the preserved values or their bucket scopes are shared or distinct between environments. Matching variable names are not evidence of matching values. That is an evidence gap. No credential value was read.",
+      "evidenceGap": "Whether staging and production R2 credentials are distinct in value or scope is not established by the repository."
     },
     {
       "id": "CP190-F29",
@@ -920,7 +924,7 @@
     "No live managed-cloud vault rotation and restore evidence exists for the selected credential-vault provider.",
     "Packaged Local OS-secure handle resolution and packaged binary signing evidence remain absent.",
     "Malware scanner composition, quarantine and fail-closed outage evidence remain a product-owned gate.",
-    "The independent human penetration review required by the issue acceptance criteria has not been performed; the probes in this lane are credential-free synthetic evidence only.",
+    "No targeted penetration exercise or independent security-review evidence has been produced against a permitted live profile. Issue #190 asks for independent review and targeted manual penetration and does not require a human reviewer; the probes in this lane are credential-free synthetic evidence only.",
     "This reviewer approves none of the routed fixes; each routed owner must verify its own fix on its own exact head and an independent reviewer must then re-verify."
   ],
   "custody": {
@@ -937,7 +941,7 @@
     "claudeCustody": "unverified in the shared index; the three paths are new and unique, and no existing file was modified, so a custody reversal can drop the branch without touching another owner",
     "existingFilesModified": [],
     "sharedIndexReReadable": true,
-    "sharedIndexNote": "The shared ownership index cited by sharedIndex was not readable at the audited head, so that claim was scoped to the checkouts actually inspected and listed. The index is readable again and is rewritten continuously, so its SHA-256 identifies a snapshot and not the file. The re-read below found the two proposed F-04 paths named as the scope of Fleet 2's F2W6 (branch f2w6/credential-vault-f04), and the owner fix on main at 4e126a7c3e55bfb05b8bdfc390705b83f777c6d4 (#1224).",
+    "sharedIndexNote": "The records of the original index conflict and the custody observation is unverified. The audit report records a search of the shared ownership index at the audited head with the SHA-256 in sharedIndexSha256AtAuditedHead; an earlier revision of this note said the index was not readable at the audited head and that the claim was scoped to the checkouts actually inspected. Both cannot hold, the index is an external, continuously rewritten file, and this repository cannot re-establish either statement. The later re-read below is likewise the author's recorded observation. It found the two proposed F-04 paths named as the scope of Fleet 2's F2W6 (branch f2w6/credential-vault-f04), and the owner fix is on main at 4e126a7c3e55bfb05b8bdfc390705b83f777c6d4 (#1224). No finding depends on this custody record.",
     "registeredWorktreesInspected": [
       "adea-ai/control-plane (the shared main checkout)",
       "the F2W4 CP190 checkout (this branch)"
@@ -952,7 +956,8 @@
       "occurrencesOfPackagePath": 8,
       "result": "The index now names both proposed F-04 paths as the scope of Fleet 2's F2W6 (branch f2w6/credential-vault-f04, base 27f17bd55). The owner fix is on main at 4e126a7c3e55bfb05b8bdfc390705b83f777c6d4 (#1224), changing packages/credential-vault/src/vault.ts and adding packages/credential-vault/src/index.test.mjs.",
       "note": "This lane made no change to either path. The index is read only; the shared index is written by its own writer."
-    }
+    },
+    "sharedIndexReadabilityAtAuditedHead": "conflicting-records-unverified"
   },
   "severitySummary": {
     "high": 2,
@@ -1047,7 +1052,7 @@
       "CP190-P09 and CP190-P10 now read packages/managed-pi-adapter/src/index.ts and fail loudly when the file is missing or empty, so a nonexistent path can never be reported as a missing grant check.",
       "CP190-P13 now records both the mitigating parent-directory control and the non-owner-only sidecar mode, and classifies the result as defense in depth.",
       "CP190-P02, CP190-P03 and CP190-P04 now state the reachability bound and the documented delegation, and no longer imply a deployed unauthenticated approval path or a universal duplicate-effect path.",
-      "CP190-P21 classifies the relay path: it proves that no application constructs the relay host adapter or the metadata processor, that the only relay client is a test fake and that the metadata effect is injected, so the finding is a contract and defence-in-depth gap rather than a deployed approval path.",
+      "CP190-P21 classifies the relay path: it scans apps/ and packages/ recursively (outside the relay package, tests and declarations), finds no construction of the relay host adapter or the metadata processor and no call to createRelayExecutionMetadataCommandProcessor, and shows that the only relay client is a test fake and that the metadata effect is injected, so the finding is a contract and defence-in-depth gap rather than a deployed approval path.",
       "CP190-P22 classifies the relay idempotency: it proves that the acceptance request carries the caller's idempotency key while submit_input carries none, so the durable guarantee is the CommandInbox's, not the receipt's.",
       "CP190-P23 classifies the vault egress gap: it proves that the composed model-selection path normalizes the leased result and rejects a non-plain carrier, so only the uncomposed raw-result callers can reach the screen with an exotic container.",
       "CP190-P24 classifies the direct-local path: it proves that the managed-Pi driver checks no grant and that the composed spawn policy leaves the working directory unconstrained, so the bound is operator configuration.",
@@ -1082,6 +1087,23 @@
         "findingsRestated": ["CP190-F01", "CP190-F02", "CP190-F03", "CP190-F04", "CP190-F09"],
         "findingsAdded": ["CP190-F29"],
         "probesAdded": ["CP190-P21", "CP190-P22", "CP190-P23", "CP190-P24", "CP190-P25"],
+        "severityChanges": []
+      },
+      {
+        "round": 3,
+        "reviewedBy": "advisory review of exact head 573f50c0c255073ca80372aad926c0bcea1ced81, repaired by the CP #1220 evidence owner on 2026-10-23",
+        "method": "Each flagged statement was re-read against the cited source and issue #190. No live profile was contacted and no secret or key material was read.",
+        "changes": [
+          "Penetration gate: the wording no longer requires a human reviewer; issue #190 asks for independent review and targeted manual penetration and does not say the reviewer must be human.",
+          "F-16: restated; the source shows an issuer CLI that signs with an operator-supplied private key file and an image build that copies scripts/, but does not show where any issuer private key is stored. The deployed placement is recorded as an evidence gap.",
+          "F-28: restated; the source shows one bucket with a non-production key prefix, but the credential values and scopes are held outside the repository, so shared or distinct credentials is recorded as an evidence gap.",
+          "F-03: the entrypoint packages/managed-pi-adapter/src/managed-pi-driver.ts, which does not exist, is replaced by packages/managed-pi-adapter/src/index.ts:322.",
+          "Shared ownership index: the conflicting statements about its readability at the audited head are recorded as unverified.",
+          "CP190-P21: the scan was top-level apps/*/src/*.ts only; it now covers apps/ and packages/ recursively (excluding the relay package, tests and declarations) and the statements that relied on it name what was scanned."
+        ],
+        "findingsRestated": ["CP190-F16", "CP190-F28", "CP190-F03", "CP190-F01"],
+        "findingsAdded": [],
+        "probesAdded": [],
         "severityChanges": []
       }
     ]
