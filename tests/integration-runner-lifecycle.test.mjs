@@ -42,12 +42,14 @@ const runnerDoubleSource = `#!${process.execPath}
 import { appendFileSync, existsSync } from 'node:fs'
 import { basename } from 'node:path'
 // The descendant fixtures detach (exit, so their holder is re-parented) only once
-// the harness has acknowledged that it recorded the holder's ownership, or has
-// deliberately declined to. The wait is bounded, so a harness that is gone never
-// strands the double.
-async function awaitFixtureAck() {
+// the harness has acknowledged THAT holder, by the file named after its PID: the
+// harness has recorded the holder's ownership, or has deliberately declined to.
+// Wrappers that run concurrently each wait for their own holder's file. The wait
+// is bounded, so a harness that is gone never strands the double.
+async function awaitFixtureAck(holderPid) {
+  const ack = process.env.FIXTURE_ACK + '.' + holderPid
   const deadline = Date.now() + 10_000
-  while (process.env.FIXTURE_ACK && !existsSync(process.env.FIXTURE_ACK) && Date.now() < deadline)
+  while (process.env.FIXTURE_ACK && !existsSync(ack) && Date.now() < deadline)
     await new Promise((resolve) => setTimeout(resolve, 10))
 }
 const program = basename(process.argv[1])
@@ -76,7 +78,7 @@ if (process.env.FAKE_BUN_SPAWN_DETACHED_DESCENDANT === 'true' && args.includes('
   if (process.env.FAKE_DESCENDANT_SCRUBS_OWNER === 'true') delete detachedEnv.CONTROL_PLANE_RUNNER_OWNER
   spawn(process.execPath, [
     '-e',
-    "const { spawn } = require('node:child_process'); const { appendFileSync } = require('node:fs'); const holder = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: ['ignore', 'inherit', 'inherit'] }); appendFileSync(process.env.DESCENDANT_RECEIPT, String(holder.pid) + '\\\\n'); const { existsSync } = require('node:fs'); const deadline = Date.now() + 10000; const detach = () => { if (!process.env.FIXTURE_ACK || existsSync(process.env.FIXTURE_ACK) || Date.now() > deadline) process.exit(0); setTimeout(detach, 10) }; detach()",
+    "const { spawn } = require('node:child_process'); const { appendFileSync } = require('node:fs'); const holder = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: ['ignore', 'inherit', 'inherit'] }); appendFileSync(process.env.DESCENDANT_RECEIPT, String(holder.pid) + '\\\\n'); const { existsSync } = require('node:fs'); const deadline = Date.now() + 10000; const ack = process.env.FIXTURE_ACK + '.' + holder.pid; const detach = () => { if (!process.env.FIXTURE_ACK || existsSync(ack) || Date.now() > deadline) process.exit(0); setTimeout(detach, 10) }; detach()",
   ], { stdio: ['ignore', 'inherit', 'inherit'], env: detachedEnv })
   await new Promise(() => {})
 }
@@ -97,7 +99,7 @@ if (process.env.FAKE_BUN_WRAPPER_EXITS_FIRST === 'true' && args.includes(process
     env: holderEnv,
   })
   appendFileSync(process.env.DESCENDANT_RECEIPT, String(holder.pid) + '\\n')
-  await awaitFixtureAck()
+  await awaitFixtureAck(holder.pid)
   process.exit(0)
 }
 if (program === 'docker') {
@@ -497,38 +499,80 @@ function detachesDescendant(overrides) {
   )
 }
 
+/** The acknowledgment file one holder's fixture waits for before it detaches. */
+function fixtureAckPath(directory, pid) {
+  return join(directory, `${FIXTURE_ACK_FILE}.${pid}`)
+}
+
 /**
- * The deterministic ownership boundary of a detaching fixture.
+ * The deterministic ownership boundary of a detaching fixture, per holder.
  *
  * Whether the harness owns a holder must not depend on whether a periodic sample
- * happened to land while the holder was still in the runner's tree. The fixture
- * therefore writes its receipt and then WAITS, still attached, for an
- * acknowledgment; this function waits for the receipt, settles the ownership
- * question while the holder is provably in the runner's tree, and only then
- * writes the acknowledgment that lets the fixture detach.
+ * happened to land while the holder was still in the runner's tree. Each fixture
+ * therefore writes its holder's PID to the receipt and then WAITS, still
+ * attached, for an acknowledgment file named after that PID. The harness handles
+ * every holder that appears in the receipt, however many wrappers run
+ * concurrently and whenever they append:
  *
- * - `owned`: the holder is recorded in the ledger now, with its identity, and the
- *   case fails loudly if it could not be, rather than leaking an unowned holder
- *   that a later assertion expects to be gone.
+ * - The receipt is read BEFORE the tree is snapshotted. A holder listed in the
+ *   receipt is waiting for its own acknowledgment, so it is still attached and is
+ *   in the snapshot taken after that read; a holder appended later is not in this
+ *   cohort and is handled by the next pass, not wrongly counted as missing.
+ * - `owned`: the holder is recorded in the ledger with its identity, and the case
+ *   fails loudly if it could not be, rather than leaking an unowned holder that a
+ *   later assertion expects to be gone.
  * - `unowned`: the ledger records nothing, so the holder stays without proof of
- *   ownership whatever the timing; the case fails loudly if it was recorded anyway.
+ *   ownership whatever the timing; the case fails loudly if it was recorded.
+ * - Only then is THAT holder's acknowledgment written, which releases it alone.
+ *
+ * The passes run on an interval so a later wrapper is released promptly, and
+ * `check()` runs one on demand and throws what any pass found.
  */
-async function settleFixtureOwnership({ child, descendants, directory, ledger, ownership }) {
-  await waitForDescendant(descendants)
-  ledger.sample(child.pid)
-  const holders = readDescendantPids(descendants)
-  const recorded = holders.filter((pid) => ledger.owns(pid))
-  if (ownership === 'unowned') {
-    if (recorded.length > 0)
-      throw new Error(`the fixture holder ${recorded.join(', ')} was recorded as owned`)
-  } else {
-    const missing = holders.filter((pid) => !recorded.includes(pid))
-    if (missing.length > 0)
-      throw new Error(
-        `the fixture ownership handshake failed: ${missing.join(', ')} was not in the runner's tree before it detached`
-      )
+function startFixtureHandshake({
+  child,
+  descendants,
+  directory,
+  ledger,
+  ownership,
+  intervalMs = 10,
+}) {
+  const handled = new Set()
+  const problems = []
+  const settle = () => {
+    const cohort = readDescendantPids(descendants).filter(
+      (pid) => Number.isSafeInteger(pid) && pid > 1 && !handled.has(pid)
+    )
+    if (cohort.length === 0) return
+    ledger.sample(child.pid)
+    for (const pid of cohort) {
+      handled.add(pid)
+      const recorded = ledger.owns(pid)
+      if (ownership === 'unowned' && recorded)
+        problems.push(`the fixture holder ${pid} was recorded as owned`)
+      if (ownership !== 'unowned' && !recorded)
+        problems.push(
+          `the fixture ownership handshake failed: ${pid} was not in the runner's tree before it detached`
+        )
+      writeFileSync(fixtureAckPath(directory, pid), '')
+    }
   }
-  writeFileSync(join(directory, FIXTURE_ACK_FILE), '')
+  const timer = setInterval(() => {
+    try {
+      settle()
+    } catch (error) {
+      problems.push(`the fixture handshake failed: ${error?.message ?? String(error)}`)
+    }
+  }, intervalMs)
+  timer.unref?.()
+  return {
+    check() {
+      settle()
+      if (problems.length > 0) throw new Error(problems.join('\n'))
+    },
+    stop() {
+      clearInterval(timer)
+    },
+  }
 }
 
 /**
@@ -632,6 +676,7 @@ async function executeRunnerInterrupted(
   let child
   let gone
   let sampler
+  let handshake
   let failure
   try {
     child = spawn(process.execPath, [runner], {
@@ -641,6 +686,8 @@ async function executeRunnerInterrupted(
     })
     gone = new Promise((resolve) => child.once('exit', () => resolve()))
     sampler = startSampling(ledger, child, sampleIntervalMs)
+    if (detachesDescendant(overrides))
+      handshake = startFixtureHandshake({ child, descendants, directory, ledger, ownership })
     let stdout = ''
     let stderr = ''
     child.stdout.setEncoding('utf8')
@@ -660,10 +707,12 @@ async function executeRunnerInterrupted(
     )
     await waitForReceipt(commands, predicate, description)
     if (overrides.FAKE_BUN_SPAWN_DESCENDANT === 'true') await waitForDescendant(descendants)
-    // A fixture that detaches its holder does so only after this boundary: the
+    // A fixture that detaches its holder does so only after this boundary: each
     // holder is recorded as owned, or deliberately not, and only then released.
-    if (detachesDescendant(overrides))
-      await settleFixtureOwnership({ child, descendants, directory, ledger, ownership })
+    if (handshake !== undefined) {
+      await waitForDescendant(descendants)
+      handshake.check()
+    }
     // The survivor of the detached case must be RE-PARENTED before the signal:
     // a survivor that is still a child is still part of the owned tree, and the
     // case would then measure the owned-tree termination instead.
@@ -676,6 +725,7 @@ async function executeRunnerInterrupted(
     // The periodic sample can be up to one interval old, and a double the runner
     // started since then would die with the runner before the teardown could see
     // it: the proven tree is recorded synchronously, immediately before the signal.
+    handshake?.check()
     if (isRunning(child)) ledger.sample(child.pid)
     child.kill(signal)
     const outcome = await Promise.race([
@@ -706,6 +756,7 @@ async function executeRunnerInterrupted(
       readDescendantPids(descendants),
       FIXTURE_LIVENESS_SETTLE_MS
     )
+    handshake?.check()
     const result = {
       ...outcome,
       stdout,
@@ -720,6 +771,7 @@ async function executeRunnerInterrupted(
     failure = error
     throw error
   } finally {
+    handshake?.stop()
     await finishHarness({ child, gone, directory, descendants, ledger, sampler }, failure)
   }
 }
@@ -770,6 +822,7 @@ async function executeRunnerToExit(
   let child
   let gone
   let sampler
+  let handshake
   let failure
   try {
     child = spawn(process.execPath, [runner], {
@@ -792,8 +845,11 @@ async function executeRunnerToExit(
       child.once('exit', (status, signal) => resolve({ status, signal }))
     )
     gone = exited
-    if (detachesDescendant(overrides))
-      await settleFixtureOwnership({ child, descendants, directory, ledger, ownership })
+    if (detachesDescendant(overrides)) {
+      handshake = startFixtureHandshake({ child, descendants, directory, ledger, ownership })
+      await waitForDescendant(descendants)
+      handshake.check()
+    }
     const outcome = await Promise.race([
       exited,
       new Promise((resolve) => {
@@ -803,6 +859,7 @@ async function executeRunnerToExit(
     ])
     if (outcome.signal === 'settle-timeout')
       throw new Error(`Runner did not exit within ${settleMs}ms`)
+    handshake?.check()
     const result = { ...outcome, stdout, stderr, descendants: readDescendantPids(descendants) }
     if (inspect !== undefined) await inspect(result)
     return result
@@ -810,6 +867,7 @@ async function executeRunnerToExit(
     failure = error
     throw error
   } finally {
+    handshake?.stop()
     await finishHarness({ child, gone, directory, descendants, ledger, sampler }, failure)
   }
 }
@@ -2198,6 +2256,66 @@ describe('integration runner lifecycle harness teardown', () => {
     expect(outcome.error?.fixtureDescendants?.length ?? 0).toBeGreaterThan(0)
     for (const pid of outcome.error.fixtureDescendants) expect(isProcessAlive(pid)).toBe(false)
   }, 40_000)
+
+  test('the handshake releases each holder alone, and a holder appended during the snapshot is not a false failure', () => {
+    // Concurrent wrappers append their holders at any time. The cohort is the
+    // receipt as read BEFORE the tree is snapshotted, so a holder that appears
+    // while the snapshot is taken belongs to the next pass instead of being
+    // counted as missing from this one, and each holder is released by its own
+    // acknowledgment file.
+    const directory = mkdtempSync(join(tmpdir(), 'cp-handshake-'))
+    const descendants = join(directory, 'descendants.pid')
+    const attached = new Set()
+    const recorded = new Set()
+    let appendDuringSnapshot
+    const ledger = {
+      sample() {
+        for (const pid of attached) recorded.add(pid)
+        // A concurrent wrapper appends its holder (attached, listed in the receipt)
+        // right after the snapshot was taken.
+        appendDuringSnapshot?.()
+        appendDuringSnapshot = undefined
+      },
+      owns: (pid) => recorded.has(pid),
+    }
+    const append = (pid) => {
+      attached.add(pid)
+      appendFileSync(descendants, `${pid}\n`)
+    }
+    const acknowledged = (pid) => existsSync(fixtureAckPath(directory, pid))
+    const handshake = startFixtureHandshake({
+      child: { pid: process.pid },
+      descendants,
+      directory,
+      ledger,
+      ownership: 'owned',
+      intervalMs: 60_000,
+    })
+    try {
+      append(1001)
+      append(1002)
+      appendDuringSnapshot = () => append(1003)
+      handshake.check()
+      // The first cohort is released holder by holder; the one appended during the
+      // snapshot is neither failed nor released yet.
+      expect(acknowledged(1001)).toBe(true)
+      expect(acknowledged(1002)).toBe(true)
+      expect(acknowledged(1003)).toBe(false)
+      // The next pass records it from a snapshot that does contain it, then releases it.
+      handshake.check()
+      expect(recorded.has(1003)).toBe(true)
+      expect(acknowledged(1003)).toBe(true)
+      // An unrecorded holder is a loud failure, and is still released alone.
+      attached.add(1004)
+      appendFileSync(descendants, '1004\n')
+      ledger.sample = () => {}
+      expect(() => handshake.check()).toThrow(/1004 was not in the runner's tree/u)
+      expect(acknowledged(1004)).toBe(true)
+    } finally {
+      handshake.stop()
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
 
   test('without /proc a case that exceeds its settle budget still reaps its holder, whatever the sampler saw', async () => {
     // The periodic sample is made too slow to ever land, so the holder is owned
