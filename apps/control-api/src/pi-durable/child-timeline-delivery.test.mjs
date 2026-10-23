@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import {
   createPiChildTimelineDelivery,
   createPiChildTimelineHttpNotify,
+  PI_CHILD_TIMELINE_MAX_INBOX_EVENTS,
 } from './child-timeline-delivery.ts'
 import { SqlitePiDurableLeadReceiptStore } from './pi-durable-lead.service.ts'
 
@@ -62,7 +63,11 @@ test('terminal inbox retries after failure and SQLite process reopen without res
       principalId: 'svc_adea',
       notify,
     })
-    expect(await first.reconcile()).toEqual({ delivered: 0, blocked: [receipt.dispatchId] })
+    expect(await first.reconcile()).toEqual({
+      delivered: 0,
+      blocked: [receipt.dispatchId],
+      rejected: 0,
+    })
     database.close()
     database = new DatabaseSync(filename)
     fail = false
@@ -72,8 +77,8 @@ test('terminal inbox retries after failure and SQLite process reopen without res
       principalId: 'svc_adea',
       notify,
     })
-    expect(await reopened.reconcile()).toEqual({ delivered: 1, blocked: [] })
-    expect(await reopened.reconcile()).toEqual({ delivered: 1, blocked: [] })
+    expect(await reopened.reconcile()).toEqual({ delivered: 1, blocked: [], rejected: 0 })
+    expect(await reopened.reconcile()).toEqual({ delivered: 1, blocked: [], rejected: 0 })
     expect(deliveries).toEqual([
       { workspaceId, intentId, principalId: 'svc_adea' },
       { workspaceId, intentId, principalId: 'svc_adea' },
@@ -102,7 +107,7 @@ test('nonterminal, unknown parent, and undispatched receipts cannot wake Adea', 
       principalId: 'svc_adea',
       notify: async (input) => notified.push(input),
     })
-    expect(await delivery.reconcile()).toEqual({ delivered: 0, blocked: [] })
+    expect(await delivery.reconcile()).toEqual({ delivered: 0, blocked: [], rejected: 0 })
     expect(notified).toEqual([])
   } finally {
     database.close()
@@ -148,4 +153,51 @@ test('HTTP wake uses only selectors and existing scoped credential, and fails cl
       credentials: { getExistingCredential: async () => 'aaa.bbb.ccc' },
     })
   ).toThrow('PI_CHILD_TIMELINE_CONFIGURATION_REQUIRED')
+})
+
+test('an oversized retained inbox is refused instead of replayed', async () => {
+  const database = new DatabaseSync(':memory:')
+  try {
+    const receipts = new SqlitePiDurableLeadReceiptStore(database)
+    await receipts.insert(receipt)
+    const notified = []
+    const oversized = Array.from({ length: PI_CHILD_TIMELINE_MAX_INBOX_EVENTS + 1 }, (_, n) => ({
+      ...event(),
+      delegationId: `dlg_${'0'.repeat(25)}${'0123456789ABCDEFGHJKMNPQRSTVWXYZ'[n % 32]}`,
+    }))
+    const delivery = createPiChildTimelineDelivery({
+      database,
+      parentInbox: { list: async () => oversized },
+      principalId: 'svc_adea',
+      notify: async (input) => notified.push(input),
+    })
+    await expect(delivery.reconcile()).rejects.toThrow('PI_CHILD_TIMELINE_SCAN_LIMIT')
+    expect(notified).toEqual([])
+  } finally {
+    database.close()
+  }
+})
+
+test('one malformed retained row does not abort the pass or the settlements behind it', async () => {
+  const database = new DatabaseSync(':memory:')
+  try {
+    const receipts = new SqlitePiDurableLeadReceiptStore(database)
+    await receipts.insert(receipt)
+    const notified = []
+    const delivery = createPiChildTimelineDelivery({
+      database,
+      parentInbox: {
+        list: async () => [
+          { type: 'delegation.completed', delegationId: 'not-a-canonical-delegation-id' },
+          event(),
+        ],
+      },
+      principalId: 'svc_adea',
+      notify: async (input) => notified.push(input),
+    })
+    expect(await delivery.reconcile()).toEqual({ delivered: 1, blocked: [], rejected: 1 })
+    expect(notified).toEqual([{ workspaceId, intentId, principalId: 'svc_adea' }])
+  } finally {
+    database.close()
+  }
 })

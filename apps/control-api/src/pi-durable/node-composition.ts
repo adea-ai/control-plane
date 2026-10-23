@@ -26,6 +26,9 @@ import type { ChildUsageOutcomesFor } from './child-usage-outcomes.js'
 import { assertExecutionPlanIntegrity } from '@control-plane/execution-plan'
 import type { DelegationService } from '@control-plane/orchestration'
 
+/** Default bound for the close drain. A wedged recovery is reported, never waited on forever. */
+export const DEFAULT_DRAIN_TIMEOUT_MS = 30_000
+
 export interface NodePiDurableLeadCompositionOptions {
   readonly onAdapterReady?: NodePiDurableCompositionOptions['onAdapterReady']
   readonly directory: string
@@ -47,6 +50,11 @@ export interface NodePiDurableLeadCompositionOptions {
   readonly delegationService?: Pick<DelegationService, 'cancelChildren'>
   /** Retained read-only child observations from that same canonical service. */
   readonly childDelegations?: Pick<DelegationService, 'listChildren'>
+  /**
+   * Bounded wait for accepted recoveries while closing. A wedged child scan must not hold process
+   * teardown open forever; an incomplete drain is reported instead of hanging.
+   */
+  readonly drainTimeoutMs?: number
   /** A child must independently reload its canonical lineage, selection and authority. */
   readonly childAuthority?: Pick<
     NodePiDurableCompositionOptions,
@@ -241,6 +249,35 @@ export async function createNodePiDurableLeadComposition(
     recoveryTimer.unref()
     const initializedRuntime = runtime
     const publicRecoveries = new Set<Promise<void>>()
+    let drainIncomplete = false
+    const drainTimeoutMs = options.drainTimeoutMs ?? DEFAULT_DRAIN_TIMEOUT_MS
+    /**
+     * Waits for accepted work, but never past the drain deadline. Returns whether the work
+     * settled in time; a rejected work still counts as settled because its outcome is recorded.
+     */
+    const settleWithin = async (work: Promise<unknown> | undefined): Promise<boolean> => {
+      if (!work) return true
+      let settled = false
+      let timer: ReturnType<typeof setTimeout> | undefined
+      const tracked = Promise.resolve(work).then(
+        () => {
+          settled = true
+        },
+        () => {
+          settled = true
+        }
+      )
+      const deadline = new Promise<void>((resolve) => {
+        timer = setTimeout(() => resolve(), drainTimeoutMs)
+        timer.unref()
+      })
+      try {
+        await Promise.race([tracked, deadline])
+      } finally {
+        if (timer !== undefined) clearTimeout(timer)
+      }
+      return settled
+    }
     let closePromise: Promise<void> | undefined
     const assertOpen = () => {
       if (closePromise !== undefined) throw new Error('PI_LEAD_COMPOSITION_CLOSED')
@@ -300,10 +337,10 @@ export async function createNodePiDurableLeadComposition(
       close() {
         closePromise ??= (async () => {
           clearInterval(recoveryTimer)
-          // Accepted recovery calls keep their stores and settlement port until
-          // they finish. Their callers receive failures; failures must not skip cleanup.
-          await Promise.allSettled(publicRecoveries)
-          await preparationRecovery
+          // Accepted recovery calls keep the stores live until they settle, including failures.
+          // The wait is bounded: a recovery that never settles must not wedge process teardown.
+          if (!(await settleWithin(Promise.allSettled(publicRecoveries)))) drainIncomplete = true
+          if (!(await settleWithin(preparationRecovery))) drainIncomplete = true
           await terminalSettlement.close()
           await childTerminalSettlement?.close()
           try {
@@ -313,6 +350,10 @@ export async function createNodePiDurableLeadComposition(
           }
         })()
         return closePromise
+      },
+      /** True when a close gave up waiting for an accepted recovery. The teardown still completed. */
+      get drainIncomplete() {
+        return drainIncomplete
       },
     }
   } catch (error) {

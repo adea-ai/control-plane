@@ -122,15 +122,19 @@ test('public recovery and process reopen replay a retained terminal inbox into t
     })
     refuseDelivery = true
     await composition.recover()
-    expect(composition.childTimelineRecovery).toEqual({ delivered: 0, blocked: [dispatchId] })
+    expect(composition.childTimelineRecovery).toEqual({
+      delivered: 0,
+      blocked: [dispatchId],
+      rejected: 0,
+    })
     expect(composition.childTimelineDeliveryBlocked).toBe(true)
     refuseDelivery = false
     await composition.recover()
-    expect(composition.childTimelineRecovery).toEqual({ delivered: 1, blocked: [] })
+    expect(composition.childTimelineRecovery).toEqual({ delivered: 1, blocked: [], rejected: 0 })
     expect(composition.childTimelineDeliveryBlocked).toBe(false)
     await composition.close()
     composition = await createNodePiDurableLeadComposition(options)
-    expect(composition.childTimelineRecovery).toEqual({ delivered: 1, blocked: [] })
+    expect(composition.childTimelineRecovery).toEqual({ delivered: 1, blocked: [], rejected: 0 })
     expect(delivered).toEqual([
       { workspaceId, intentId, principalId: 'svc_adea' },
       { workspaceId, intentId, principalId: 'svc_adea' },
@@ -426,3 +430,55 @@ for (const failFirstScan of [false, true]) {
     }
   }, 30000)
 }
+
+test('close bounds the drain so a wedged recovery cannot wedge process teardown', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'pi-lead-bounded-drain-'))
+  let hang = false
+  let release
+  const gate = new Promise((resolve) => {
+    release = resolve
+  })
+  let composition
+  try {
+    composition = await createNodePiDurableLeadComposition(
+      baseOptions(directory, {
+        drainTimeoutMs: 150,
+        childProgress: {
+          scan: async () => {
+            if (hang) await gate
+          },
+        },
+      })
+    )
+    hang = true
+    // An accepted recovery that never settles.
+    const recovery = composition.recover()
+    recovery.catch(() => undefined)
+    const closing = composition.close()
+    // The close must complete on its own instead of waiting for the wedged recovery forever.
+    await closing
+    expect(composition.drainIncomplete).toBe(true)
+    await expect(composition.recover()).rejects.toThrow('PI_LEAD_COMPOSITION_CLOSED')
+  } finally {
+    hang = false
+    release?.()
+    await composition?.close()
+    await rm(directory, { recursive: true, force: true })
+  }
+}, 30000)
+
+test('a completed drain reports no incomplete teardown', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'pi-lead-complete-drain-'))
+  let composition
+  try {
+    composition = await createNodePiDurableLeadComposition(
+      baseOptions(directory, { drainTimeoutMs: 5_000 })
+    )
+    await composition.recover()
+    await composition.close()
+    expect(composition.drainIncomplete).toBe(false)
+  } finally {
+    await composition?.close()
+    await rm(directory, { recursive: true, force: true })
+  }
+}, 30000)

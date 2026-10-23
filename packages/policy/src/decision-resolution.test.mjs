@@ -529,6 +529,24 @@ describe('per-model harness mapping (M12/#678)', () => {
     expect(resolution.resolution.model).toEqual({ withheld: 'NO_DEFAULT_MODEL' })
   })
 
+  test('without a map a pinned harness denial keeps precedence over model entitlement denial', () => {
+    const request = baseRequest()
+    expectDenied('HARNESS_UNAVAILABLE_ON_PINNED_RUNTIME', () =>
+      resolveDecisionLayer(
+        {
+          ...request,
+          entitlements: { ...request.entitlements, modelAccess: 'none' },
+          explicitPins: {
+            runtime: { runtimeDefinitionId: ids.runtimeRemote },
+            harness: { harnessId: 'claude-code' },
+            model: { modelId: 'deepseek-flash' },
+          },
+        },
+        {}
+      )
+    )
+  })
+
   test('a mapped model resolves the mapped harness', () => {
     const resolution = resolveDecisionLayer(
       mappedRequest({ model: { modelId: 'deepseek-flash' } }),
@@ -538,6 +556,7 @@ describe('per-model harness mapping (M12/#678)', () => {
     )
     expect(resolution.resolution.harness.harnessId).toBe('claude-code')
     expect(resolution.resolution.model).toEqual({ modelId: 'deepseek-flash' })
+    expect(resolution.trace.harness.source).toBe('policy-default')
   })
 
   test('the map lookup preserves the case of the accepted model', () => {

@@ -885,6 +885,47 @@ describe('composed Pi Durable lead HTTP endpoints', () => {
       )
     })
 
+    test('only records attributable to this dispatch attempt are disclosed or counted', () => {
+      const listed = []
+      return fixture(
+        async (context) => {
+          const receipt = (
+            await context.inject(
+              'dispatch',
+              context.envelope('pi-durable.lead.dispatch', { intentId })
+            )
+          ).json().data
+          await context.adapter.drain()
+          const response = await read(context, receipt)
+          expect(response.statusCode).toBe(200)
+          const { children, totalChildren, complete } = response.json().data
+          // Attribution is by the exact admitted parent attempt. A record of another attempt of
+          // the same execution and a legacy record with no parent attempt are both left out.
+          expect(children.map((child) => child.delegationId)).toEqual([
+            childId('A'),
+            childId('B'),
+            childId('C'),
+            childId('D'),
+          ])
+          // The disclosed count is the attributable count: an excluded record is never disclosed
+          // and never inflates the total a caller pages against.
+          expect(totalChildren).toBe(4)
+          expect(complete).toBe(true)
+          // Reading children never starts, advances or publishes anything.
+          expect(context.state.starts).toBe(1)
+          expect(listed).toEqual([receipt.executionId])
+        },
+        {
+          childDelegations: {
+            async listChildren(parentExecutionId) {
+              listed.push(parentExecutionId)
+              return records().map((child) => ({ ...child, parentExecutionId }))
+            },
+          },
+        }
+      )
+    })
+
     const many = (count, extraOtherAttempt = 3) => {
       const key = (n) => String(n).padStart(8, '0')
       return [

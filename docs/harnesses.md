@@ -76,6 +76,10 @@ coupling, and neither ever substitutes for the other:
   `acceptedHarnessId` into the routing input digest and add the reason code
   `HARNESS_PINNED`; unpinned digests are unchanged. When no eligible candidate
   exposes the pin, the attempt fails closed with `NO_COMPATIBLE_RUNTIME`.
+- Without a per-model map, harness denials retain precedence over model
+  entitlement denials. A harness selected only by the map records
+  `policy-default` provenance; an actual explicit harness pin records
+  `explicit-pin`.
 - A per-model map is resolved at attempt time from the execution's accepted
   model and passed through the same pin path, so a mapped model reaches only a
   runtime exposing the mapped harness, the mapped harness is bound into the

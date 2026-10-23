@@ -56,6 +56,26 @@ intent/receipt store, composes the actual adapter, drains retained parent inbox
 evidence independently of model inference and scans retained runtime admissions.
 The caller owns closing this composition and its external repositories.
 
+Closing waits for the accepted recoveries so the stores stay live until they
+settle, and the periodic recovery pass settles before the terminal settlements
+are closed. That wait is bounded: a recovery that never settles must not hold
+process teardown open forever. When the bound is reached the close continues,
+`drainIncomplete` reports that the teardown gave up waiting, and the stores
+still close. The bound is the composition's `drainTimeoutMs` option and
+defaults to 30 seconds.
+
+`drainIncomplete` is on the host-facing production composition surface, beside
+the terminal settlement getters, so the host can read it after the close to
+know the drain was not clean. It is a teardown outcome, not a request refusal:
+the close itself always completes.
+
+The retained parent inbox is scanned under the same 4096 bound the child
+progress scanner enforces; a larger inbox is refused rather than replayed. One
+malformed retained row is rejected on its own, exactly as the inbox publisher
+rejects it, and the rest of the pass still runs: the terminal settlements run
+behind this scan in the same recovery, so aborting the pass would stall them on
+every later pass. The rejected-row count is reported with the pass result.
+
 Product `readCurrent` accepts `{schemaVersion:'pi-lead-intent/v1',intentId,
 workspaceId,principalId}`. It returns verified immutable message/profile/selection
 references, original principal, scoped authority revision, current audience,
@@ -186,9 +206,20 @@ fence, including the pinned v2 fence that still permits status and progress
 observation: the lookup and both authority rereads around the child read use it,
 so a fence that appears while the records are being read returns nothing. A
 record of another execution is an authority conflict, and a record of another
-attempt of the same execution is left out. A lead stop does not cascade to
+attempt of the same execution is left out. Attribution is by the exact admitted
+parent attempt, so a legacy record that carries no parent attempt is also left
+out: it cannot be attributed to this dispatch, and it is neither disclosed nor
+counted in `totalChildren`. A lead stop does not cascade to
 children and a child's `cancelled` state is that child's own record, so an
 acknowledged lead stop is not evidence that any child has terminated.
+
+Under a pinned v2 rollback fence the retained marker is compared with the
+current product evidence on the canonical actor as well as on the revision,
+scope and principal set. A canonical-actor drift is therefore an authority
+conflict: `status` and `progress` fail with `PI_LEAD_AUTHORITY_CONFLICT` instead
+of returning a retained receipt. That is a deliberate fail-closed reading of
+actor continuity, and it makes a legitimate change of the canonical actor a
+read outage for that dispatch until the retained marker is re-admitted.
 
 The public Control SDK adds `preparePiDurableLead`, `lookupPiDurableLead`,
 `dispatchPiDurableLead`, `getPiDurableLeadStatus`,
