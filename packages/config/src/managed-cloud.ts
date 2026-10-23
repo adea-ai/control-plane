@@ -13,7 +13,7 @@ export interface ManagedCloudObjectStoreConfiguration {
   readonly region: 'auto'
   readonly accessKeyId: string
   readonly secretAccessKey: string
-  /** Optional environment separation prefix for staging/preview object keys. */
+  /** Optional environment separation prefix for sandbox object keys. */
   readonly prefix?: string
 }
 
@@ -344,7 +344,7 @@ function loadObjectStoreConfiguration(
   const region = environment['R2_REGION'] as string
   const accessKeyId = environment['R2_ACCESS_KEY_ID'] as string
   const secretAccessKey = environment['R2_SECRET_ACCESS_KEY'] as string
-  // Optional environment separation prefix; staging/preview environments set a distinct
+  // Optional environment separation prefix; sandbox environments set a distinct
   // prefix so their objects cannot be addressed with production keys in a shared bucket.
   const prefix = environment['R2_PREFIX'] === undefined ? '' : (environment['R2_PREFIX'] as string)
   const validPrefix =

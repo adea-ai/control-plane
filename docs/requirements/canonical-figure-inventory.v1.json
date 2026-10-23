@@ -1,0 +1,515 @@
+{
+  "schemaVersion": 1,
+  "scope": "actual embedded-object identities observed in selected root tabs; nested tabs and current image bytes are not inventoried",
+  "observedFrom": {
+    "freshnessReceipt": "docs/requirements/canonical-source-freshness-2026-10-03.v1.json",
+    "figureAudit": "docs/requirements/canonical-figure-audit-2026-09-30.md"
+  },
+  "summary": {
+    "sources": 15,
+    "sourcesWithCurrentObjects": 5,
+    "currentRootTabObjects": 12,
+    "historicalObjects": 9,
+    "identitiesRetained": 7,
+    "identitiesNew": 5,
+    "identitiesAbsent": 2,
+    "sourcesWithCurrentImageBytes": 0,
+    "sourcesWithNestedTabsInventoried": 0
+  },
+  "sources": [
+    {
+      "sourceId": "project-index",
+      "title": "Project Index",
+      "currentRevision": 153,
+      "currentRevisionModifiedAt": "2026-10-01T23:49:59.760Z",
+      "currentFileModifiedAt": "2026-10-01T23:49:59.809Z",
+      "currentTextSha256": "ec1770e25e14e01bd9aa49fe416da6c8bf58f672b84d53d01eb55f8a7e8f5a32",
+      "currentTextLogicalLines": 87,
+      "inventoriedTabs": ["t.0"],
+      "nestedTabsInventoried": false,
+      "imageBytesRefreshedAtCurrentRevision": false,
+      "currentObjects": [],
+      "historicalObjects": [],
+      "identityReconciliation": {
+        "retained": [],
+        "added": [],
+        "absent": [],
+        "basis": "native inline-object identity read from the selected root tabs"
+      },
+      "disposition": null
+    },
+    {
+      "sourceId": "agent-hq-prd",
+      "title": "Agent HQ PRD",
+      "currentRevision": 2040,
+      "currentRevisionModifiedAt": "2026-10-01T21:46:27.645Z",
+      "currentFileModifiedAt": "2026-10-01T21:46:27.706Z",
+      "currentTextSha256": "d5314bf48ec73bb5deabbf0e1408e0a7ca3205b9c05b5a481ddd35ba1b363afd",
+      "currentTextLogicalLines": 126,
+      "inventoriedTabs": ["t.0"],
+      "nestedTabsInventoried": false,
+      "imageBytesRefreshedAtCurrentRevision": false,
+      "currentObjects": [
+        {
+          "objectId": "kix.vzbv0wf940bf",
+          "tabId": "t.0",
+          "sha256": null,
+          "byteLength": null
+        }
+      ],
+      "historicalObjects": [
+        {
+          "objectId": "kix.vzbv0wf940bf",
+          "observedAt": "2026-09-30",
+          "observedRevision": 2021,
+          "sha256": "ffe6fef5090d37a94c683dcebb58e87f0824883d8013d433d12e6ff9de749d41",
+          "byteLength": 50662,
+          "recordedTextAnchor": "image immediately before the Figure 1 caption at L059"
+        }
+      ],
+      "identityReconciliation": {
+        "retained": ["kix.vzbv0wf940bf"],
+        "added": [],
+        "absent": [],
+        "basis": "native inline-object identity read from the selected root tabs"
+      },
+      "disposition": {
+        "severity": "high",
+        "owner": "documentation-governance",
+        "issue": 195,
+        "disposition": "The captured inline object identity is still observed at the current revision, but the current bytes were not retrieved and the figure still shows an unconditional Restate box that contradicts the recorded Local default. Re-read the bytes and reconcile the figure against the profile architecture."
+      }
+    },
+    {
+      "sourceId": "control-plane-prd",
+      "title": "Control Plane PRD",
+      "currentRevision": 58,
+      "currentRevisionModifiedAt": "2026-10-01T21:46:34.015Z",
+      "currentFileModifiedAt": "2026-10-01T21:46:34.106Z",
+      "currentTextSha256": "5b040c613b30f03310cc1b32151ad7a631147b0120ee4b6b21e4c519f5302898",
+      "currentTextLogicalLines": 231,
+      "inventoriedTabs": ["t.0"],
+      "nestedTabsInventoried": false,
+      "imageBytesRefreshedAtCurrentRevision": false,
+      "currentObjects": [],
+      "historicalObjects": [],
+      "identityReconciliation": {
+        "retained": [],
+        "added": [],
+        "absent": [],
+        "basis": "native inline-object identity read from the selected root tabs"
+      },
+      "disposition": null
+    },
+    {
+      "sourceId": "cortana-prd",
+      "title": "Cortana PRD",
+      "currentRevision": 43,
+      "currentRevisionModifiedAt": "2026-10-01T20:24:46.550Z",
+      "currentFileModifiedAt": "2026-10-01T20:24:46.613Z",
+      "currentTextSha256": "7b4df5d9585fec6708d7eb73efd745c764328748be010437cf75b6e58e16bbfb",
+      "currentTextLogicalLines": 150,
+      "inventoriedTabs": ["t.0"],
+      "nestedTabsInventoried": false,
+      "imageBytesRefreshedAtCurrentRevision": false,
+      "currentObjects": [],
+      "historicalObjects": [],
+      "identityReconciliation": {
+        "retained": [],
+        "added": [],
+        "absent": [],
+        "basis": "native inline-object identity read from the selected root tabs"
+      },
+      "disposition": null
+    },
+    {
+      "sourceId": "system-architecture",
+      "title": "System Architecture Overview",
+      "currentRevision": 133,
+      "currentRevisionModifiedAt": "2026-10-01T23:49:54.782Z",
+      "currentFileModifiedAt": "2026-10-01T23:49:54.957Z",
+      "currentTextSha256": "a6fe570cbcadbc8d71f1ddf7379b07d73a4b38103d296d4ebed624d3e71e89a6",
+      "currentTextLogicalLines": 134,
+      "inventoriedTabs": ["t.0"],
+      "nestedTabsInventoried": false,
+      "imageBytesRefreshedAtCurrentRevision": false,
+      "currentObjects": [
+        {
+          "objectId": "kix.72hdt2mmgd06",
+          "tabId": "t.0",
+          "sha256": null,
+          "byteLength": null
+        },
+        {
+          "objectId": "kix.b9qi12f8udd1",
+          "tabId": "t.0",
+          "sha256": null,
+          "byteLength": null
+        }
+      ],
+      "historicalObjects": [
+        {
+          "objectId": "kix.ows2808gmq16",
+          "observedAt": "2026-09-30",
+          "observedRevision": 99,
+          "sha256": "1714b1f2e825c908d41b5d9ffd6a516d2b9ac242fc4246f065fe72041c5d68e0",
+          "byteLength": 185403,
+          "recordedTextAnchor": "L043 caption"
+        }
+      ],
+      "identityReconciliation": {
+        "retained": [],
+        "added": ["kix.72hdt2mmgd06", "kix.b9qi12f8udd1"],
+        "absent": ["kix.ows2808gmq16"],
+        "basis": "native inline-object identity read from the selected root tabs"
+      },
+      "disposition": {
+        "severity": "high",
+        "owner": "documentation-governance",
+        "issue": 195,
+        "disposition": "The current root tab exposes two inline objects that were not present at the captured revision, and the captured object identity is no longer observed. The current bytes were not retrieved, so the captured PNG hash describes the historical revision only. Reconcile the canonical System Architecture figure with the profile-specific persistence defaults before any acceptance claim."
+      }
+    },
+    {
+      "sourceId": "control-plane-tdd",
+      "title": "Control Plane TDD",
+      "currentRevision": 134,
+      "currentRevisionModifiedAt": "2026-10-01T23:52:54.454Z",
+      "currentFileModifiedAt": "2026-10-01T23:52:54.503Z",
+      "currentTextSha256": "c06e90130ef502c070c9a685ef68730d24ce471c158fb2b6e278f33f351f210a",
+      "currentTextLogicalLines": 338,
+      "inventoriedTabs": ["t.0"],
+      "nestedTabsInventoried": false,
+      "imageBytesRefreshedAtCurrentRevision": false,
+      "currentObjects": [
+        {
+          "objectId": "kix.obxnsrixkdh2",
+          "tabId": "t.0",
+          "sha256": null,
+          "byteLength": null
+        },
+        {
+          "objectId": "kix.ro51mjyzqmi9",
+          "tabId": "t.0",
+          "sha256": null,
+          "byteLength": null
+        },
+        {
+          "objectId": "kix.x35li8uk2135",
+          "tabId": "t.0",
+          "sha256": null,
+          "byteLength": null
+        }
+      ],
+      "historicalObjects": [
+        {
+          "objectId": "kix.x35li8uk2135",
+          "observedAt": "2026-09-30",
+          "observedRevision": 110,
+          "sha256": "c93a4f16da227eff703bace6ab8e00f0358142a5032ed51005acbcfe1f850b78",
+          "byteLength": 144576,
+          "recordedTextAnchor": "image before the Figure 1 caption at L113"
+        },
+        {
+          "objectId": "kix.obxnsrixkdh2",
+          "observedAt": "2026-09-30",
+          "observedRevision": 110,
+          "sha256": "33e16d6cd6683dc9145467da0504573babd07026c25bbe6a5302cf969d047139",
+          "byteLength": 191741,
+          "recordedTextAnchor": "image before the Figure 2 caption at L137"
+        },
+        {
+          "objectId": "kix.ro51mjyzqmi9",
+          "observedAt": "2026-09-30",
+          "observedRevision": 110,
+          "sha256": "cafdbfac8880b4b374b8de1d158fc522390b4e0ca6b520a5f4336d6e6b8eff99",
+          "byteLength": 119111,
+          "recordedTextAnchor": "image before the Figure 3 caption at L181"
+        }
+      ],
+      "identityReconciliation": {
+        "retained": ["kix.obxnsrixkdh2", "kix.ro51mjyzqmi9", "kix.x35li8uk2135"],
+        "added": [],
+        "absent": [],
+        "basis": "native inline-object identity read from the selected root tabs"
+      },
+      "disposition": {
+        "severity": "high",
+        "owner": "documentation-governance",
+        "issue": 195,
+        "disposition": "All three captured inline object identities are still observed at the current revision, but the current bytes were not retrieved and the execution figure still shows Restate as the sole outer workflow engine. Re-read the bytes and reconcile the figure against the profile architecture."
+      }
+    },
+    {
+      "sourceId": "agent-skill-spec",
+      "title": "Agent & Skill Specification",
+      "currentRevision": 59,
+      "currentRevisionModifiedAt": "2026-10-01T20:22:53.010Z",
+      "currentFileModifiedAt": "2026-10-01T20:22:53.052Z",
+      "currentTextSha256": "f02cec273d434e8e85cc3f4df6ece0b2db2fe1f3c4796b2c9efe578a68762474",
+      "currentTextLogicalLines": 110,
+      "inventoriedTabs": ["t.0"],
+      "nestedTabsInventoried": false,
+      "imageBytesRefreshedAtCurrentRevision": false,
+      "currentObjects": [],
+      "historicalObjects": [],
+      "identityReconciliation": {
+        "retained": [],
+        "added": [],
+        "absent": [],
+        "basis": "native inline-object identity read from the selected root tabs"
+      },
+      "disposition": null
+    },
+    {
+      "sourceId": "data-api-spec",
+      "title": "Data Model & API Specification",
+      "currentRevision": 95,
+      "currentRevisionModifiedAt": "2026-10-01T15:31:45.061Z",
+      "currentFileModifiedAt": "2026-10-01T15:31:45.106Z",
+      "currentTextSha256": "ef0eae69542adebb0462b896387d4a8e2dc85bce288939da01dd60518945df04",
+      "currentTextLogicalLines": 238,
+      "inventoriedTabs": ["t.0"],
+      "nestedTabsInventoried": false,
+      "imageBytesRefreshedAtCurrentRevision": false,
+      "currentObjects": [
+        {
+          "objectId": "kix.3cdr0vj1ebkd",
+          "tabId": "t.0",
+          "sha256": null,
+          "byteLength": null
+        },
+        {
+          "objectId": "kix.j8qqp2z5p3tm",
+          "tabId": "t.0",
+          "sha256": null,
+          "byteLength": null
+        }
+      ],
+      "historicalObjects": [
+        {
+          "objectId": "kix.3cdr0vj1ebkd",
+          "observedAt": "2026-09-30",
+          "observedRevision": 73,
+          "sha256": "c16ae0d9d91bb99a78cd5af06bfc884560c4eca974c56c5b576cbdb20fc9f9a2",
+          "byteLength": 63584,
+          "recordedTextAnchor": "L063 domain relationships"
+        },
+        {
+          "objectId": "kix.j8qqp2z5p3tm",
+          "observedAt": "2026-09-30",
+          "observedRevision": 73,
+          "sha256": "ce9932af244815b4a38c9d5da931356ebbb7cf744c9842ae2ba3330ffcb0e11a",
+          "byteLength": 50696,
+          "recordedTextAnchor": "L072 state machines"
+        }
+      ],
+      "identityReconciliation": {
+        "retained": ["kix.3cdr0vj1ebkd", "kix.j8qqp2z5p3tm"],
+        "added": [],
+        "absent": [],
+        "basis": "native inline-object identity read from the selected root tabs"
+      },
+      "disposition": {
+        "severity": "medium",
+        "owner": "documentation-governance",
+        "issue": 195,
+        "disposition": "Both captured inline object identities are still observed at the current revision, but the current bytes were not retrieved and the state-machine figure still draws a lifecycle vocabulary that differs from the executable execution-state schema. Re-read the bytes and reconcile the figure against packages/domain/src/execution-lifecycle.ts."
+      }
+    },
+    {
+      "sourceId": "runtime-node-spec",
+      "title": "RuntimeNode & Desktop Protocol Specification",
+      "currentRevision": 37,
+      "currentRevisionModifiedAt": "2026-10-01T21:27:51.269Z",
+      "currentFileModifiedAt": "2026-10-01T21:27:51.303Z",
+      "currentTextSha256": "d6abf4e2481d097ff3d829fa9d7a729dad4267bfed1319d6c3817097ffb27d0e",
+      "currentTextLogicalLines": 166,
+      "inventoriedTabs": ["t.0"],
+      "nestedTabsInventoried": false,
+      "imageBytesRefreshedAtCurrentRevision": false,
+      "currentObjects": [],
+      "historicalObjects": [],
+      "identityReconciliation": {
+        "retained": [],
+        "added": [],
+        "absent": [],
+        "basis": "native inline-object identity read from the selected root tabs"
+      },
+      "disposition": null
+    },
+    {
+      "sourceId": "execution-consistency-spec",
+      "title": "Execution Consistency & Event Delivery Specification",
+      "currentRevision": 45,
+      "currentRevisionModifiedAt": "2026-10-01T15:24:49.556Z",
+      "currentFileModifiedAt": "2026-10-01T15:24:49.605Z",
+      "currentTextSha256": "9bb474a810a2ff0dcc105c2d1a71f59ee7ba1585d185c718767b30de761bf588",
+      "currentTextLogicalLines": 172,
+      "inventoriedTabs": ["t.0"],
+      "nestedTabsInventoried": false,
+      "imageBytesRefreshedAtCurrentRevision": false,
+      "currentObjects": [],
+      "historicalObjects": [],
+      "identityReconciliation": {
+        "retained": [],
+        "added": [],
+        "absent": [],
+        "basis": "native inline-object identity read from the selected root tabs"
+      },
+      "disposition": null
+    },
+    {
+      "sourceId": "artifact-storage-spec",
+      "title": "Artifact Storage Specification",
+      "currentRevision": 37,
+      "currentRevisionModifiedAt": "2026-10-01T20:23:26.707Z",
+      "currentFileModifiedAt": "2026-10-01T20:23:26.745Z",
+      "currentTextSha256": "37ac54802a5ef95862e4dd8c140dbf7979a7825e92aeb74f6acf5f3766cd63cd",
+      "currentTextLogicalLines": 150,
+      "inventoriedTabs": ["t.0"],
+      "nestedTabsInventoried": false,
+      "imageBytesRefreshedAtCurrentRevision": false,
+      "currentObjects": [],
+      "historicalObjects": [],
+      "identityReconciliation": {
+        "retained": [],
+        "added": [],
+        "absent": [],
+        "basis": "native inline-object identity read from the selected root tabs"
+      },
+      "disposition": null
+    },
+    {
+      "sourceId": "security-trust-model",
+      "title": "Security & Trust Model",
+      "currentRevision": 103,
+      "currentRevisionModifiedAt": "2026-10-01T21:42:42.879Z",
+      "currentFileModifiedAt": "2026-10-01T21:42:42.928Z",
+      "currentTextSha256": "36940991eb4a76d3dbeb413addd973b4e1ba8bc80e528239d1c6b5e8f1be1d8e",
+      "currentTextLogicalLines": 121,
+      "inventoriedTabs": ["t.0"],
+      "nestedTabsInventoried": false,
+      "imageBytesRefreshedAtCurrentRevision": false,
+      "currentObjects": [
+        {
+          "objectId": "kix.aemvetgxd2fc",
+          "tabId": "t.0",
+          "sha256": null,
+          "byteLength": null
+        },
+        {
+          "objectId": "kix.k9nbkupvshm1",
+          "tabId": "t.0",
+          "sha256": null,
+          "byteLength": null
+        },
+        {
+          "objectId": "kix.q7phlac8zah3",
+          "tabId": "t.0",
+          "sha256": null,
+          "byteLength": null
+        },
+        {
+          "objectId": "kix.vlyjrmx8itur",
+          "tabId": "t.0",
+          "sha256": null,
+          "byteLength": null
+        }
+      ],
+      "historicalObjects": [
+        {
+          "objectId": "kix.vlyjrmx8itur",
+          "observedAt": "2026-09-30",
+          "observedRevision": 78,
+          "sha256": "75ad026c90af7abe89a8f20f9c3604a17e2a91658b712265fc1299ff730eee6f",
+          "byteLength": 164420,
+          "recordedTextAnchor": "image before the Figure 1 caption at L036"
+        },
+        {
+          "objectId": "kix.a77to4b9gn0r",
+          "observedAt": "2026-09-30",
+          "observedRevision": 78,
+          "sha256": "8f24f3000f97c91b9349e40d494d0cb7a48f9f5c4e6f88d9f3cbc67ad154199c",
+          "byteLength": 112498,
+          "recordedTextAnchor": "inline in the heading \"3. Workspace Isolation\" at L037; no separate caption"
+        }
+      ],
+      "identityReconciliation": {
+        "retained": ["kix.vlyjrmx8itur"],
+        "added": ["kix.aemvetgxd2fc", "kix.k9nbkupvshm1", "kix.q7phlac8zah3"],
+        "absent": ["kix.a77to4b9gn0r"],
+        "basis": "native inline-object identity read from the selected root tabs"
+      },
+      "disposition": {
+        "severity": "high",
+        "owner": "documentation-governance",
+        "issue": 195,
+        "disposition": "The current root tab exposes four inline objects: three identities that were not present at the captured revision and one retained identity; the captured \"3. Workspace Isolation\" identity is no longer observed. The current bytes were not retrieved, so the relay and runtime-gateway split cannot be confirmed from the current image. Re-read the bytes and reconcile the figure against the remote-control relay boundary."
+      }
+    },
+    {
+      "sourceId": "evaluation-plan",
+      "title": "Evaluation & Benchmarking Plan",
+      "currentRevision": 64,
+      "currentRevisionModifiedAt": "2026-10-01T20:34:45.582Z",
+      "currentFileModifiedAt": "2026-10-01T20:34:45.617Z",
+      "currentTextSha256": "bfb3e1a869d19e8b2ebae348415c43e72365c1c8b8392aba8e96bcb5c3835e78",
+      "currentTextLogicalLines": 117,
+      "inventoriedTabs": ["t.0"],
+      "nestedTabsInventoried": false,
+      "imageBytesRefreshedAtCurrentRevision": false,
+      "currentObjects": [],
+      "historicalObjects": [],
+      "identityReconciliation": {
+        "retained": [],
+        "added": [],
+        "absent": [],
+        "basis": "native inline-object identity read from the selected root tabs"
+      },
+      "disposition": null
+    },
+    {
+      "sourceId": "runtime-compatibility",
+      "title": "Runtime Compatibility Matrix",
+      "currentRevision": 63,
+      "currentRevisionModifiedAt": "2026-10-01T15:31:56.144Z",
+      "currentFileModifiedAt": "2026-10-01T15:31:56.224Z",
+      "currentTextSha256": "bc203febab2c30e080d4f3ef3615a2fdc52e9671f853ae8669d7d1ecc7955d71",
+      "currentTextLogicalLines": 174,
+      "inventoriedTabs": ["t.0"],
+      "nestedTabsInventoried": false,
+      "imageBytesRefreshedAtCurrentRevision": false,
+      "currentObjects": [],
+      "historicalObjects": [],
+      "identityReconciliation": {
+        "retained": [],
+        "added": [],
+        "absent": [],
+        "basis": "native inline-object identity read from the selected root tabs"
+      },
+      "disposition": null
+    },
+    {
+      "sourceId": "architecture-decisions",
+      "title": "Architecture Decision Records",
+      "currentRevision": 153,
+      "currentRevisionModifiedAt": "2026-10-01T20:33:18.802Z",
+      "currentFileModifiedAt": "2026-10-01T20:33:18.986Z",
+      "currentTextSha256": "4df5e7349a1c602298144a812a94a52de4099aac144319d85f3b54beb25935e9",
+      "currentTextLogicalLines": 296,
+      "inventoriedTabs": ["t.0"],
+      "nestedTabsInventoried": false,
+      "imageBytesRefreshedAtCurrentRevision": false,
+      "currentObjects": [],
+      "historicalObjects": [],
+      "identityReconciliation": {
+        "retained": [],
+        "added": [],
+        "absent": [],
+        "basis": "native inline-object identity read from the selected root tabs"
+      },
+      "disposition": null
+    }
+  ]
+}

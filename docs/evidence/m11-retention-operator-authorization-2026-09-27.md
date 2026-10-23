@@ -76,7 +76,7 @@ compilation and before the actual release, adding explicit release-between-
 observation-and-expiry assertions. The final chronology-corrected rerun passed
 **one test, 40 assertions, zero failures**, in 39.65 seconds. The original
 90-second case deadline and 15-second child deadlines were unchanged. No
-production or staging mutation is included.
+production or sandbox mutation is included.
 
 ## Remaining requirements
 

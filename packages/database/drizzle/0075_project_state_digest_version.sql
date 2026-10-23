@@ -1,0 +1,1 @@
+ALTER TABLE "project_state_mutations" ADD COLUMN "input_digest_version" integer;

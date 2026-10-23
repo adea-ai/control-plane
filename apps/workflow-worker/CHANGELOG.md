@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.18.4](https://github.com/adea-ai/control-plane/compare/workflow-worker-v1.18.3...workflow-worker-v1.18.4) (2026-10-23)
+
+
+### Bug Fixes
+
+* **workflow-worker:** never replace an unavailable enrolled remote_host with the cloud service ([#1281](https://github.com/adea-ai/control-plane/issues/1281)) ([3229738](https://github.com/adea-ai/control-plane/commit/3229738876688f36d8501218c9112b62f4e2f8e8))
+
+## [1.18.3](https://github.com/adea-ai/control-plane/compare/workflow-worker-v1.18.2...workflow-worker-v1.18.3) (2026-10-22)
+
+
+### Bug Fixes
+
+* **railway:** verify production PostgreSQL identity and scoped migrations ([#1256](https://github.com/adea-ai/control-plane/issues/1256)) ([86b7515](https://github.com/adea-ai/control-plane/commit/86b751520c569106644c518dd5fd0819056cd169))
+
 ## [1.18.2](https://github.com/adea-ai/control-plane/compare/workflow-worker-v1.18.1...workflow-worker-v1.18.2) (2026-10-20)
 
 
@@ -82,7 +96,7 @@
 
 ### Bug Fixes
 
-* **ci:** scale explicit integration test budgets for the remote Neon lane ([#847](https://github.com/adea-ai/control-plane/issues/847)) ([887db8a](https://github.com/adea-ai/control-plane/commit/887db8a518800246465a1ebd801d222af45386f2))
+* **ci:** scale explicit integration test budgets for the remote PostgreSQL lane ([#847](https://github.com/adea-ai/control-plane/issues/847)) ([887db8a](https://github.com/adea-ai/control-plane/commit/887db8a518800246465a1ebd801d222af45386f2))
 
 ## [1.13.0](https://github.com/adea-ai/control-plane/compare/workflow-worker-v1.12.0...workflow-worker-v1.13.0) (2026-10-02)
 

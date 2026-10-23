@@ -12,7 +12,7 @@ These Mermaid definitions are the version-controlled Control Plane companion to 
 3. Keep ownership boundaries consistent with the canonical PRDs/TDDs/ADRs.
 4. Do not conflate Adea Remote Relay with Control Plane Runtime Gateway.
 5. Co-located Local runtime/provider access must not traverse Runtime Gateway.
-6. M9 managed cloud is Railway + Neon + R2 + Restate; M10 adds Local/Hosted adapters without changing core semantics.
+6. M9 managed cloud is Railway + PostgreSQL + R2 + Restate; M10 adds Local/Hosted adapters without changing core semantics.
 7. Owner-approved #548: Local uses embedded SQLite durable execution without Restate; managed cloud and Hosted retain Restate behind the same workflow contracts.
 
 ## Pi Durable planned targets — 8 October 2026
@@ -211,7 +211,7 @@ flowchart TB
 
     subgraph Cloud["M9 Managed Cloud Reference"]
       RAIL[Railway Compute]
-      NEON[(Neon PostgreSQL)]
+      PG[(Railway PostgreSQL)]
       R2[(Cloudflare R2)]
       RSC[Restate]
     end
@@ -233,7 +233,7 @@ flowchart TB
     end
 
     CORE --> RAIL
-    RAIL --> NEON
+    RAIL --> PG
     RAIL --> R2
     RAIL --> RSC
 

@@ -80,7 +80,9 @@ coupling, and neither ever substitutes for the other:
   model and passed through the same pin path, so a mapped model reaches only a
   runtime exposing the mapped harness, the mapped harness is bound into the
   routing digest, and the reason code `HARNESS_MAPPED` records that the map
-  decided it. The execution read model carries the accepted model
+  decided it. The same accepted harness constrains local-device and enrolled
+  remote-host no-fallback fences: an unavailable host exposing another harness
+  cannot block a compatible mapped route. The execution read model carries the accepted model
   (`packages/domain` `ExecutionSchema.modelId`); the execution plan and its
   content digest are untouched by it.
 - The managed Pi remote command accepts only discovered family `managed-pi`

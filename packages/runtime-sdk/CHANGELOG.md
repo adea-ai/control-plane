@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.17.1](https://github.com/adea-ai/control-plane/compare/runtime-sdk-v1.17.0...runtime-sdk-v1.17.1) (2026-10-22)
+
+
+### Bug Fixes
+
+* **pi-durable:** fence cancellation retries and uncertain effects ([#935](https://github.com/adea-ai/control-plane/issues/935)) ([#1246](https://github.com/adea-ai/control-plane/issues/1246)) ([62d530f](https://github.com/adea-ai/control-plane/commit/62d530f5a4c012e978f38e6880181b8f5fbfebe5))
+
 ## [1.17.0](https://github.com/adea-ai/control-plane/compare/runtime-sdk-v1.16.1...runtime-sdk-v1.17.0) (2026-10-18)
 
 

@@ -1,7 +1,7 @@
 # Workspace tasks and caching
 
 Vite+ 1.3.0 runs the workspace graph from `vite.config.ts` and
-`scripts/orch-graph.mjs`. Bun 1.4.3 checks each package with `bun check`.
+`scripts/orch-graph.mjs`. Bun 1.4.4 checks each package with `bun check`.
 The existing TypeScript 7 build scripts still emit JavaScript, declarations,
 declaration maps and source maps, including decorator metadata where configured.
 These emit steps remain necessary; Bun checking does not replace them.

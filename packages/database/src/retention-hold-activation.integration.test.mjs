@@ -380,7 +380,7 @@ describe.skipIf(!enabled)('PostgreSQL retention-hold activation', () => {
       expect(await contexts.getById(contextFixture.contextPackageId)).toBeUndefined()
       expect(await evalRepository.getRun(run.evalRunId)).toBeUndefined()
       expect(await auditRepository.list('gate-retention-activation')).toEqual([])
-      // This five-class hold/release probe took 33s against real Neon.
+      // This five-class hold/release probe took 33s against real PostgreSQL.
       // Keep a bounded 60s body without changing lock or operation deadlines.
     },
     integrationTestTimeout(60_000)

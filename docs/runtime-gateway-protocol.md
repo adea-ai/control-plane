@@ -23,9 +23,9 @@ key handling, and the one-use credential lifecycle, see
 The PostgreSQL gateway keeps ordinary queries on `DATABASE_URL` and opens a
 separate application-role connection for revocation `LISTEN`. Configure
 `DATABASE_URL_UNPOOLED` with the direct endpoint, the same application principal,
-and the same database. Neon transaction pooling does not support session
-notifications ([Neon connection pooling](https://neon.com/docs/connect/connection-pooling));
-a pooled Neon URL without the direct URL fails configuration before the gateway
+and the same database. PostgreSQL transaction pooling does not support session
+notifications ([PostgreSQL connection pooling](https://postgres.com/docs/connect/connection-pooling));
+a pooled PostgreSQL URL without the direct URL fails configuration before the gateway
 opens its store. A direct `DATABASE_URL` remains sufficient without the extra
 variable. Generic transaction poolers also require an explicitly configured
 direct URL; the gateway cannot infer their connection mode from the hostname.

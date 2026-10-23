@@ -3,7 +3,6 @@ import { execFileSync } from 'node:child_process'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
 
 // Consume already-built public tarballs. No packing, publication, version invention,
 // registry lookup, provider request, workspace edit or lifecycle script is performed.
@@ -13,7 +12,6 @@ const sdk = resolve(sdkInput)
 const contracts = resolve(contractsInput)
 const sdkBytes = await readFile(sdk)
 const contractBytes = await readFile(contracts)
-const root = fileURLToPath(new URL('../../../', import.meta.url))
 const directory = await mkdtemp(join(tmpdir(), 'model-funding-consumer-'))
 try {
   await writeFile(
@@ -43,9 +41,9 @@ export async function readFunding(client:ControlPlaneClient,input:ModelSelection
     stdio: 'pipe',
   })
   execFileSync(
-    join(root, 'node_modules/.bin/tsc'),
+    'bun',
     [
-      '--noEmit',
+      'check',
       '--strict',
       '--skipLibCheck',
       'false',

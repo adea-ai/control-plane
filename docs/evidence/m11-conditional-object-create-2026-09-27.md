@@ -39,7 +39,7 @@ Remaining acceptance and integration:
    wiring. Injected SDK tests are not deployment or credential acceptance.
 5. Retain every original M11 issue and independent/manual acceptance gate.
 
-Resources: no delegated workers, servers, PostgreSQL starts, paid staging
+Resources: no delegated workers, servers, PostgreSQL starts, paid sandbox
 activation, or cloud storage mutation. Both test/build command handles settled;
 existing M11 checkouts and stopped PostgreSQL volume remain owned by the
 unfinished goal. No unrelated processes were stopped.

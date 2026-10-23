@@ -2,6 +2,7 @@ import { z } from 'zod'
 import {
   RuntimeCapabilitySchema,
   type RuntimeCapability,
+  type RuntimeCapabilityName,
   type RuntimeExecutionHandle,
   type RuntimeExecutionPlanSnapshot,
 } from '@control-plane/runtime-sdk'
@@ -9,9 +10,18 @@ import { RuntimeExecutionStatusSchema } from '@control-plane/runtime-sdk'
 import { AcpInitializeResultSchema, AcpSnapshotSchema } from './acp-schemas.js'
 import type { AcpSnapshot, AcpUpdate } from './acp-schemas.js'
 
+/**
+ * Advertise exactly the capabilities the route may claim.
+ *
+ * The declared surface below is the ACP baseline, not an authorization. When
+ * a native route gate supplies an allow-list (M13.03.1), only names the
+ * qualified evidence allow-lists are advertised — so `session.resume` and
+ * `execution.cancel` stay disabled unless the evidence lists them.
+ */
 export function mapAcpCapabilities(
   initialize: z.output<typeof AcpInitializeResultSchema>,
-  supportsReplay: boolean
+  supportsReplay: boolean,
+  allowed?: readonly RuntimeCapabilityName[]
 ) {
   if (!initialize.capabilities.session) return []
   const reported = initialize.capabilities._meta?.controlPlane?.capabilities
@@ -31,6 +41,7 @@ export function mapAcpCapabilities(
       .filter(
         (name) => reported === undefined || reported.includes(name as RuntimeCapability['name'])
       )
+      .filter((name) => allowed === undefined || allowed.includes(name as RuntimeCapabilityName))
       .map((name) => ({ name, support: 'supported' as const }))
   )
 }
@@ -89,14 +100,28 @@ export function acpPrompt(attemptId: string, plan: RuntimeExecutionPlanSnapshot)
   ].join(' ')
 }
 
-export function normalizeSnapshot(handle: RuntimeExecutionHandle, snapshotInput: AcpSnapshot) {
+/**
+ * Normalize a native snapshot into a runtime execution status.
+ *
+ * Usage is an opt-in claim (M13.03.1): when `usageReporting` is false the
+ * observed terminal usage is dropped rather than forwarded, so an unauthorized
+ * route never claims usage. `result.usage` is a mandatory part of the
+ * completed execution result contract and is therefore not a route claim; an
+ * unauthorized route cannot reach a completed result at all because the
+ * capability gate leaves it with no executable capabilities.
+ */
+export function normalizeSnapshot(
+  handle: RuntimeExecutionHandle,
+  snapshotInput: AcpSnapshot,
+  usageReporting = true
+) {
   const snapshot = AcpSnapshotSchema.parse(snapshotInput)
   if (snapshot.state === 'cancelled') {
     return RuntimeExecutionStatusSchema.parse({
       handle,
       state: 'cancelled',
       observedAt: snapshot.observedAt,
-      ...(snapshot.usage === undefined ? {} : { terminalUsage: snapshot.usage }),
+      ...(!usageReporting || snapshot.usage === undefined ? {} : { terminalUsage: snapshot.usage }),
     })
   }
   if (snapshot.state === 'completed') {
