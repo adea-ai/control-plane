@@ -300,7 +300,7 @@ describe('Control Plane SDK public client', () => {
     expect(manifest.version).toMatch(/^\d+\.\d+\.\d+$/)
     expect(manifest.version).toBe(releaseManifest['packages/control-sdk'])
     expect(manifest.private).toBeUndefined()
-    expect(PublicContractManifest.current).toEqual({ major: 3, minor: 0 })
+    expect(PublicContractManifest.current).toEqual({ major: 3, minor: 1 })
     for (const prohibited of [
       'database',
       'drizzle',

@@ -12,7 +12,7 @@ machine-readable form is `packages/config/src/retention-policy.ts`
 
 - **Durations.** Accepted baselines are reused, not re-invented: command inbox
   30 days, execution events 30 days, artifacts 90 days, backups 7 days (the
-  Neon PITR window), maximum command lifetime 24 hours. New decisions: context
+  PostgreSQL PITR window), maximum command lifetime 24 hours. New decisions: context
   packages and execution plans 90 days after their last reference is released,
   executions 90 days after a terminal and reconciled outcome, messaging and
   interaction receipts 30 days after settled delivery or terminal
@@ -503,7 +503,7 @@ are available, retain the data and report the reason.
 | Usage and evaluations                   | PostgreSQL usage_ledger_entries/evaluation_runs; SQLite evaluation-runs       | Preserve billing/release references and required aggregates; verify all profile implementations instead of inferring parity from interfaces.                                      |
 | Logs and traces                         | Deployment telemetry sinks                                                    | Configure and verify sink expiry and redaction; database deletion does not delete telemetry.                                                                                      |
 | Artifacts                               | Profile-specific object/filesystem providers                                  | Delete exact scoped object/version only after metadata eligibility; persist retries for object-store failures and prevent dangling live references.                               |
-| Backups                                 | PostgreSQL/Neon and SQLite backup boundaries                                  | Verify provider expiry, snapshot ownership, and restore-time reapplication of deletion records; no production reset as a test.                                                    |
+| Backups                                 | PostgreSQL and SQLite backup boundaries                                       | Verify provider expiry, snapshot ownership, and restore-time reapplication of deletion records; no production reset as a test.                                                    |
 | Audit records                           | PostgreSQL release_audit_records and deployment evidence                      | Use separately configured audit retention; retain evidence of deletion without retaining deleted payloads or credentials.                                                         |
 
 ## Implementation sequence
@@ -562,7 +562,7 @@ to justify deleting a recently unpinned object.
   context authoring, Local embedded job enqueue and the exported PostgreSQL
   delegation repository. A reference that is created and removed between two
   sweeps must still restart the 90-day interval.
-- Portable imports are new reference writers too. After staging the missing
+- Portable imports are new reference writers too. After sandbox the missing
   bulk-import rows, validate exact target identity, context/plan ancestry and
   authoring/validation scope, then claim and clear every newly referenced
   target in the same commit transaction. Validate after the bulk inserts so

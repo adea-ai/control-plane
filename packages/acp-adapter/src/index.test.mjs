@@ -5,11 +5,30 @@ import {
   DirectLocalRuntimeTransport,
   runRuntimeAdapterConformance,
 } from '@control-plane/runtime-sdk'
-import { AcpAdapter, AcpDriver, ReferenceAcpTransport } from './index.ts'
+import {
+  AcpAdapter,
+  AcpDriver,
+  ExecutorQualificationEvaluator,
+  NativeRouteGate,
+  ReferenceAcpTransport,
+  qualifiedRouteEvidence,
+  qualifiedRouteObservation,
+} from './index.ts'
 
 const now = '2026-08-25T12:00:00.000Z'
 const digest = (character) => `sha256:${character.repeat(64)}`
 const attemptId = 'att_01JABCDEF0123456789ABCDEFG'
+const qualificationNow = '2026-10-08T12:00:00.000Z'
+
+function nativeRouteGate(capabilities) {
+  return new NativeRouteGate({
+    evaluator: new ExecutorQualificationEvaluator(
+      [qualifiedRouteEvidence({ capabilities })],
+      () => new Date(qualificationNow)
+    ),
+    observation: qualifiedRouteObservation(),
+  })
+}
 
 function plan() {
   return {
@@ -409,6 +428,70 @@ describe('ACP RuntimeAdapter', () => {
       method: 'session/cancel',
       params: { sessionId: 'native-session-1' },
     })
+  })
+
+  test('direct driver cancellation is refused when native evidence omits execution.cancel', async () => {
+    const transport = new ReferenceAcpTransport({
+      now: () => qualificationNow,
+      scenario: 'running',
+    })
+    const driver = new AcpDriver({
+      transport,
+      adapterVersion: '1.0.0',
+      externalSessionId: () => 'ses_01JABCDEF0123456789ABCDEFG',
+      interactionId: () => 'int_01JABCDEF0123456789ABCDEFG',
+      now: () => new Date(qualificationNow),
+      nativeRouteGate: nativeRouteGate(['session.create', 'stream.output']),
+    })
+    const handle = await driver.start({
+      attemptId,
+      idempotencyKey: 'acp:direct-cancel-denied',
+      executionPlan: {
+        ...plan(),
+        runtimeRequirements: [
+          { capability: 'stream.output', necessity: 'required', minimumSupport: 'supported' },
+        ],
+      },
+    })
+
+    await expect(
+      driver.cancel(handle, { idempotencyKey: 'acp:direct-cancel-denied', requestedAt: now })
+    ).rejects.toMatchObject({
+      code: 'ACP_NATIVE_CAPABILITY_NOT_ALLOWED',
+      classification: 'unsupported',
+      retryable: false,
+    })
+    expect(transport.calls().some(({ method }) => method === 'session/cancel')).toBe(false)
+  })
+
+  test('direct driver cancellation proceeds when native evidence allows execution.cancel', async () => {
+    const transport = new ReferenceAcpTransport({
+      now: () => qualificationNow,
+      scenario: 'running',
+    })
+    const driver = new AcpDriver({
+      transport,
+      adapterVersion: '1.0.0',
+      externalSessionId: () => 'ses_01JABCDEF0123456789ABCDEFG',
+      interactionId: () => 'int_01JABCDEF0123456789ABCDEFG',
+      now: () => new Date(qualificationNow),
+      nativeRouteGate: nativeRouteGate(['session.create', 'stream.output', 'execution.cancel']),
+    })
+    const handle = await driver.start({
+      attemptId,
+      idempotencyKey: 'acp:direct-cancel-allowed',
+      executionPlan: {
+        ...plan(),
+        runtimeRequirements: [
+          { capability: 'stream.output', necessity: 'required', minimumSupport: 'supported' },
+        ],
+      },
+    })
+
+    await expect(
+      driver.cancel(handle, { idempotencyKey: 'acp:direct-cancel-allowed', requestedAt: now })
+    ).resolves.toMatchObject({ state: 'cancelled' })
+    expect(transport.calls().filter(({ method }) => method === 'session/cancel')).toHaveLength(1)
   })
 
   test('passes shared RuntimeAdapter conformance with ACP-native state retained behind the edge', async () => {

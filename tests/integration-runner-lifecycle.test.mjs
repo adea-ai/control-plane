@@ -21,6 +21,11 @@ import {
   integrationFileArguments,
   selectIntegrationShard,
 } from '../scripts/integration-shards.mjs'
+import {
+  describePostgresProbeFailure,
+  isProbeTimeout,
+  POSTGRES_RECOVERY_CEILING_SECONDS,
+} from '../scripts/postgres-probe-diagnostics.mjs'
 
 const repository = fileURLToPath(new URL('..', import.meta.url))
 const runner = join(repository, 'scripts/run-integration-tests.mjs')
@@ -498,6 +503,33 @@ function startSampling(ledger, child, intervalMs = SAMPLE_INTERVAL_MS) {
   return timer
 }
 
+// The bounded settle after the runner is gone, before liveness is read. A
+// signal is delivered asynchronously, and a killed process can linger for a
+// moment as a zombie until its new parent reaps it, so liveness at a single
+// instant is not proof that anything survived.
+const FIXTURE_LIVENESS_SETTLE_MS = 2_000
+
+/**
+ * The PIDs that are still alive after a bounded settle.
+ *
+ * This is the same rule the runner applies to its own owned tree: a process
+ * that is on its way out is not a survivor, and one that is still there when
+ * the settle is over is.
+ */
+async function survivingAfterSettle(pids, budgetMs) {
+  const deadline = Date.now() + budgetMs
+  let alive = pids.filter((pid) => isProcessAlive(pid))
+  while (alive.length > 0 && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 25))
+    alive = alive.filter((pid) => isProcessAlive(pid))
+  }
+  return alive
+}
+
+// The reap of what the fixture spawned is tearDownRunnerHarness above: it signals
+// only processes proven to be the fixture's own and keeps the receipts of any it
+// cannot reap, which replaces the receipt-PID-only reap of the preserved version.
+
 // Spawn the real runner asynchronously, wait until its receipt records the
 // injected command, deliver a real signal, and report how it exited. A runner
 // without an installed handler dies from the signal (status null, signal name);
@@ -582,14 +614,29 @@ async function executeRunnerInterrupted(
     ])
     // The teardown below reaps the runner within its own bound; nothing waits
     // on a pipe a surviving descendant may still hold.
-    if (outcome.signal === 'settle-timeout')
-      throw new Error(`Runner did not exit within ${settleMs}ms after ${signal}`)
+    if (outcome.signal === 'settle-timeout') {
+      const timeout = new Error(`Runner did not exit within ${settleMs}ms after ${signal}`)
+      // The receipts the fixture recorded stay attached to the failure, so a case
+      // that fails here can still name what the teardown must have reaped, and
+      // never has to search the process table for it.
+      timeout.fixtureDescendants = readDescendantPids(descendants)
+      throw timeout
+    }
+    // Liveness is measured after a bounded settle, and BEFORE the teardown below:
+    // it is what the runner left behind, which a post-teardown reading could not
+    // show. The settle is what makes the reading mean "survived" rather than
+    // "was still being reaped".
+    const survivorsAtExit = await survivingAfterSettle(
+      readDescendantPids(descendants),
+      FIXTURE_LIVENESS_SETTLE_MS
+    )
     const result = {
       ...outcome,
       stdout,
       stderr,
       calls: readCommandReceipts(commands),
       descendants: readDescendantPids(descendants),
+      survivorsAtExit,
     }
     if (inspect !== undefined) await inspect(result)
     return result
@@ -818,7 +865,7 @@ describe('integration runner resource ownership', () => {
   )
 
   test(
-    'remote Neon connection drops remain failed checks without automatic retries',
+    'remote PostgreSQL connection drops remain failed checks without automatic retries',
     () => {
       const result = executeRunner({
         ...remoteTarget,
@@ -837,7 +884,7 @@ describe('integration runner resource ownership', () => {
   )
 
   test(
-    'remote Neon does not retry assertion failures even when their output mentions a connection code',
+    'remote PostgreSQL does not retry assertion failures even when their output mentions a connection code',
     () => {
       const result = executeRunner({
         ...remoteTarget,
@@ -857,7 +904,7 @@ describe('integration runner resource ownership', () => {
   )
 
   test(
-    'remote Neon does not retry a mixed unknown failure that mentions a connection code',
+    'remote PostgreSQL does not retry a mixed unknown failure that mentions a connection code',
     () => {
       const result = executeRunner({
         ...remoteTarget,
@@ -877,7 +924,7 @@ describe('integration runner resource ownership', () => {
   )
 
   test(
-    'remote Neon streams oversized output completely and retains only bounded failure tails',
+    'remote PostgreSQL streams oversized output completely and retains only bounded failure tails',
     () => {
       const result = executeRunner({
         ...remoteTarget,
@@ -1323,6 +1370,64 @@ test('an interrupted runner spends no new owned command beyond cleanup', async (
   expect(spawnCalls).toEqual([['docker', ['compose', 'down', '--volumes']]])
 })
 
+test('a successful readiness probe observes queued interruption before build and permits cleanup', async () => {
+  const commands = []
+  const globals = {
+    Date,
+    process,
+    console: { log() {} },
+    interruptedSignal: null,
+    runnerEnvironment: {},
+    CHILD_COMMAND_TIMEOUT_MS: 90_000,
+    setTimeout,
+    clearTimeout,
+    setImmediate,
+    OWNER_TOKEN_VARIABLE: 'CONTROL_PLANE_RUNNER_OWNER',
+    randomUUID: () => 'owner-token',
+    trackRunnerChild: (child) => child,
+    terminateChild: (child) => child.kill(),
+    bindChildCompletion: () => {},
+    spawnSync: () => {
+      // Model a signal queued while the synchronous SQL probe blocked its
+      // handler. Promise continuations alone cannot deliver that signal.
+      setImmediate(() => {
+        globals.interruptedSignal = 'SIGINT'
+      })
+      return { status: 0, stdout: '1\n' }
+    },
+    spawn: (command, args) => {
+      commands.push([command, args])
+      return {
+        once(event, callback) {
+          if (event === 'close') queueMicrotask(() => callback(0))
+        },
+        kill() {},
+        stdout: { setEncoding() {}, on() {} },
+        stderr: { setEncoding() {}, on() {} },
+        exitCode: null,
+        signalCode: null,
+      }
+    },
+  }
+  const { waitForPostgres, run } = readScriptBlock(
+    'run-integration-tests.mjs',
+    { functions: ['waitForPostgres', 'run'], constants: [] },
+    globals,
+    '({ waitForPostgres, run })'
+  )
+  let failure
+  try {
+    await waitForPostgres(() => globals.interruptedSignal !== null)
+    await run('bun', ['run', 'build'])
+  } catch (error) {
+    failure = error
+  } finally {
+    await run('docker', ['compose', 'down', '--volumes'], { allowInterrupted: true })
+  }
+  expect(commands).toEqual([['docker', ['compose', 'down', '--volumes']]])
+  expect(failure?.message).toBe('PostgreSQL readiness probe interrupted')
+})
+
 for (const script of ['run-integration-tests.mjs', 'run-postgres-disruption-drill.mjs']) {
   test(`${script} cannot spend a full probe beyond its readiness deadline`, async () => {
     let now = 28_000
@@ -1332,6 +1437,11 @@ for (const script of ['run-integration-tests.mjs', 'run-postgres-disruption-dril
       Date: { now: () => (clockReads++ === 0 ? 0 : now) },
       process: { cwd: () => repository },
       runnerEnvironment: {},
+      POSTGRES_RECOVERY_CEILING_SECONDS,
+      describePostgresProbeFailure,
+      isProbeTimeout,
+      readContainerState: () => '',
+      setImmediate,
       spawnSync: (_command, _args, options) => {
         timeouts.push(options.timeout)
         now += options.timeout ?? 5000
@@ -1391,6 +1501,9 @@ describe('integration runner owned process tree', () => {
               // direct child.
               expect(result.descendants.length).toBeGreaterThan(0)
               for (const pid of result.descendants) expect(isProcessAlive(pid)).toBe(false)
+              // Measured after the bounded settle and before the harness's own
+              // teardown, so its reap cannot be what makes it true.
+              expect(result.survivorsAtExit).toEqual([])
               // The runner verified its own tree, so it reported no survivor.
               expect(result.stderr).not.toMatch(/owned descendant survived/u)
               // An UNRELATED process was never signalled.
@@ -1565,6 +1678,8 @@ describe('integration runner owned process tree', () => {
             // the runner's own.
             expect(result.descendants.length).toBeGreaterThan(0)
             for (const pid of result.descendants) expect(isProcessAlive(pid)).toBe(true)
+            // Measured after the bounded settle and before the harness teardown.
+            expect(result.survivorsAtExit).toEqual(result.descendants)
           },
         }
       )
@@ -1954,6 +2069,33 @@ describe('integration runner lifecycle harness teardown', () => {
         if (directory) rmSync(directory, { recursive: true, force: true })
       }
     })
+  }, 40_000)
+
+  test('a case that exceeds its settle budget still reaps what its fixture spawned', async () => {
+    // The settle budget is deliberately impossible, so the case FAILS before it
+    // can assert anything. The failure path is the property under test: the
+    // un-attributable survivor is still reaped in the harness's own bounded
+    // cleanup, and the failure is still surfaced instead of being swallowed by
+    // that cleanup.
+    const outcome = await executeRunnerInterrupted(
+      { FAKE_BUN_SPAWN_DETACHED_DESCENDANT: 'true' },
+      {
+        signal: 'SIGTERM',
+        predicate: ({ program, args }) => program === 'bun' && args.includes('test'),
+        description: 'the owned test execution',
+        waitFor: 'exit',
+        settleMs: 1,
+      }
+    ).then(
+      () => ({ error: undefined }),
+      (error) => ({ error })
+    )
+    expect(outcome.error?.message ?? '').toMatch(/Runner did not exit within 1ms after SIGTERM/u)
+    // The fixture DID spawn a survivor — named by the failure itself, so the
+    // check needs no process-table search — and it is gone once the harness
+    // reports, so a failing case cannot leak what it did not own.
+    expect(outcome.error?.fixtureDescendants?.length ?? 0).toBeGreaterThan(0)
+    for (const pid of outcome.error.fixtureDescendants) expect(isProcessAlive(pid)).toBe(false)
   }, 40_000)
 })
 

@@ -97,13 +97,13 @@ verification is complete. Canary values are read from the file so they do not ap
 arguments, and a match aborts before the manifest is written. Cloud and Hosted `server` compositions
 invoke the same library boundary with their accepted PostgreSQL and S3-compatible adapters. Their
 operator composition owns database connection and authorization; the SQLite CLI does not accept
-cloud credentials or alter Railway, Neon, or R2 configuration.
+cloud credentials or alter Railway, PostgreSQL, or R2 configuration.
 
 ## Release evidence
 
 Run `bun run test:m10-conformance`. The suite compares the same versioned cases across all four
 profiles and identifies the exact profile, port, and adapter when normalized outcomes diverge. Live
-PostgreSQL evidence runs separately against an isolated database on an expiring Neon branch; Local
+PostgreSQL evidence runs separately against an isolated database on an expiring database sandbox; Local
 and Hosted `simple` use disposable SQLite files.
 
 ## Reader-first digest compatibility (#612)
@@ -155,7 +155,7 @@ cannot authorize equivalence. Credential
 comparisons retain the existing strict metadata projection; secret references,
 secret revisions and destination status do not participate. Import and replay
 preserve the incoming record and manifest/provenance digests, without rewriting
-historical identity. PostgreSQL staging validates the retained record shape
+historical identity. PostgreSQL sandbox validates the retained record shape
 instead of replacing its digest with the current writer's digest.
 
 All readers reject repeated record logical ids, including across categories or

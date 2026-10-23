@@ -71,7 +71,7 @@ async function waitFor(predicate, label, budgetMs = 10000) {
 }
 function serviceEnvironment(appEnv) {
   const environment = { APP_ENV: appEnv }
-  if (appEnv === 'production' || appEnv === 'staging') {
+  if (appEnv === 'production') {
     environment.COMMIT_SHA = 'm11-composition-startup-test'
     environment.INSTANCE_ID = 'm11-composition-startup-test'
     environment.SERVICE_VERSION = '1.0.0'

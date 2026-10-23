@@ -185,13 +185,41 @@ from `start()` via `compositionOptions`. The route record (public keys, ids, val
 explicit host-supplied composition input — no ambient credential or key material — and the
 in-memory default remains test-only.
 
-**Production wire boundary (#1023 remains open):** the Local composition constructs the durable
-device endpoint, but `AcpRemoteWire` still has no concrete production implementation or call site
-that sends its sealed commands and inventory requests through `apps/runtime-gateway`. The secure
-route tests connect callbacks directly to `device.handleCommand` and `device.handleInventory`; they
-prove endpoint behavior, not an authenticated controller-to-device production exchange. The
-runtime-gateway WebSocket server handles runtime-node connections, but these paths do not join it
-to a controller-side ACP wire. Therefore #1023's production transport acceptance is still open.
+**Controller enrollment authority:** controller construction has a separate
+`createEnrolledSecureAcpRemoteTransport` factory. It requires the current controller enrollment
+authority (`AcpRemoteControllerAuthorityPort`) and binds each durable check to the route scope,
+controller key id, and public key before inventory requests, after key generation and sealing,
+before commands leave, after wire replies, and before publishing decrypted replies. Connection-state
+reporting uses the synchronous cache only after a durable check passes; it stays offline before that
+check and after a rejected check or observed wire disconnect. Enrolled transports use
+`revokeCurrent()` to recheck authority before signing; the synchronous `revoke()` helper is only for
+isolated transport tests. The raw constructor remains available for isolated transport tests. No
+concrete enrolled-controller signer source implements the authority port in this repository yet, so
+this adds the boundary and does not close #1023.
+
+**Production wire boundary (the wire and the device agent now exist; the live exchange stays open
+for #1023):** `createGatewayOwnedAcpRemoteWire` (`packages/acp-adapter/src/acp-remote-wire.ts`) is
+the first production `AcpRemoteWire`. It carries ONE opaque sealed command through the runtime
+gateway as a `runtime.acp-remote-sealed` carrier command whose payload holds the sealed blob under
+one opaque key, so the gateway relays ciphertext it cannot read, and it brings the device's opaque
+sealed reply back. The device side is `handleAcpRemoteCarrierCommand`
+(`packages/acp-adapter/src/acp-remote-device-agent.ts`): it checks that the carrier did not redirect
+the sealed command to another route, runs it, and persists the sealed reply as the carrier command's
+single per-command result artifact (`runtime-results/<attemptId>/result.json`), so the gateway's
+existing `RuntimeCommandArtifactVerifier` verifies it with no protocol change. The gateway side is
+`createAcpRemoteGatewayChannel` (`apps/runtime-gateway/src/acp-remote-gateway-channel.ts`), which
+rides the gateway's ordinary durable command path and reads that reply artifact back. The contract
+between the two sides is declared once, in `@control-plane/runtime-gateway-protocol`, so the compiler
+checks both ends.
+
+What remains OPEN: no product composition binds the gateway channel to the wire, because the
+repository still holds no production runtime-node WebSocket client for a device to answer over; the
+live acceptance of an authenticated controller-to-device exchange is not proven (the executable
+evidence is offline and synthetic); and no hosted composition constructs a device endpoint. The
+offline evidence is `packages/acp-adapter/src/acp-remote-wire.test.mjs` and
+`apps/runtime-gateway/src/acp-remote-gateway-channel.test.mjs`. The reroute fence itself is
+unchanged: an offline or revoked device is a typed local denial with `fallback: 'none'`, never a
+substitute location.
 
 **SQLite credential-fence contract:** SQLite runtime-command settlement now requires an authority
 that validates credential id and version, the command's node and workspace, and current revocation
@@ -265,6 +293,49 @@ authorization, and unresolvable-reference outcomes fail explicitly. Listing reco
 the native harness removed while preserving their Control Plane references. Native renames are observed
 without taking ownership; concurrent native use always remains allowed. Existing public SDK list/get
 operations consume the projected normalized read model and never expose either native identifier.
+
+## Native route qualification and pre-effect controls
+
+A native executor route (Codex, OpenCode or Claude) may claim capabilities only when trusted
+deployment evidence and a live observation agree on the exact route identity. The adapter's
+`NativeRouteGate` turns that agreement into the three decisions a runtime must make, and it is
+fail-closed: an unqualified, expired, revoked, drifted, conflicting, offline, unauthorized or
+wrongly-authenticated route yields no capability, no usage claim and no governed native path.
+
+The evidence that decides a route is preserved exactly and is never widened at runtime:
+
+- **Harness and version** — the harness (`codex`, `opencode`, `claude`) and its exact semantic
+  version must match the observation; a version change denies as `evidence_mismatch`
+  (`HARNESS_VERSION_CHANGED`). Pi is not a qualifiable harness: Pi dispatch is not native
+  checkpointing or subscription entitlement.
+- **Authentication** — only `native_owned` qualifies, so credentials stay with the executor. A
+  `cloud_vault` or `delegated_session` route denies as `auth_unsupported`.
+- **Location and authorization** — `agent_hq_cloud` never qualifies a native executor route, and a
+  route without deployment authorization denies as `location_unauthorized`.
+- **Native installation** — repository, tag, commit and bundle digest must match the pinned build
+  identity; the codex route additionally pins the ACP build and its Codex version, and drift denies
+  as `deploymentPin` / `DEPLOYMENT_PIN_CHANGED`.
+- **Configuration digest** — a digest of the current native configuration (settings, hooks, MCP
+  registrations) detects changed native configuration and denies as `configurationDigest` /
+  `CONFIGURATION_DIGEST_CHANGED`.
+
+From that evidence the gate advertises **exactly** the allow-listed capabilities, so `session.resume`
+and `execution.cancel` stay disabled unless the evidence lists them. Usage is an opt-in claim:
+the `usage_update` progress and the observed terminal usage are only passed through when
+`usageReporting` is true. (A completed result's `usage` is a mandatory part of the execution result
+contract rather than a route claim; an unauthorized route cannot reach a completed result at all
+because the capability gate leaves it with no executable capabilities.)
+
+Native shell, network, hooks, MCP and extension effects are authorized per effect. A channel must
+be evidenced _and_ proven policy-enforced in the evidence, and the runtime's own pre-effect policy
+decision for that effect must have allowed it; otherwise the effect is refused with
+`route_unqualified`, `not_evidenced`, `controls_missing` or `effect_policy_denied`. An offline or
+revoked device is a local denial that never offers a cloud reroute.
+
+The gate performs no I/O, spawns no harness, contacts no provider, and never accepts, stores or
+returns credentials: the evidence schema has no credential fields and rejects unknown keys.
+See `packages/acp-adapter/docs/qualification-integration.md` for the evidence, detection and
+transport-mapping call-sites.
 
 ## Failure behavior and evidence
 

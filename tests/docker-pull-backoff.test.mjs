@@ -143,6 +143,205 @@ test('an interruption ends the backoff wait instead of running it out', async ()
   assert.equal(waited.reduce((sum, slice) => sum + slice, 0) <= defaultPullBackoffMs[0], true)
 })
 
+test('a pending signal that arrives during a synchronous command starts no command after it', async () => {
+  // The configuration and pull commands are synchronous: a SIGINT delivered while
+  // one of them holds the event loop is only processed when the loop next turns,
+  // so the interruption state read between two commands is the state from BEFORE
+  // the signal. The double models exactly that delivery — the kernel holds the
+  // signal while the command runs, and the handler runs on a later turn — so the
+  // case is deterministic: the double, not a real signal, decides the ordering.
+  let handlerRan = false
+  let pendingHandler = Promise.resolve()
+  const calls = []
+  const pending = pullPostgresImage({
+    cwd: '/workspace/control-plane',
+    environment: {},
+    spawnSync: (command, dockerArgs) => {
+      calls.push(dockerArgs.join(' '))
+      if (dockerArgs[1] === 'config') {
+        // The signal arrives while the synchronous configuration command runs.
+        pendingHandler = new Promise((resolve) =>
+          setImmediate(() => {
+            handlerRan = true
+            resolve()
+          })
+        )
+        return {
+          status: 0,
+          stdout: JSON.stringify({ services: { postgres: { image: pinnedPostgres } } }),
+          stderr: '',
+        }
+      }
+      return { status: 0, stdout: '', stderr: '' }
+    },
+    isInterrupted: () => handlerRan,
+    ...quiet,
+  })
+  await assert.rejects(pending, (error) => error.message === pullInterruptedMessage)
+  await pendingHandler
+  // Only the command that was already running when the signal arrived was
+  // started: the pull that would have followed it was not.
+  assert.deepEqual(calls, ['compose config --format json postgres'])
+})
+
+test('a pending signal that arrives during the pull starts no fallback pull after it', async () => {
+  // The same window one command later: the canonical pull is rate limited, and
+  // the signal arrives while it holds the event loop. The fallback that the
+  // loop would start next is a NEW command started after the signal.
+  let handlerRan = false
+  let pendingHandler = Promise.resolve()
+  const calls = []
+  const pending = pullPostgresImage({
+    cwd: '/workspace/control-plane',
+    environment: {},
+    spawnSync: (command, dockerArgs) => {
+      calls.push(dockerArgs.join(' '))
+      if (dockerArgs[1] === 'config') {
+        return {
+          status: 0,
+          stdout: JSON.stringify({ services: { postgres: { image: pinnedPostgres } } }),
+          stderr: '',
+        }
+      }
+      // The signal arrives while the synchronous canonical pull runs.
+      pendingHandler = new Promise((resolve) =>
+        setImmediate(() => {
+          handlerRan = true
+          resolve()
+        })
+      )
+      return ecrRateLimited
+    },
+    isInterrupted: () => handlerRan,
+    ...quiet,
+  })
+  await assert.rejects(pending, (error) => error.message === pullInterruptedMessage)
+  await pendingHandler
+  assert.deepEqual(calls, ['compose config --format json postgres', 'compose pull postgres'])
+})
+
+function queuedInterruption() {
+  let interrupted = false
+  let pending = Promise.resolve()
+  return {
+    queue() {
+      pending = new Promise((resolve) =>
+        setImmediate(() => {
+          interrupted = true
+          resolve()
+        })
+      )
+    },
+    isInterrupted: () => interrupted,
+    settled: () => pending,
+    settlePendingSignal: () => new Promise((resolve) => setImmediate(resolve)),
+  }
+}
+
+test('a pending signal during fallback configuration starts no fallback pull', async () => {
+  const interruption = queuedInterruption()
+  const compose = fakeCompose({ effective: pinnedPostgres })
+  const pending = pullPostgresImage({
+    cwd: '/workspace/control-plane',
+    environment: {},
+    spawnSync: (command, args, options) => {
+      const result = compose.spawnSync(command, args, options)
+      if (args[1] === 'config' && options.env[postgresImageVariable] === mirrorPostgres)
+        interruption.queue()
+      return result
+    },
+    isInterrupted: interruption.isInterrupted,
+    ...quiet,
+  })
+  await assert.rejects(pending, (error) => error.message === pullInterruptedMessage)
+  await interruption.settled()
+  assert.deepEqual(compose.calls, [
+    ['docker', 'compose', 'config', '--format', 'json', 'postgres'],
+    ['docker', 'compose', 'pull', 'postgres'],
+    ['docker', 'compose', 'config', '--format', 'json', 'postgres'],
+  ])
+})
+
+test('a pending signal during a successful pull prevents the startup handoff', async () => {
+  const interruption = queuedInterruption()
+  const calls = []
+  const startup = async () => {
+    await pullPostgresImage({
+      cwd: '/workspace/control-plane',
+      environment: {},
+      spawnSync: (_command, args) => {
+        calls.push(args)
+        if (args[1] === 'config')
+          return {
+            status: 0,
+            stdout: JSON.stringify({ services: { postgres: { image: pinnedPostgres } } }),
+            stderr: '',
+          }
+        interruption.queue()
+        return { status: 0, stdout: '', stderr: '' }
+      },
+      isInterrupted: interruption.isInterrupted,
+      ...quiet,
+    })
+    calls.push(['compose', 'up'])
+  }
+  await assert.rejects(startup(), (error) => error.message === pullInterruptedMessage)
+  await interruption.settled()
+  assert.deepEqual(calls, [
+    ['compose', 'config', '--format', 'json', 'postgres'],
+    ['compose', 'pull', 'postgres'],
+  ])
+})
+
+test('backoff observes a queued interruption before returning a synchronous success', async () => {
+  const interruption = queuedInterruption()
+  const result = await runWithPullBackoff(() => {
+    interruption.queue()
+    return succeeded
+  }, interruption)
+  await interruption.settled()
+  assert.equal(result.stderr, pullInterruptedMessage)
+  assert.notEqual(result.status, 0)
+})
+
+for (const phase of ['canonical', 'fallback']) {
+  test(`fallback observes a queued interruption before returning a ${phase} success`, async () => {
+    const interruption = queuedInterruption()
+    const calls = []
+    const outcome = await runWithPullFallback(
+      (reference) => {
+        calls.push(['attempt', reference])
+        if (phase === 'fallback' && reference === undefined) return ecrRateLimited
+        interruption.queue()
+        return succeeded
+      },
+      pinnedPostgres,
+      {
+        ...interruption,
+        pull: (reference) => {
+          calls.push(['pull', reference])
+          return succeeded
+        },
+        log: () => {},
+      }
+    )
+    await interruption.settled()
+    assert.equal(outcome.result.stderr, pullInterruptedMessage)
+    assert.notEqual(outcome.result.status, 0)
+    assert.equal(outcome.image, undefined)
+    assert.deepEqual(
+      calls,
+      phase === 'canonical'
+        ? [['attempt', undefined]]
+        : [
+            ['attempt', undefined],
+            ['pull', mirrorPostgres],
+            ['attempt', mirrorPostgres],
+          ]
+    )
+  })
+}
+
 test('does not retry or delay a non-rate-limit failure', async () => {
   const failure = { status: 1, stdout: '', stderr: 'manifest unknown' }
   const { attempt, calls } = scripted([failure])

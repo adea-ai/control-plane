@@ -16,7 +16,7 @@ const COMPOSE_COMMAND = 'docker compose'
 
 // `--shard=<n>` (or INTEGRATION_SHARD) runs one explicit slice of the suite.
 // The local PR lane runs all three inventory-checked slices concurrently
-// against one runner-owned disposable PostgreSQL service. Trusted-main Neon
+// against one runner-owned disposable PostgreSQL service. Trusted-main PostgreSQL
 // verification does not invoke this full portable integration suite.
 const integrationShard = parseIntegrationShard(
   process.argv.find((argument) => argument.startsWith('--shard='))?.slice('--shard='.length) ??
@@ -644,14 +644,12 @@ async function waitForPostgres(isInterrupted = () => false) {
       env: runnerEnvironment,
       timeout: Math.min(5000, remaining),
     })
-    if (result.error) {
-      // A signal delivered while spawnSync held the event loop cannot run until
-      // the loop regains control; yield one macrotask so a pending interruption
-      // is observed instead of surfacing as a probe timeout.
-      await new Promise((resolve) => setTimeout(resolve, 0))
-      if (isInterrupted()) throw new Error('PostgreSQL readiness probe interrupted')
-      throw result.error
-    }
+    // Deliver a signal queued while spawnSync held the event loop before
+    // accepting readiness, so a successful probe cannot launch a new build
+    // before the interruption handler runs. Errors retain the same boundary.
+    await new Promise((resolve) => setImmediate(resolve))
+    if (isInterrupted()) throw new Error('PostgreSQL readiness probe interrupted')
+    if (result.error) throw result.error
     if (result.status === 0 && result.stdout.trim() === '1') {
       console.log('PostgreSQL database system is accepting SQL connections')
       return
@@ -664,7 +662,7 @@ async function waitForPostgres(isInterrupted = () => false) {
   throw new Error('PostgreSQL did not accept SQL connections within 30 seconds')
 }
 
-// A remote target (Neon preview branch or similar) replaces the local Docker
+// A remote target (PostgreSQL preview branch or similar) replaces the local Docker
 // Postgres lane entirely: no container to boot or probe, and the
 // Docker-lifecycle drills below do not apply to it. Loopback URLs still take
 // the local lane: the recovery matrix drives its own Postgres on an

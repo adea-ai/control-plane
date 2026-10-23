@@ -49,7 +49,7 @@ export const CredentialLeaseSchema = z
 /** Opaque provider reference. It identifies stored ciphertext and never contains plaintext. */
 export const EncryptedSecretReferenceSchema = z
   .object({
-    backend: z.enum(['memory', 'neon-encrypted']),
+    backend: z.enum(['memory', 'postgres-encrypted']),
     locator: z.string().min(1).max(512),
     version: z.string().min(1).max(64),
     keyReference: z.string().min(1).max(128),

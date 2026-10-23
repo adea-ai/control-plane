@@ -9,12 +9,12 @@
 - Upstream consumer-config repair: Code Foundry PR
   [#433](https://github.com/0xPlayerOne/code-foundry/pull/433), merged as
   `8d13173a36849528335f87a550072e08137f4473`
-- Repository policy: `staging_validation_mode: audit`
+- Current repository policy: production deployments with disposable sandbox validation.
 - Stable aggregate: `Validation / Gate`
 - Default behavior for other Code Foundry consumers remains `fast`; only this
-  repository opts staging pull requests into the complete audit graph.
+  repository opts sandbox pull requests into the complete audit graph.
 
-The mode classifier rejects unknown staging policy values. Audit mode requires
+The mode classifier rejects unknown sandbox policy values. Audit mode requires
 CI, the complete Test workflow, Security, and CodeQL to report `success`; a
 failed, cancelled, skipped, missing, or unknown required result fails the
 aggregate. Release Please pull requests retain their separate release-policy
