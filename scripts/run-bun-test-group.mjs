@@ -88,6 +88,7 @@ const repositoryGroups = {
     'tests/m11-security-probes.test.mjs',
     'tests/m11-sqlite-benchmark.test.mjs',
     'tests/neon-workflow.test.mjs',
+    'tests/postgres-probe-diagnostics.test.mjs',
     'tests/skill-library.test.mjs',
     'tests/m11-recovery-rpo-rto.test.mjs',
     'tests/m11-retention-apply-cli.test.mjs',

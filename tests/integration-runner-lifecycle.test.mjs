@@ -19,6 +19,11 @@ import {
   integrationFileArguments,
   selectIntegrationShard,
 } from '../scripts/integration-shards.mjs'
+import {
+  describePostgresProbeFailure,
+  isProbeTimeout,
+  POSTGRES_RECOVERY_CEILING_SECONDS,
+} from '../scripts/postgres-probe-diagnostics.mjs'
 
 const repository = fileURLToPath(new URL('..', import.meta.url))
 const runner = join(repository, 'scripts/run-integration-tests.mjs')
@@ -542,6 +547,17 @@ for (const script of ['run-integration-tests.mjs', 'run-postgres-disruption-dril
       Date: { now: () => (clockReads++ === 0 ? 0 : now) },
       process: { cwd: () => repository },
       runnerEnvironment: {},
+      // The drill's waitForPostgres reads the probe-diagnostics module and a
+      // sibling reader from the script scope this extraction leaves behind;
+      // the real ceiling is what keeps the deadline assertions below bound to
+      // the production recovery ceiling (the runner's copy ignores these).
+      POSTGRES_RECOVERY_CEILING_SECONDS,
+      describePostgresProbeFailure,
+      isProbeTimeout,
+      // The container-state read runs after the deadline as failure
+      // diagnostics, so its double spends neither the modeled probe clock nor
+      // the probe's timeout list.
+      readContainerState: () => 'control-plane-postgres-1  postgres  Up',
       spawnSync: (_command, _args, options) => {
         timeouts.push(options.timeout)
         now += options.timeout ?? 5000
