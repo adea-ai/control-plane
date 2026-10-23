@@ -9,6 +9,7 @@ import {
   analyzeRun,
   cacheState,
   compareInventories,
+  describeInvalidation,
   evaluateExpectation,
   expectedTasks,
   outputInventory,
@@ -35,6 +36,9 @@ const missed = (path, kind = 'ContentModified') => ({
     cache_status: { Miss: { InputChanged: { kind, path } } },
     outcome: { Success: {} },
   },
+})
+const configChanged = () => ({
+  Spawned: { cache_status: { Miss: 'ConfigChanged' }, outcome: { Success: {} } },
 })
 const notFound = () => ({
   Spawned: { cache_status: { Miss: 'NotFound' }, outcome: { Success: {} } },
@@ -101,6 +105,14 @@ describe('the summary parser fails closed on malformed input', () => {
     [
       'an unknown cache miss name',
       '{"exit_code": 0, "tasks": [{"package_name": "p", "task_name": "t", "command": "c", "result": {"Spawned": {"cache_status": {"Miss": "Weird"}}}}]}',
+    ],
+    [
+      'a cache miss name that differs from ConfigChanged only in case',
+      '{"exit_code": 0, "tasks": [{"package_name": "p", "task_name": "t", "command": "c", "result": {"Spawned": {"cache_status": {"Miss": "configchanged"}}}}]}',
+    ],
+    [
+      'a ConfigChanged miss carrying a payload',
+      '{"exit_code": 0, "tasks": [{"package_name": "p", "task_name": "t", "command": "c", "result": {"Spawned": {"cache_status": {"Miss": {"ConfigChanged": {}}}}}}]}',
     ],
     [
       'an input change without a path',
@@ -173,6 +185,205 @@ describe('the summary parser accepts what the task runner writes', () => {
     })
     expect(summary.tasks[3].invalidation.reason).toBe('not-found')
     expect(summary.tasks[3].failed).toBe(true)
+  })
+})
+
+describe('a ConfigChanged miss is a reason the runner writes, not an unknown one', () => {
+  const entry = (miss) =>
+    JSON.stringify({
+      exit_code: 0,
+      tasks: [
+        {
+          package_name: '@control-plane/workspace',
+          task_name: 'orch:build',
+          command: 'bun run build',
+          result: { Spawned: { cache_status: { Miss: miss }, outcome: { Success: {} } } },
+        },
+      ],
+    })
+
+  test('parses the bare-string form as its own reason', () => {
+    const summary = parseSummary(entry('ConfigChanged'))
+    expect(summary.tasks[0].kind).toBe('miss')
+    expect(summary.tasks[0].invalidation).toEqual({
+      reason: 'config-changed',
+      path: null,
+      inputKind: null,
+    })
+  })
+
+  test('still rejects a miss name the runner does not write', () => {
+    expect(() => parseSummary(entry('Exploded'))).toThrow(/unknown cache miss "Exploded"/)
+  })
+
+  test('is a miss with its own cause, neither cold nor a changed input', () => {
+    const analysis = analyze(summaryWith({ 'orch:contracts:build': configChanged() }))
+    const invalidation = analysis.invalidations.find((item) => item.task === 'orch:contracts:build')
+    expect(invalidation).toEqual({
+      task: 'orch:contracts:build',
+      kind: 'input-config',
+      path: null,
+      package: null,
+    })
+    expect(describeInvalidation(analysis, 'orch:contracts:build')).toBe(
+      "the task's declared input configuration changed"
+    )
+  })
+
+  test('does not satisfy a hits, source or invalidated expectation', () => {
+    const analysis = analyze(summaryWith({ 'orch:contracts:build': configChanged() }))
+    const hits = evaluateExpectation(analysis, 'hits')
+    expect(hits.ok).toBe(false)
+    expect(hits.failures.join('\n')).toContain('declared input configuration changed')
+    expect(evaluateExpectation(analysis, 'invalidated:source=orch:contracts:build').ok).toBe(false)
+    expect(evaluateExpectation(analysis, 'invalidated:config=orch:contracts:build').ok).toBe(false)
+    const overrides = {}
+    for (const task of expected.tasks.values()) {
+      if (task.cached) overrides[task.name] = configChanged()
+    }
+    expect(evaluateExpectation(analyze(summaryWith(overrides)), 'invalidated').ok).toBe(false)
+    expect(evaluateExpectation(analyze(summaryWith(overrides)), 'misses').ok).toBe(true)
+  })
+})
+
+describe('a SpawnFingerprintChanged miss accepts only the changes the runner writes', () => {
+  const entry = (changes) =>
+    JSON.stringify({
+      exit_code: 0,
+      tasks: [
+        {
+          package_name: '@control-plane/workspace',
+          task_name: 'orch:build',
+          command: 'bun run build',
+          result: {
+            Spawned: {
+              cache_status: { Miss: { SpawnFingerprintChanged: changes } },
+              outcome: { Success: {} },
+            },
+          },
+        },
+      ],
+    })
+  const changesOf = (changes) => parseSummary(entry(changes)).tasks[0].invalidation
+
+  // Each form below was captured from vite-plus 1.3.0 by changing the one
+  // thing it names in a task between two runs.
+  const accepted = [
+    ['a changed program', ['ProgramChanged'], ['ProgramChanged']],
+    ['changed arguments', ['ArgsChanged'], ['ArgsChanged']],
+    ['a changed working directory', ['CwdChanged'], ['CwdChanged']],
+    [
+      'a program, arguments and working directory changed together',
+      ['ProgramChanged', 'ArgsChanged', 'CwdChanged'],
+      ['ProgramChanged', 'ArgsChanged', 'CwdChanged'],
+    ],
+    [
+      'a tracked variable that gained a value',
+      [{ Env: { Added: { name: 'FOO' } } }],
+      ['EnvAdded:FOO'],
+    ],
+    [
+      'a tracked variable that was dropped',
+      [{ Env: { Removed: { name: 'FOO' } } }],
+      ['EnvRemoved:FOO'],
+    ],
+    [
+      'a tracked variable whose value changed',
+      [{ Env: { Changed: { name: 'FOO' } } }],
+      ['EnvChanged:FOO'],
+    ],
+    [
+      'a passed-through variable that was added',
+      [{ UntrackedEnvAdded: { name: 'BAR' } }],
+      ['UntrackedEnvAdded:BAR'],
+    ],
+    [
+      'a passed-through variable that was removed',
+      [{ UntrackedEnvRemoved: { name: 'BAR' } }],
+      ['UntrackedEnvRemoved:BAR'],
+    ],
+  ]
+  for (const [name, written, labels] of accepted) {
+    test(`reads ${name}`, () => {
+      expect(changesOf(written)).toEqual({
+        reason: 'spawn-fingerprint-changed',
+        path: null,
+        inputKind: null,
+        changes: labels,
+      })
+    })
+  }
+
+  const rejected = [
+    ['an empty change list', []],
+    ['a change list that is not a list', 'ArgsChanged'],
+    ['an unknown bare change', ['Exploded']],
+    ['a bare change in the wrong case', ['argschanged']],
+    ['an unknown keyed change', [{ Exploded: { name: 'FOO' } }]],
+    [
+      'a keyed change with two keys',
+      [{ Env: { Added: { name: 'FOO' } }, UntrackedEnvAdded: { name: 'BAR' } }],
+    ],
+    ['an unknown environment change', [{ Env: { Exploded: { name: 'FOO' } } }]],
+    [
+      'an environment change with two variants',
+      [{ Env: { Added: { name: 'A' }, Removed: { name: 'B' } } }],
+    ],
+    ['an environment change without a name', [{ Env: { Added: {} } }]],
+    ['an environment change with an empty name', [{ Env: { Added: { name: '' } } }]],
+    ['a passed-through change without a name', [{ UntrackedEnvAdded: {} }]],
+    ['a change that is a number', [7]],
+  ]
+  for (const [name, written] of rejected) {
+    test(`rejects ${name}`, () => {
+      expect(() => parseSummary(entry(written))).toThrow(MalformedSummaryError)
+    })
+  }
+
+  test('is a miss of its own kind that names what changed', () => {
+    const analysis = analyze(
+      summaryWith({
+        'orch:contracts:build': {
+          Spawned: {
+            cache_status: {
+              Miss: {
+                SpawnFingerprintChanged: ['ArgsChanged', { Env: { Added: { name: 'FOO' } } }],
+              },
+            },
+            outcome: { Success: {} },
+          },
+        },
+      })
+    )
+    expect(analysis.invalidations.find((item) => item.task === 'orch:contracts:build')).toEqual({
+      task: 'orch:contracts:build',
+      kind: 'spawn-fingerprint',
+      path: null,
+      package: null,
+      changes: ['ArgsChanged', 'EnvAdded:FOO'],
+    })
+    expect(describeInvalidation(analysis, 'orch:contracts:build')).toBe(
+      "the task's spawn fingerprint changed (ArgsChanged, EnvAdded:FOO)"
+    )
+  })
+
+  test('does not satisfy a hits, source or invalidated expectation', () => {
+    const miss = {
+      Spawned: {
+        cache_status: { Miss: { SpawnFingerprintChanged: ['CwdChanged'] } },
+        outcome: { Success: {} },
+      },
+    }
+    const analysis = analyze(summaryWith({ 'orch:contracts:build': miss }))
+    expect(evaluateExpectation(analysis, 'hits').ok).toBe(false)
+    expect(evaluateExpectation(analysis, 'invalidated:source=orch:contracts:build').ok).toBe(false)
+    const overrides = {}
+    for (const task of expected.tasks.values()) {
+      if (task.cached) overrides[task.name] = miss
+    }
+    const everything = analyze(summaryWith(overrides))
+    expect(evaluateExpectation(everything, 'invalidated').ok).toBe(false)
+    expect(evaluateExpectation(everything, 'misses').ok).toBe(true)
   })
 })
 
