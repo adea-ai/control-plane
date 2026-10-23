@@ -486,14 +486,14 @@ function isProcessAlive(pid) {
 }
 
 /** Keeps the ledger current while the runner runs, so its tree is known before it dies. */
-function startSampling(ledger, child) {
+function startSampling(ledger, child, intervalMs = SAMPLE_INTERVAL_MS) {
   const timer = setInterval(() => {
     try {
       if (isRunning(child)) ledger.sample(child.pid)
     } catch {
       // A failed snapshot is retried at the next tick and once more at teardown.
     }
-  }, SAMPLE_INTERVAL_MS)
+  }, intervalMs)
   timer.unref?.()
   return timer
 }
@@ -509,7 +509,15 @@ function startSampling(ledger, child) {
 // assertion, receipt or timeout having succeeded.
 async function executeRunnerInterrupted(
   overrides,
-  { signal, predicate, description, settleMs = 15_000, waitFor = 'close', inspect }
+  {
+    signal,
+    predicate,
+    description,
+    settleMs = 15_000,
+    waitFor = 'close',
+    inspect,
+    sampleIntervalMs,
+  }
 ) {
   const { directory, commands, descendants, environment } = createRunnerHarness(overrides)
   const ledger = createFixtureLedger()
@@ -524,7 +532,7 @@ async function executeRunnerInterrupted(
       stdio: ['ignore', 'pipe', 'pipe'],
     })
     gone = new Promise((resolve) => child.once('exit', () => resolve()))
-    sampler = startSampling(ledger, child)
+    sampler = startSampling(ledger, child, sampleIntervalMs)
     let stdout = ''
     let stderr = ''
     child.stdout.setEncoding('utf8')
@@ -557,6 +565,10 @@ async function executeRunnerInterrupted(
           throw new Error(`the descendant ${pid} was never re-parented`)
       }
     }
+    // The periodic sample can be up to one interval old, and a double the runner
+    // started since then would die with the runner before the teardown could see
+    // it: the proven tree is recorded synchronously, immediately before the signal.
+    if (isRunning(child)) ledger.sample(child.pid)
     child.kill(signal)
     const outcome = await Promise.race([
       exited,
@@ -1777,6 +1789,47 @@ describe('integration runner lifecycle harness teardown', () => {
           'Timed out waiting for a command that is never invoked'
         )
         // The check reads the real /proc, whichever path the teardown took.
+        if (existsSync('/proc/self')) expect(carryingProbe(probe)).toEqual([])
+      },
+      40_000
+    )
+  }
+
+  for (const [name, withProc] of [
+    ['with /proc', true],
+    ['without /proc', false],
+  ]) {
+    test.skipIf(withProc && !procFilesystem)(
+      `owns the direct double the runner started after the last periodic sample, ${name}`,
+      async () => {
+        const probe = `probe-${process.pid}-${Date.now()}-sig-${withProc}`
+        const seen = {}
+        const interrupted = () =>
+          executeRunnerInterrupted(
+            { FAKE_DOCKER_HANG_ON: 'up', CP_TEST_PROBE: probe },
+            {
+              // SIGKILL cannot be handled, so the runner dies at once and its
+              // signal handler never reaps the double: the double is orphaned
+              // unless the teardown already owns it.
+              signal: 'SIGKILL',
+              predicate: ({ program, args }) => program === 'docker' && args.includes('up'),
+              description: 'the compose start',
+              waitFor: 'exit',
+              // The periodic sample never runs, so only the sample taken
+              // immediately before the signal can have recorded the double.
+              sampleIntervalMs: 600_000,
+              inspect: (result) => {
+                seen.status = result.status
+                seen.signal = result.signal
+                if (existsSync('/proc/self')) seen.orphaned = carryingProbe(probe)
+              },
+            }
+          )
+        await (withProc ? interrupted() : withoutProcFilesystem(interrupted))
+        expect(seen.signal).toBe('SIGKILL')
+        // The double really outlived the runner when the teardown began ...
+        if (existsSync('/proc/self')) expect(seen.orphaned.length).toBeGreaterThan(0)
+        // ... and the teardown reaped it, on either path.
         if (existsSync('/proc/self')) expect(carryingProbe(probe)).toEqual([])
       },
       40_000
