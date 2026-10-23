@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.12.0](https://github.com/adea-ai/control-plane/compare/context-v1.11.0...context-v1.12.0) (2026-10-23)
+
+
+### Features
+
+* **context:** qualify decision context consumers ([#558](https://github.com/adea-ai/control-plane/issues/558)) ([#1218](https://github.com/adea-ai/control-plane/issues/1218)) ([77b93eb](https://github.com/adea-ai/control-plane/commit/77b93eb77603b462a01094b6916479318c844018))
+
 ## [1.11.0](https://github.com/adea-ai/control-plane/compare/context-v1.10.1...context-v1.11.0) (2026-10-17)
 
 

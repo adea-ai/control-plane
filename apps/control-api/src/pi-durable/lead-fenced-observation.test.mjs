@@ -98,6 +98,7 @@ async function harness({
   fencedFor = (operation) => fenced(operation),
   statusHandle = handle,
   onEffect = async () => {},
+  observedGeneration,
 } = {}) {
   const receipts = new SqlitePiDurableLeadReceiptStore(new DatabaseSync(':memory:'))
   await receipts.insert(receiptBase)
@@ -107,6 +108,7 @@ async function harness({
     status: 0,
     progress: 0,
     cancel: 0,
+    childStops: 0,
     cancelOptions: undefined,
     assertCurrent: 0,
   }
@@ -118,7 +120,12 @@ async function harness({
     status: async () => {
       calls.status += 1
       await onEffect('status', receipts)
-      return { handle: statusHandle, state: 'running', observedAt: at }
+      return {
+        handle: statusHandle,
+        state: 'running',
+        observedAt: at,
+        ...(observedGeneration ? { observedGeneration } : {}),
+      }
     },
     progress: async function* () {
       calls.progress += 1
@@ -128,7 +135,12 @@ async function harness({
       calls.cancel += 1
       calls.cancelOptions = options
       await onEffect('cancel', receipts)
-      return { handle, state: 'cancelling', observedAt: at }
+      return {
+        handle,
+        state: 'cancelling',
+        observedAt: at,
+        ...(observedGeneration ? { observedGeneration } : {}),
+      }
     },
   }
   const authority = {
@@ -141,7 +153,17 @@ async function harness({
       calls.assertCurrent += 1
     },
   }
-  const service = new DurablePiDurableLeadService({ authority, receipts, adapter, now: () => at })
+  const service = new DurablePiDurableLeadService({
+    authority,
+    receipts,
+    adapter,
+    delegationService: {
+      cancelChildren: async () => {
+        calls.childStops += 1
+      },
+    },
+    now: () => at,
+  })
   return { service, receipts, calls }
 }
 
@@ -149,7 +171,7 @@ const withBinding = (operation) => fenced(operation, { admissionBinding: true })
 
 const envelope = (operation, payload) => ({
   caller: { servicePrincipalId: 'svc_adea' },
-  contractVersion: { major: 1, minor: 0 },
+  contractVersion: { major: 3, minor: 1 },
   requestId: id('req'),
   workspaceId,
   correlation: { traceId: id('trc') },
@@ -162,7 +184,7 @@ const envelope = (operation, payload) => ({
 })
 const readRequest = (operation, parameters) => ({
   caller: { servicePrincipalId: 'svc_adea' },
-  contractVersion: { major: 1, minor: 0 },
+  contractVersion: { major: 3, minor: 1 },
   requestId: id('req'),
   workspaceId,
   correlation: { traceId: id('trc') },
@@ -372,4 +394,42 @@ test('a runtime handle that differs from the retained receipt handle fails close
     'PI_LEAD_AUTHORITY_CONFLICT'
   )
   expect(calls.status).toBe(1)
+})
+
+test('a generation observed for another attempt is refused on the fenced paths', async () => {
+  // The retained fence proves the receipt, never the runtime's report. A
+  // generation observed for another attempt is a late old-attempt event: it
+  // is refused instead of being published against the wrong attempt.
+  const lateGeneration = {
+    schemaVersion: 'runtime-observed-generation/v1',
+    attemptId: 'att_01KABCDEF0123456789ABCDEFG',
+    turnKey: 'pi-turn:att_01KABCDEF0123456789ABCDEFG:initial',
+    inferenceId: 'pi-generation:late',
+    inferenceKey: 'pi-turn:att_01KABCDEF0123456789ABCDEFG:initial:pi-generation:late',
+  }
+  for (const operation of ['status', 'cancel']) {
+    const { service, calls } = await harness({
+      fencedFor: withBinding,
+      observedGeneration: lateGeneration,
+    })
+    const request = operation === 'status' ? statusRequest() : cancelRequest()
+    await expect(service[operation](request, caller)).rejects.toThrow(
+      operation === 'cancel' ? 'PI_LEAD_CANCELLATION_OUTCOME_UNKNOWN' : 'PI_LEAD_AUTHORITY_CONFLICT'
+    )
+    expect(calls.cancel).toBe(operation === 'cancel' ? 1 : 0)
+    expect(calls.childStops).toBe(0)
+  }
+})
+
+test('a generation observed for the retained attempt is published on the fenced path', async () => {
+  const ownGeneration = {
+    schemaVersion: 'runtime-observed-generation/v1',
+    attemptId,
+    turnKey: `pi-turn:${attemptId}:initial`,
+    inferenceId: 'pi-generation:1',
+    inferenceKey: `pi-turn:${attemptId}:initial:pi-generation:1`,
+  }
+  const { service } = await harness({ fencedFor: withBinding, observedGeneration: ownGeneration })
+  const result = await service.status(statusRequest(), caller)
+  expect(result.data.status.observedGeneration).toEqual(ownGeneration)
 })

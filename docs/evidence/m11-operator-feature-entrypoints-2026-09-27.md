@@ -89,4 +89,4 @@ provider TTL coordination remain incomplete. In particular, usage retention
 must not delete raw accounting rows before durable budget/settlement state,
 aggregates and replay/conflict fences exist. Runtime/provider/profile evidence,
 native document reconciliation and independent human acceptance are separate
-unwaived requirements. No production or staging resources were changed.
+unwaived requirements. No production or sandbox resources were changed.

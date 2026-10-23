@@ -1,4 +1,4 @@
-FROM oven/bun:1.4.3-alpine@sha256:629e17411f1f129dbec3af78d5af9c9f2a937435c80349437206c6b0b7422373 AS dependencies
+FROM oven/bun:1.4.4-alpine@sha256:4cf82f5686b196504fe119db3fcd9185b191f82ece82c40680e597228ec6070a AS dependencies
 
 WORKDIR /workspace
 
@@ -34,14 +34,15 @@ RUN bun install --frozen-lockfile --production --ignore-scripts \
         -cf /tmp/runtime-artifact.tar . \
     && tar -xf /tmp/runtime-artifact.tar -C /runtime-artifact
 
-FROM oven/bun:1.4.3-alpine@sha256:629e17411f1f129dbec3af78d5af9c9f2a937435c80349437206c6b0b7422373 AS runtime
+FROM oven/bun:1.4.4-alpine@sha256:4cf82f5686b196504fe119db3fcd9185b191f82ece82c40680e597228ec6070a AS runtime
 
 ARG APP_NAME
 ARG COMMIT_SHA
 ENV APP_NAME=${APP_NAME} \
     COMMIT_SHA=${COMMIT_SHA} \
     APP_ENV=production \
-    NODE_ENV=production
+    NODE_ENV=production \
+    NODE_EXTRA_CA_CERTS=/workspace/packages/database/certs/railway-production-ca.crt
 
 WORKDIR /workspace
 
