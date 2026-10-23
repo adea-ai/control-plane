@@ -1,6 +1,8 @@
 # Pi cancellation owner proposal
 
-Status: the current native commit/fence reference is in
+Status: **proposed source design, not implemented or qualified**. The next bounded
+cut is [Minimal next source-design cut](#minimal-next-source-design-cut-proposed-2026-10-23).
+The existing reference contract is in
 [Native commit/fence qualification and dormant boundary](#native-commitfence-qualification-and-dormant-boundary).
 The earlier drain-before-ACK protocol below is preserved as superseded history,
 not the approved ordering. The earlier product-grant ordering proposal is
@@ -8,9 +10,161 @@ rejected: neither `cancelRequestedAt` nor a retained cancellation intent is an
 irrevocable permission to execute after authority is revoked. No coordination
 protocol in this document is implemented or activated.
 
-Source baseline: CP `65acc91ddaf7f6161318d3383582d9847f3d3688`, Adea
-`a4a5059b115530b0002ada9400a24770e430294a`. The revision changes documentation
-and adds tests of the existing service behavior only.
+Initial historical baseline: CP `65acc91ddaf7f6161318d3383582d9847f3d3688`, Adea
+`a4a5059b115530b0002ada9400a24770e430294a`. The source-design update below is
+documentation only; it does not add or change executable tests.
+
+## Minimal next source-design cut (proposed, 2026-10-23)
+
+**Status:** proposed for root review. Checked against CP
+`b17d32ab0fcd0ea86c60d47cda24534f96e86e6d` and the installed, unchanged
+`@earendil-works/pi-durable` 1.1.0 artifact. Its three checksums still match
+[Pinned native capability evidence](#pinned-native-capability-evidence).
+This cut specifies obligations, not an available SDK operation, activated port,
+completed writer integration or permission to provision an authority service.
+It preserves ordinary stop semantics, no child cascade and both failing
+zero-effect tests. It does not disable ordinary cancellation or change its
+unknown-outcome response while the proposed atomic path remains unqualified.
+
+### Required boundaries and their concrete source locations
+
+| Required boundary                                              | Existing code or verified API                                                                                                                                            | Smallest missing source primitive/integration                                                                                                                                                                                                                     |
+| -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Exact cancellation target                                      | `cancellation-owner.ts` target/request/permit schemas; `adapter.ts` fresh journal and process claim                                                                      | A real owner deriving the exact current attempt, turn, inference, admission and owner/restore generation; retained request, parsed permit and preparation remain evidence only.                                                                                   |
+| Native admission and abort **N**                               | `pi-engine.ts` calls public `Conversation.abort`; 1.1.0 `harness/types.d.ts` exposes only `background`; `Harness.abortTask` returns marked/terminal, not a bound receipt | An explicitly identified guarded abort operation in the native mutation line, with persisted target revalidation, final trusted-time/fence check, abort/input writes and immutable receipt in one transaction. This API is absent from the pinned public surface. |
+| Selective execution/publication                                | 1.1.0 `harness/harness.js` resumes scheduling before `abortConversation`; scheduler uses internal `session.commitWith`                                                   | The guarded operation must not resume tasks or publish effects on rejection. It must record a no-effect receipt for an empty/already-terminal scope. A generic Context/Storage wrapper and public `Tx` scans do not establish these properties.                   |
+| Native restriction installation **F** and acknowledgment **A** | Dormant `PiNativeCancellationBoundaryPort.installFence`, fence request/receipt schemas                                                                                   | Persist the union of mutation-owned restrictions in the same native write domain as N; acknowledge only the exact committed installation. These schemas/default-unavailable methods are not an implementation.                                                    |
+| Canonical authority mutation **R**                             | Adea product writers and CP repositories listed below; `node-admission.ts` current read/observe checks                                                                   | Close admission and registration for the complete affected scope, obtain every required A, then conditionally commit R under the same closure/mutation identity. No product DB lock is held across network waits.                                                 |
+| Completion observation **D**                                   | Ordinary abort waits for idle; dormant `readReceipt`/`drain` reference ports                                                                                             | Resolve only the exact historical N receipt and generation, without repeating abort, admitting inference or targeting a successor. An installation A does not prove D.                                                                                            |
+| Independent restore generation **G**                           | `cancellation-owner.ts` and `native-cancellation-boundary.ts` bind caller-supplied generation; `journal.ts`/`lease.ts` hold local identities                             | A monotonic generation and writer-registration authority outside every restorable snapshot, with a transition protocol that fences old writers before advancing/reopening. No such qualified source is implemented.                                               |
+
+The required native addition is an operation with these semantics, not a proposed
+name that already exists. It must preserve Pi 1.1.0 ownership traversal and queued
+input withdrawal, bind the exact selected scope/task/input revision, and avoid
+`background` expansion or product-child cancellation. Calling internal `setTask`
+or reconstructing private scheduler behavior is not the supported next cut.
+Public facade composition is not ruled out, but must prove all these obligations;
+none of the partial probes above establishes it.
+
+### Cancellation and mutation ordering
+
+N is native admission/abort commit; F is native fence installation; A acknowledges
+that installation; R commits the canonical invalidating mutation; D observes the
+already admitted operation drain. Required ordering is **F < A < R**. The permitted
+race **N < F < A < R < D** retains a cancellation admitted before revocation even
+when it drains later. N/F serialization ends at transaction commit/rollback, not D.
+
+1. The CP owner retains the exact idempotent request, then obtains current actor,
+   audience, scope, execution/attempt and earliest relevant deadline evidence.
+   Preparation creates no grant. Retention uses the request owner, not the adapter
+   journal effect flags. A denied N must leave the running journal unchanged, with
+   no `cancellationIntent`; current `adapter.ts` writes those flags before calling
+   native cancel, so moving that publication behind a bound N receipt is a required
+   future integration, not a property of the present implementation. Before R, the
+   mutation coordinator durably closes
+   the affected admission/registration scope and fixes its closure generation.
+   Discovery includes pending creation, replacement, rebind, recovery and reopen;
+   a new owner cannot publish a handle using an older open generation.
+2. Each affected native owner commits F for that mutation and closure. Restrictions
+   from concurrent mutations form a union; one mutation cannot erase another's
+   restriction. A binds mutation ID, scope-set digest, closure generation, process
+   claim, restore generation and owner/fence epochs. The coordinator needs matching
+   A from every required write domain, not a majority or one currently visible task.
+3. N reloads persisted native scope/task/input facts and compares the exact target,
+   current owner/restore generation, permit and restriction union inside its native
+   transaction. Its final trusted-time admission point must precede the minimum
+   applicable authority/permit/execution/attempt expiry. No awaited external check
+   may follow the final guard before the abort/receipt write. The backend must
+   define and enforce that admission point; an outer timestamp or timer is no proof.
+   The minimum must enumerate all applicable canonical expiries, not merely trust
+   the retained target timestamp. Missing expiry evidence prevents admission.
+   A rejected N writes no abort/input mutation and causes no scheduler admission.
+4. If F wins, the old N is rejected. If N wins, F may acknowledge after N commits
+   without waiting for D. Only after all matching A may R commit conditionally on
+   the unchanged closure. Lost or unknown A keeps revocation pending/unconfirmed
+   and new admission closed; it cannot be reported as successful R or a drained D.
+   R failure/lost response is resolved by its durable mutation ID before reopening;
+   reopening requires fresh authority and an advancing epoch, never replaying an
+   old permit. Natural expiry is enforced at N even without a mutation event.
+5. A lost N response is resolved through its exact immutable native receipt.
+   CP journal/outbox/result publication may retry bookkeeping against that receipt,
+   not issue another abort. Publication compares the exact still-current target and
+   process claim; if a successor won, preserve historical evidence instead of
+   rewriting its state or inferring a new cancellation. Historical receipt observation after expiry adds no
+   present permission. Unknown receipt or D stays unresolved; no successor target,
+   inference resend or new spend is inferred.
+
+### Every relevant writer must participate
+
+The [current writer inventory](#current-owners-and-authority-writers) supplies the
+concrete source families; the source-derived inventory in
+[complete writer coverage](pi-durable-complete-writer-coverage.md) remains the
+check against omissions. The following is a required integration map, not a
+statement that any writer already performs this handshake.
+
+| Writer/fact family                                              | Existing source owner                                                                                                                 | Required fence and missing participation                                                                                                                                                                                   |
+| --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Original actor, membership, identity and workspace lifecycle    | Adea `lead-turns.ts`, `workspaces.ts`, `identity.ts`                                                                                  | Close the complete affected authority scope before discovery; F/A must cover every live/pending owner before membership/identity/deletion R. External identity revocation ingress remains an explicit coverage dependency. |
+| Channel roster, grant revision/expiry, archive and visibility   | Adea `conversations.ts`, `group-channels.ts`, `project-state-policy.ts`                                                               | Fence the affected group/direct scopes and original-message predicates before R; preserve archived/direct/group semantics. Expiry also needs the native trusted-time check, not just a grant-writer event.                 |
+| Profile/project binding, rollback and dispatch/recovery binding | Adea `agents.ts`, `lead-turn-rollback.ts`, `lead-turn-runtime.ts`                                                                     | Fence the operation-specific target set and register new/rebound owners under the closing epoch. Preserve the existing rollback decision and lock order; no child-policy expansion.                                        |
+| Execution/attempt version, latest pointer and deadlines         | CP `execution-repository.ts`, `execution-event-repository.ts`, `runtime-event-effect-sink.ts` and their lifecycle callers             | Enforce the handshake at persistent mutation ingress, not only in the HTTP stop controller. The two deadline/revocation tests must exercise these real writer paths.                                                       |
+| Authentication and explicit execution scope                     | CP service/private authentication and `node-admission.ts` injected scope authority                                                    | Map credential/scope invalidation to the same closure and F/A/R protocol; request-time authentication or a later asynchronous read is insufficient. No credential change is part of this proposal.                         |
+| Local native/journal and process ownership                      | `adapter.ts`, `journal.ts`, `effect-gate.ts`, `lease.ts`, `cancellation-history.ts` and Node composition                              | Bind mutation admission to current G/owner/claim and native N/F. Local revisions, history metadata and process liveness alone cannot establish restore authority.                                                          |
+| Cloudflare owner/session and CP retained lead/product rows      | `pi-cloudflare-host` owner/sessions; CP lead preparation/running/call-gate/receipt stores and production product/role/source bindings | Add the same registration/generation rejection to every durable mutation ingress in the existing coverage list. Host-local ownership is not an acknowledgment from other owners.                                           |
+| Import, restore, cutover/raw SQL and capability readers         | Adea import/maintenance owner; CP restore path; `resume-permit.ts`/`upgrade-manifest.ts`                                              | Reopen only through the G protocol below. Read-only manifests and in-process permits cannot mint G or authorize effects. An unclassified/offline writer keeps full-writer qualification open.                              |
+
+Adea changes require that owner's root-coordinated scope; none is made here.
+The inventory includes components that read or bind authority without writing it;
+keep those distinctions. Do not narrow coverage to the two cancellation contracts
+or describe the other eighteen classified components as all having native fences.
+
+### Independent restore-generation admission
+
+The source-design requirement is a compare-and-advance authority keyed to the
+restore lineage, outside both the restored CP/product stores and native snapshots.
+Its implementation/provider is deliberately undecided; this document provisions
+nothing. Returning G from a restored row, manifest hash, permit, journal epoch or
+process claim would preserve the existing rollback-with-matching-digest gap.
+
+1. Close mutation/owner registration for the lineage. Before advancing G or
+   restoring bytes, prove every old-G writer quiescent or fenced in a write domain
+   the restore cannot rewind. A fence stored only in the snapshot being restored
+   is insufficient. An unreachable owner with unconfirmed fencing keeps reopening
+   unavailable; lease expiry alone does not prove it cannot later write.
+2. The independent authority conditionally advances G for one restore ID and
+   records the transition durably. A retry resolves that transition; it cannot
+   choose the rolled-back snapshot's generation as current or decrement G.
+3. Every restored/restarted/rebound owner registers against the externally current
+   G and closure before becoming writable. Every effect/durable mutation entry
+   must reject stale-G admission through the same non-rewindable registration and
+   fence protocol. A lone asynchronous read of G before a later write recreates
+   the race and is not qualification.
+4. Preserve old-G receipts as historical observations only. Reopen under the new
+   G/owner epoch only after required registrations and fences acknowledge the
+   exact transition. Test a whole-snapshot rollback with matching hashes, not just
+   a changed generation field with an old digest.
+
+### Reviewable implementation sequence and qualification
+
+The next implementation cut is a reviewed capability/transaction contract and
+source prototype for N/F, plus the closure/G authority contracts; it must not wire
+a fake success default into production. First resolve the native API extension
+with the SDK owner and the independent-generation storage boundary with root.
+Then prove a disposable native-backed implementation, CP repository writers and
+Adea writers in their assigned scopes before considering composition activation.
+
+Keep the two current final-asynchronous-authority zero-effect tests unchanged.
+Add qualification for both N/F orderings; exact empty/terminal receipts; no task
+resume on rejected N; earlier expiry at the final guard; overlapping mutations;
+creation/rebind during closure; lost N/F/A/R responses; owner restart and stale
+receipts; D after R without a new abort; and snapshot rollback with matching
+digests rejected across the entire classified writer set. Unknown/missing API,
+writer acknowledgment or external G must remain unavailable/unconfirmed.
+
+Passing dormant-schema or in-memory tests does not satisfy these native checks.
+Installed paired SDK/product/desktop, PostgreSQL/profile and live acceptance remain
+separate. This proposal changes no tests, dependencies, ports, runtime wiring,
+infrastructure or credentials, and closes no aggregate Pi issue.
 
 ## Semantics to preserve
 
