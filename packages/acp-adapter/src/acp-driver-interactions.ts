@@ -103,6 +103,7 @@ export async function cancelExecution(
 ): Promise<RuntimeExecutionStatus> {
   const execution = executionOf(state, handleInput)
   const request = RuntimeCancelRequestSchema.parse(requestInput)
+  state.nativeRouteGate?.assertCapabilityAllowed('execution.cancel')
   return idempotentAction(
     state,
     `cancel:${request.idempotencyKey}`,

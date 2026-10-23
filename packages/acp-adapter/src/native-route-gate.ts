@@ -1,4 +1,5 @@
 import type { RuntimeCapabilityName } from '@control-plane/runtime-sdk'
+import { NativeRouteDeniedError } from './native-route-qualification.js'
 import {
   ExecutorQualificationEvaluator,
   type ExecutorObservation,
@@ -120,6 +121,25 @@ export class NativeRouteGate {
   /** True only when the qualified route's evidence allow-lists this capability. */
   supports(name: RuntimeCapabilityName): boolean {
     return this.capabilities.includes(name)
+  }
+
+  /** Fail-closed guard for one native capability claim. */
+  assertCapabilityAllowed(name: RuntimeCapabilityName): void {
+    const result = this.evaluate()
+    if (result.qualified && result.capabilities.includes(name)) return
+    const code = result.qualified
+      ? 'ACP_NATIVE_CAPABILITY_NOT_ALLOWED'
+      : 'ACP_NATIVE_ROUTE_UNQUALIFIED'
+    const classification =
+      result.failure?.reason === 'transport_offline' ||
+      result.failure?.reason === 'transport_revoked'
+        ? 'unavailable'
+        : 'unsupported'
+    throw new NativeRouteDeniedError({
+      code,
+      classification,
+      failure: result.failure,
+    })
   }
 
   /** Usage reporting is opt-in evidence and stays disabled on an unqualified route. */
