@@ -1,9 +1,12 @@
 ---
 name: control-plane-audit
-description: Audit Control Plane milestone acceptance or production-readiness evidence across managed-cloud, Local, and self-hosted profiles. Use for repository-wide acceptance reviews, not ordinary isolated bug fixes.
+description: "Use when the user asks for a repository-wide milestone acceptance or production-readiness audit across the managed-cloud, Local, and self-hosted profiles. Not for an ordinary isolated bug fix or a single-file change. Routes to the smallest relevant evidence lane and never infers qualification from closed issues or green CI."
 metadata:
-  version: "1.1.0"
+  version: "1.2.0"
   owner: "Control Plane maintainers"
+  provenance:
+    origin: repository-owned
+    integration_version: "1.2.0"
 ---
 
 # Control Plane acceptance audit
@@ -101,3 +104,12 @@ Git; change the version when routing or evidence requirements change.
 - **Failure/skip reporting:** distinguish verified, contradicted, incomplete, missing, and too-weak evidence; record failed and skipped checks explicitly; a green aggregate is insufficient if a required lane was absent.
 - **Cleanup:** include task-owned resource cleanup in the handoff and list intentionally retained resources.
 - **Completion-claim guard:** never turn fixture coverage, old staging evidence, successful merges, or a partial sample into a whole-milestone completion claim.
+- **Stop conditions:** Stop the affected lane and report when the authoritative issue criteria or candidate identity cannot be established, when the environment or credential for a live profile is unavailable, or when a required lane was skipped; unaffected lanes continue.
+
+### Boundary contract
+
+- **Secrets:** Never read credential values, tokens, or secret stores to satisfy an audit lane; name the secret-protected evidence that is missing instead of retrieving it.
+- **Dirty worktree:** Record the candidate's dirty state and never clean, reset, stash, or commit anything during an audit request.
+- **Migration:** Migration and restore evidence is reproduced only under the selected profile; an unapplied migration is never reported as applied.
+- **Generated files:** Regenerate nothing; when a generated artifact drifts from its source, report the drift and its generator instead of editing the artifact.
+- **Provider:** No provider activation and no paid calls; provider-dependent lanes stay explicitly blocked with their activation prerequisites named.
