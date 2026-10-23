@@ -122,7 +122,7 @@ const profilePorts = {
     discovery: 'PostgresRuntimeDiscoveryRepository',
     objectStore: 'R2ObjectStore',
     observability: 'packages/telemetry',
-    persistence: 'PostgreSQL/Neon repositories',
+    persistence: 'PostgreSQL repositories',
     processes: 'Railway service lifecycle',
     runtimeTransport:
       'DisabledCloudRuntime, CloudCertificationRuntime, or explicit DurableRemoteWorkflowRuntime',

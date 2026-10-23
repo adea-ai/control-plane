@@ -253,7 +253,7 @@ describe('M9 production hardening acceptance', () => {
       /provisional operational targets remain RPO 5 minutes and RTO 60 minutes/
     )
     assert.match(operations, /did not claim a timed disaster-recovery\s+exercise/)
-    assert.match(recovery, /Neon PostgreSQL|backup\/PITR/i)
+    assert.match(recovery, /PostgreSQL PostgreSQL|backup\/PITR/i)
     assert.match(operations, /bun run certify:m9-cloud/)
     assert.match(operations, /idempotent replay/i)
   })

@@ -139,3 +139,26 @@ export class AcpAdapter extends TransportedRuntimeAdapter {
 export * from './acp-helpers.js'
 export * from './reference-transport.js'
 export * from './acp-utils.js'
+export { ACP_REMOTE_SEALED_OPERATION, createGatewayOwnedAcpRemoteWire } from './acp-remote-wire.js'
+export type {
+  AcpRemoteGatewayChannel,
+  GatewayOwnedAcpRemoteWireOptions,
+} from './acp-remote-wire.js'
+export {
+  ACP_REMOTE_SEALED_PAYLOAD_KEY,
+  ACP_REMOTE_SEALED_REPLY_MEDIA_TYPE,
+  buildSealedCarrierPayload,
+  readSealedCarrierPayload,
+  readSealedHeaderProjection,
+} from './acp-remote-sealed-frame.js'
+export {
+  acpRemoteReplyArtifactId,
+  acpRemoteReplyArtifactKey,
+  handleAcpRemoteCarrierCommand,
+} from './acp-remote-device-agent.js'
+export type {
+  AcpRemoteDeviceAgentOptions,
+  AcpRemoteDeviceAgentResult,
+  AcpRemoteReplyArtifactStore,
+  AcpRemoteSealedDevice,
+} from './acp-remote-device-agent.js'

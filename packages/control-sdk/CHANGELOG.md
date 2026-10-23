@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.20.1](https://github.com/adea-ai/control-plane/compare/sdk-v1.20.0...sdk-v1.20.1) (2026-10-22)
+
+
+### Bug Fixes
+
+* **pi-durable:** fence cancellation retries and uncertain effects ([#935](https://github.com/adea-ai/control-plane/issues/935)) ([#1246](https://github.com/adea-ai/control-plane/issues/1246)) ([62d530f](https://github.com/adea-ai/control-plane/commit/62d530f5a4c012e978f38e6880181b8f5fbfebe5))
+
+
+### Maintenance
+
+* pin Bun 1.4.4 and use native SDK consumer checking ([#1255](https://github.com/adea-ai/control-plane/issues/1255)) ([176d2d6](https://github.com/adea-ai/control-plane/commit/176d2d61571ef89263e017ddb911b4315aa07234))
+
 ## [1.20.0](https://github.com/adea-ai/control-plane/compare/sdk-v1.19.1...sdk-v1.20.0) (2026-10-18)
 
 

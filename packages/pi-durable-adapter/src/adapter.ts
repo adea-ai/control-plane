@@ -614,10 +614,25 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
 
   async status(handle: RuntimeExecutionHandle): Promise<RuntimeExecutionStatus> {
     const record = this.#record(handle)
+    // The generation this attempt observed, read from the retained record. It is
+    // the runtime's own observation: a caller-claimed generation is never
+    // reported here.
+    const generation = readActiveInference(record)
     return RuntimeExecutionStatusSchema.parse({
       handle: this.#stored(record).handle,
       state: record.state,
       observedAt: record.detail['observedAt'] ?? record.at,
+      ...(generation
+        ? {
+            observedGeneration: {
+              schemaVersion: 'runtime-observed-generation/v1' as const,
+              attemptId: generation.attemptId,
+              turnKey: generation.turnKey,
+              inferenceId: generation.inferenceId,
+              inferenceKey: generation.inferenceKey,
+            },
+          }
+        : {}),
       ...(record.detail['result'] ? { result: record.detail['result'] } : {}),
       ...(record.detail['error'] ? { error: record.detail['error'] } : {}),
       ...(record.detail['terminalUsage'] ? { terminalUsage: record.detail['terminalUsage'] } : {}),
