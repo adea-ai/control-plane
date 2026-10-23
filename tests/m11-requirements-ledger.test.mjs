@@ -6,6 +6,10 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
+  fetchProvenanceObjects,
+  provenanceTargets,
+} from '../scripts/fetch-requirements-provenance.mjs'
+import {
   collectCanonicalCrosswalk,
   collectFigureInventory,
   compareGitHubIssueSnapshot,
@@ -1856,4 +1860,79 @@ describe('CP #195 reconciliation record provenance (#186/#195)', () => {
       `reconciliation record ${gate.id} says satisfied, the ledger says ${gate.status}`
     )
   }, 60000)
+})
+
+describe('requirements provenance fetch (#186/#195)', () => {
+  const sha = (character) => character.repeat(40)
+  const fixture = {
+    candidate: { commit: sha('1') },
+    reconciliation: { reconciliationBase: sha('2') },
+    workerEvidence: [
+      { id: 'W1', lane: 'one', status: 'received', head: sha('3') },
+      { id: 'W2', lane: 'two', status: 'pending', head: null },
+      { id: 'W3', lane: 'three', status: 'integrated', head: sha('4') },
+    ],
+  }
+  // A scripted Git: `known` objects resolve, `remote` objects can be fetched.
+  const scriptedGit = ({ known, remote, mismatched = [] }) => {
+    const calls = []
+    const spawn = (_command, args) => {
+      calls.push(args.join(' '))
+      if (args[0] === 'rev-parse') {
+        const name = args[3].replace('^{commit}', '')
+        if (!known.has(name)) return { status: 1, stdout: '' }
+        return { status: 0, stdout: `${mismatched.includes(name) ? sha('f') : name}\n` }
+      }
+      const name = args.at(-1)
+      if (!remote.has(name))
+        return { status: 128, stderr: `fatal: remote error: upload-pack: not our ref ${name}\n` }
+      known.add(name)
+      return { status: 0, stderr: '' }
+    }
+    return { spawn, calls }
+  }
+
+  test('targets the candidate, the reconciliation base and every non-pending lane head', () => {
+    expect(provenanceTargets(fixture).map(({ sha: value }) => value)).toEqual([
+      sha('1'),
+      sha('2'),
+      sha('3'),
+      sha('4'),
+    ])
+    expect(provenanceTargets(ledger).length).toBeGreaterThanOrEqual(
+      ledger.workerEvidence.filter(({ status }) => status !== 'pending').length
+    )
+  })
+
+  test('fetches an absent object by its exact name and reports each outcome', () => {
+    const { spawn, calls } = scriptedGit({
+      known: new Set([sha('1')]),
+      remote: new Set([sha('3')]),
+    })
+    const results = fetchProvenanceObjects(fixture, { root: '/unused', spawnSync: spawn })
+    expect(results.map(({ status }) => status)).toEqual([
+      'present',
+      'unavailable',
+      'fetched',
+      'unavailable',
+    ])
+    expect(results[1].reason).toContain('not our ref')
+    // Only absent objects are fetched, one exact name at a time, without a depth.
+    expect(calls.filter((call) => call.startsWith('fetch'))).toEqual([
+      `fetch --quiet --no-tags origin ${sha('2')}`,
+      `fetch --quiet --no-tags origin ${sha('3')}`,
+      `fetch --quiet --no-tags origin ${sha('4')}`,
+    ])
+  })
+
+  test('never accepts an object that does not carry the recorded name', () => {
+    const { spawn } = scriptedGit({
+      known: new Set(),
+      remote: new Set([sha('1')]),
+      mismatched: [sha('1')],
+    })
+    const [candidate] = fetchProvenanceObjects(fixture, { root: '/unused', spawnSync: spawn })
+    expect(candidate.status).toBe('unavailable')
+    expect(candidate.reason).toBe('the fetched object does not carry the recorded name')
+  })
 })
