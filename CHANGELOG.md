@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.110.4](https://github.com/adea-ai/control-plane/compare/workspace-v1.110.3...workspace-v1.110.4) (2026-10-23)
+
+
+### Tests
+
+* **database:** give workspace-catalog and model-selection integration cases their own database and setup ([#1287](https://github.com/adea-ai/control-plane/issues/1287)) ([1c45801](https://github.com/adea-ai/control-plane/commit/1c45801d83c50ba04debb5d332235c70322763dd))
+
 ## [1.110.3](https://github.com/adea-ai/control-plane/compare/workspace-v1.110.2...workspace-v1.110.3) (2026-10-23)
 
 
