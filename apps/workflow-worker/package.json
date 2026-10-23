@@ -1,6 +1,6 @@
 {
   "name": "@control-plane/workflow-worker",
-  "version": "1.18.3",
+  "version": "1.18.4",
   "private": true,
   "type": "module",
   "main": "./dist/index.js",
