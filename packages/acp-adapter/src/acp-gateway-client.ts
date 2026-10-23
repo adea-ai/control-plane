@@ -33,6 +33,7 @@ import {
   withGatewayTimeout,
 } from './acp-gateway-protocol.js'
 import { denyRemote, remoteDenialError } from './acp-remote-fence.js'
+import { NativeRouteDeniedError, type QualifiedNativeRoute } from './native-route-qualification.js'
 
 export class AcpGatewayClient implements AcpTransport {
   readonly #transport: AcpGatewayTransport
@@ -48,6 +49,12 @@ export class AcpGatewayClient implements AcpTransport {
   readonly #now: () => Date
   readonly #commandTtlMs: number
   readonly #requestTimeoutMs: number
+  /**
+   * The qualified native route. Absent means the route is UNQUALIFIED: no
+   * capability claim is advertised, no usage is reported, `session/resume` and
+   * `session/cancel` are refused, and no governed native path is open.
+   */
+  readonly #nativeRoute: QualifiedNativeRoute | undefined
   readonly #updates = new Map<string, AcpUpdate[]>()
   readonly #requestSessions = new Map<number, string>()
   readonly #pendingCreates = new Map<
@@ -73,6 +80,7 @@ export class AcpGatewayClient implements AcpTransport {
     this.#now = options.now ?? (() => new Date())
     this.#commandTtlMs = options.commandTtlMs ?? 60_000
     this.#requestTimeoutMs = options.requestTimeoutMs ?? this.#commandTtlMs
+    this.#nativeRoute = options.nativeRoute
     if (
       !Number.isSafeInteger(this.#commandTtlMs) ||
       this.#commandTtlMs < 1_000 ||
@@ -91,6 +99,41 @@ export class AcpGatewayClient implements AcpTransport {
 
   connectionState(): 'connected' | 'disconnected' {
     return this.#transport.connectionState() === 'online' ? 'connected' : 'disconnected'
+  }
+
+  /**
+   * The capability claims this route may advertise.
+   *
+   * The qualified allow-list is the CEILING: the deployment's evidence bounds
+   * what the route may claim. The driver's own report bounds it from below: a
+   * capability the native route does not support is never claimed, even when
+   * the evidence allows it. The advertisement is the intersection, so it is
+   * never wider than either. An absent or unqualified route advertises
+   * nothing.
+   */
+  #qualifiedCapabilities(driverCapabilities: readonly string[]): readonly string[] {
+    const qualified = this.#nativeRoute?.advertisedCapabilities() ?? []
+    return qualified.filter((capability) => driverCapabilities.includes(capability))
+  }
+
+  /** Whether this route may report usage. */
+  #usageReportingEnabled(): boolean {
+    return this.#nativeRoute?.usageReportingEnabled() ?? false
+  }
+
+  /**
+   * Fail-closed guard for one native capability claim. A route without a
+   * qualification record is unqualified, so the claim is refused rather than
+   * assumed.
+   */
+  #assertNativeCapability(capability: 'session.resume' | 'execution.cancel'): void {
+    if (this.#nativeRoute === undefined)
+      throw new NativeRouteDeniedError({
+        code: 'ACP_NATIVE_ROUTE_UNQUALIFIED',
+        classification: 'unsupported',
+        failure: null,
+      })
+    this.#nativeRoute.assertCapabilityAllowed(capability)
   }
 
   async createSession(
@@ -146,7 +189,10 @@ export class AcpGatewayClient implements AcpTransport {
           ...capabilities,
           _meta: {
             controlPlane: {
-              capabilities: driver.capabilities,
+              // The Control Plane's own capability claim is the QUALIFIED set,
+              // never the native driver's self-declared one: a claim the
+              // deployment evidence does not allow stays disabled.
+              capabilities: this.#qualifiedCapabilities(driver.capabilities),
               driverVersion: driver.driverVersion,
             },
           },
@@ -162,6 +208,10 @@ export class AcpGatewayClient implements AcpTransport {
     if (method === 'session/resume' || method === 'session/close') {
       const sessionRef = SessionReferenceSchema.parse(params['sessionId'])
       const action = method === 'session/resume' ? 'resume' : 'close'
+      // Resuming a native session is an explicit claim the deployment evidence
+      // must allow. An unqualified route refuses it locally; it is never
+      // rerouted and never silently downgraded to a fresh session.
+      if (action === 'resume') this.#assertNativeCapability('session.resume')
       return this.#sessionCommand(action, `session.${action}`, { sessionRef }, signal)
     }
     if (method === 'session/prompt') {
@@ -191,7 +241,14 @@ export class AcpGatewayClient implements AcpTransport {
       )
       this.#successfulData(exchange)
       const updates = exchange.progress.map(normalizeAcpProgress)
-      this.#updates.set(prompt.sessionId, updates)
+      // Usage reporting is opt-in evidence: without it the route passes no
+      // usage through, and the usage update is dropped rather than forwarded.
+      this.#updates.set(
+        prompt.sessionId,
+        this.#usageReportingEnabled()
+          ? updates
+          : updates.filter((update) => update.sessionUpdate !== 'usage_update')
+      )
       for (const update of updates) {
         if (
           update.sessionUpdate === 'request_permission' ||
@@ -204,6 +261,9 @@ export class AcpGatewayClient implements AcpTransport {
     }
     if (method === 'session/cancel') {
       const sessionRef = SessionReferenceSchema.parse(params['sessionId'])
+      // Cancelling a native execution is an explicit claim the deployment
+      // evidence must allow. Without it the cancellation is refused locally.
+      this.#assertNativeCapability('execution.cancel')
       const exchange = await this.#dispatch(
         {
           operation: 'runtime.cancel',

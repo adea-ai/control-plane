@@ -7,6 +7,7 @@ import {
   type GatewayResultEnvelope,
 } from '@control-plane/runtime-gateway-protocol'
 import { z } from 'zod'
+import type { QualifiedNativeRoute } from './native-route-qualification.js'
 
 // Shared inside the gateway modules only; gateway.ts does not re-export these.
 export const MaximumGatewayOperations = 1_024
@@ -45,4 +46,14 @@ export interface AcpGatewayClientOptions {
   readonly now?: () => Date
   readonly commandTtlMs?: number
   readonly requestTimeoutMs?: number
+  /**
+   * The qualified native route for this execution (M13.03, #1021).
+   *
+   * When it is absent the route is UNQUALIFIED: no capability claim is
+   * advertised, no usage is reported, `session/resume` and `session/cancel`
+   * are refused, and no governed native path is open. The route's claims come
+   * from the deployment's qualification evidence, never from the native
+   * driver's own advertisement.
+   */
+  readonly nativeRoute?: QualifiedNativeRoute
 }
