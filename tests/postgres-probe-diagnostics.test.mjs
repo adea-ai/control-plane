@@ -376,23 +376,33 @@ test('ordinary credential assignments between URI redactions are sanitized', () 
   const cases = [
     [
       'postgresql://u:pw@host/db?sslmode=require password=PLAIN_SECRET&token=TOKEN_SECRET',
-      'postgresql://<redacted>@host/db?sslmode=require password=<redacted>&token=<redacted>',
+      'postgresql://<redacted>@host/db?sslmode=require password=<redacted>',
       ['pw', 'PLAIN_SECRET', 'TOKEN_SECRET'],
     ],
     [
       'postgresql://u:pw@host/db?sslmode=require password=PLAIN_SECRET&token=TOKEN_SECRET&password=OTHER_SECRET',
-      'postgresql://<redacted>@host/db?sslmode=require password=<redacted>&token=<redacted>&password=<redacted>',
+      'postgresql://<redacted>@host/db?sslmode=require password=<redacted>',
       ['pw', 'PLAIN_SECRET', 'TOKEN_SECRET', 'OTHER_SECRET'],
     ],
     [
       'postgresql://u:pw@host/db?sslmode=require password=prefix&LEAK_SUFFIX&token=TOKEN_SECRET',
-      'postgresql://<redacted>@host/db?sslmode=require password=<redacted>&token=<redacted>',
+      'postgresql://<redacted>@host/db?sslmode=require password=<redacted>',
       ['pw', 'prefix', 'LEAK_SUFFIX', 'TOKEN_SECRET'],
     ],
     [
       "postgresql://u:pw@host/db?sslmode=require password='prefix&LEAK_SUFFIX'&token=TOKEN_SECRET",
       'postgresql://<redacted>@host/db?sslmode=require password=<redacted>&token=<redacted>',
       ['pw', 'prefix', 'LEAK_SUFFIX', 'TOKEN_SECRET'],
+    ],
+    [
+      'postgresql://u:pw@host/db?sslmode=require password=prefix&token=TOKEN&LEAK_SUFFIX&password=LAST_SECRET',
+      'postgresql://<redacted>@host/db?sslmode=require password=<redacted>',
+      ['pw', 'prefix', 'TOKEN', 'LEAK_SUFFIX', 'LAST_SECRET'],
+    ],
+    [
+      "postgresql://u:pw@host/db?sslmode=require password='prefix&token=TOKEN&LEAK_SUFFIX'&password=LAST_SECRET",
+      'postgresql://<redacted>@host/db?sslmode=require password=<redacted>&password=<redacted>',
+      ['pw', 'prefix', 'TOKEN', 'LEAK_SUFFIX', 'LAST_SECRET'],
     ],
   ]
   for (const [input, expected, secrets] of cases) {
