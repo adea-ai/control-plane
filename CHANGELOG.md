@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.111.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.111.0...workspace-v1.111.1) (2026-10-23)
+
+
+### Bug Fixes
+
+* **workflow-worker:** never replace an unavailable enrolled remote_host with the cloud service ([#1281](https://github.com/adea-ai/control-plane/issues/1281)) ([3229738](https://github.com/adea-ai/control-plane/commit/3229738876688f36d8501218c9112b62f4e2f8e8))
+
 ## [1.111.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.110.4...workspace-v1.111.0) (2026-10-23)
 
 

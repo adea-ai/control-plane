@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.18.4](https://github.com/adea-ai/control-plane/compare/workflow-worker-v1.18.3...workflow-worker-v1.18.4) (2026-10-23)
+
+
+### Bug Fixes
+
+* **workflow-worker:** never replace an unavailable enrolled remote_host with the cloud service ([#1281](https://github.com/adea-ai/control-plane/issues/1281)) ([3229738](https://github.com/adea-ai/control-plane/commit/3229738876688f36d8501218c9112b62f4e2f8e8))
+
 ## [1.18.3](https://github.com/adea-ai/control-plane/compare/workflow-worker-v1.18.2...workflow-worker-v1.18.3) (2026-10-22)
 
 
