@@ -233,6 +233,30 @@ Closing this requires the ledger to record the blob identity of each worker
 evidence path, which is a generated-ledger change and is left to the ledger
 owner.
 
+## Reproducing full-clone provenance
+
+An ordinary clone carries the candidate, the reconciliation base and most lane
+heads, but not W1 (`24c84da8…`) or W6 (`eb84f92e…`): those two commits are on no
+branch and exist only in the hosting provider's commit store. A shallow checkout
+carries none of them, and the validator reports each as unverified, never as
+verified. To qualify the worker evidence in a full clone:
+
+1. Use the pinned toolchain from `.node-version` and `.bun-version`; the smoke lane
+   fails with `ACP_INSTALL_NODE_24_REQUIRED` on an older Node.
+2. Use a complete clone (`git fetch --unshallow` if the clone is shallow) and run
+   `bun install --frozen-lockfile`, so the repository-pinned formatter is present.
+3. Run `bun run requirements:provenance:fetch`. It fetches each recorded commit that
+   is absent by its exact object name, accepts only the object that carries that
+   name, and lists every object as `PRESENT`, `FETCHED` or `UNAVAILABLE`. It exits
+   non-zero when any object is unavailable.
+4. Run `bun run requirements:check`. A lane whose head is still unavailable remains an
+   error in a full clone. Nothing is substituted for a missing object, and an
+   unavailable object is evidence that was not verified.
+
+The fetch establishes that the recorded commits exist and carry the recorded
+names. It does not accept any lane's work: the divergence findings, the semantic
+ratification and every other gate below are unchanged.
+
 ## Remaining external gates
 
 | Gate                     | Status  | Severity | Owner                    | Next executable action                                                                                                                                                                        |
