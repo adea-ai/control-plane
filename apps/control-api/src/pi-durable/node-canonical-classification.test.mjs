@@ -249,7 +249,11 @@ async function createNodeHarness(directory) {
     },
     /** Opens the production composition. `executionsFailure` injects a port failure into the
      * canonical executions reads only. Recovery runs during open, as in production. */
-    async open({ executionsFailure, reconcileInference = async () => 'unresolved' } = {}) {
+    async open({
+      executionsFailure,
+      reconcileInference = async () => 'unresolved',
+      engineFactory,
+    } = {}) {
       repositories = await openPersistence()
       const executions = executionsFailure
         ? faultyExecutions(repositories.executions, executionsFailure)
@@ -337,6 +341,7 @@ async function createNodeHarness(directory) {
           },
         }),
         reconcileInference,
+        ...(engineFactory ? { engineFactory } : {}),
       })
       return composition
     },
@@ -429,11 +434,29 @@ test.each([
   'canonical %s outage during recovery fails closed, persists nothing, and resumes on a healthy startup',
   async (_label, failure, code) => {
     await withNode(async (node) => {
-      const { record } = await admitCompletedRun(node)
-      await reactivateExecution(node)
-      const retained = retainRunning(node, record)
+      // Fail before engine.run: this is actual durable pre-run no-send evidence, not a
+      // completed physical dispatch relabelled as interrupted and then allowed to resend.
+      await node.open({
+        engineFactory: async () => {
+          throw new Error('ENGINE_CONSTRUCTION_FAILED')
+        },
+      })
+      const dispatch = node.envelope('pi-durable.lead.dispatch', { intentId })
+      await node.composition.service.dispatch(dispatch, node.principal)
+      await node.composition.adapter.drain()
+      const [record] = node.composition.adapter.journal.list()
+      expect(record.state).toBe('unknown')
+      expect(record.detail).toMatchObject({
+        inferenceTrackingVersion: 1,
+        engineRunStarted: false,
+        inferencePending: true,
+      })
+      expect(record.detail.activeInference).toBeUndefined()
+      expect(record.detail.physicalDispatches).toBeUndefined()
+      const retained = record
       await node.close()
       const requestsBefore = node.state.requests.length
+      expect(requestsBefore).toBe(0)
       await node.open({ executionsFailure: failure })
       expect(node.composition.recoveryBlocked).toEqual([{ handleId: record.handleId, code }])
       expect(node.composition.adapter.journal.get(record.handleId)).toEqual(retained)
@@ -444,9 +467,55 @@ test.each([
       await node.composition.adapter.drain()
       expect(node.composition.recoveryBlocked).toEqual([])
       expect(node.composition.adapter.journal.get(record.handleId).state).toBe('completed')
+      expect(node.state.requests).toHaveLength(requestsBefore + 1)
       expect(
         node.composition.adapter.journal.get(record.handleId).detail.recoveryBlocked
       ).toBeUndefined()
+    })
+  },
+  60000
+)
+
+// An authority outage must not erase physical-send uncertainty. A copied completed journal
+// relabelled as running remains fenced even if the advisory reconciliation port guesses safe.
+test.each([
+  ['transport', failures.transport, 'PI_RECOVERY_UNCLASSIFIED'],
+  ['typed unavailable', failures.typedUnavailable, 'PI_RECOVERY_UNAVAILABLE'],
+  ['forged denial string', failures.forgedDenialString, 'PI_RECOVERY_UNCLASSIFIED'],
+])(
+  'canonical %s outage preserves a retained physical-send fence after healthy restart',
+  async (_label, failure, code) => {
+    await withNode(async (node) => {
+      const { record } = await admitCompletedRun(node)
+      await reactivateExecution(node)
+      const retained = retainRunning(node, record)
+      expect(retained.detail.activeInference).toBeUndefined()
+      expect(Object.keys(retained.detail.physicalDispatches).length).toBeGreaterThan(0)
+      await node.close()
+      const requestsBefore = node.state.requests.length
+      expect(requestsBefore).toBe(1)
+      await node.open({ executionsFailure: failure })
+      expect(node.composition.recoveryBlocked).toEqual([{ handleId: record.handleId, code }])
+      expect(node.composition.adapter.journal.get(record.handleId)).toEqual(retained)
+      expect(node.state.requests).toHaveLength(requestsBefore)
+      expect(JSON.stringify(node.composition.recoveryBlocked)).not.toContain('secret-store-token')
+      await node.close()
+      let probes = 0
+      await node.open({
+        reconcileInference: async () => {
+          probes++
+          return 'safe_to_resume'
+        },
+      })
+      await node.composition.adapter.drain()
+      const observed = node.composition.adapter.journal.get(record.handleId)
+      expect(node.composition.recoveryBlocked).toEqual([])
+      expect(observed.state).toBe('unknown')
+      expect(observed.detail.physicalDispatches).toEqual(retained.detail.physicalDispatches)
+      expect(observed.detail.safeResumeInferenceKey).toBeUndefined()
+      expect(observed.detail.recoveryBlocked).toBeUndefined()
+      expect(probes).toBe(0)
+      expect(node.state.requests).toHaveLength(requestsBefore)
     })
   },
   60000

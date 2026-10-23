@@ -40,6 +40,14 @@ architecture changes as well as the Pi integration. It is regenerated from the
 resolved integration index; the final commit must carry this ledger and pass
 its unchanged scope check before publication is qualified.
 
+The next source input is the checked #1204 repair
+`df1f8f95e53333d0ab2ec6da793304141b652893`: the exact reviewed Bun 1.4.4 /
+ICU 78.1 historical reader qualification and deterministic SQLite pending-event
+ordering before the batch limit. Actual original-path replay tests passed without
+preload or module substitution; this does not qualify native cancellation or
+restore authority. The outage fixtures distinguish safe pre-engine resumption
+from retained physical-send quarantine without deleting dispatch evidence.
+
 The retained source includes the HTTP child-publication reader, Hosted accepted
 model forwarding, and Node child-delivery/startup/close reconciliation. Their
 presence does not establish installed SDK adoption, a deployed lifecycle,
@@ -51,7 +59,7 @@ current-candidate test pass is claimed here.
 
 The published scope is the diff from the base `ab931d068142a0c5629ed4d6cc2c96a1b377a986`
 to the published head, which is the head that carries this section. The complete changed scope is
-**184 paths: 64 added, 120 modified**; no path was deleted.
+**188 paths: 64 added, 124 modified**; no path was deleted.
 `tests/pi-durable-cp1048-evidence-discipline.test.mjs` checks this list, these counts and this
 area table against the repository, so the published scope cannot drift away from the code
 without that lane failing.
@@ -78,7 +86,8 @@ without that lane failing.
 | `packages/policy`             | 0     | 3        | 3     |
 | `packages/profile-adapters`   | 3     | 6        | 9     |
 | `packages/runtime-sdk`        | 0     | 1        | 1     |
-| `packages/sqlite-persistence` | 0     | 3        | 3     |
+| `packages/sqlite-persistence` | 0     | 5        | 5     |
+| `packages/tool-execution`     | 0     | 2        | 2     |
 | `scripts`                     | 0     | 4        | 4     |
 | `tests`                       | 15    | 20       | 35    |
 
@@ -230,6 +239,10 @@ M  packages/runtime-sdk/src/pi-durable-lead.test.mjs
 M  packages/sqlite-persistence/src/delegation-repository.ts
 M  packages/sqlite-persistence/src/delegation-terminal-receipt.test.mjs
 M  packages/sqlite-persistence/src/delegation-terminal-receipt.ts
+M  packages/sqlite-persistence/src/durability-repositories.test.mjs
+M  packages/sqlite-persistence/src/durability-repositories.ts
+M  packages/tool-execution/src/tool-execution.test.mjs
+M  packages/tool-execution/src/tool-execution.ts
 M  scripts/integration-shards.mjs
 M  scripts/requirements-ledger.mjs
 M  scripts/run-bun-test-group.mjs
