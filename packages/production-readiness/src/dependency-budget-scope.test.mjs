@@ -765,10 +765,11 @@ test('the stable full-lock receipt preserves all-platform scope and the real net
     'magic-string@0.30.21',
     'pino@10.3.1',
     'real-require@0.2.0',
+    'zod@4.6.5',
   ])
   assert.deepEqual(
     [...current].filter((pair) => !after.has(pair)),
-    ['pino@10.4.0']
+    ['pino@10.4.0', 'zod@4.6.6']
   )
   assert.equal([...before].filter((pair) => !after.has(pair)).length, 40)
   assert.deepEqual(

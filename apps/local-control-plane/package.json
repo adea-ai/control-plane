@@ -46,7 +46,7 @@
     "@control-plane/workflow-worker": "workspace:*",
     "@restatedev/restate-server": "1.7.13",
     "semver": "7.8.5",
-    "zod": "4.6.5"
+    "zod": "4.6.6"
   },
   "engines": {
     "node": "24.21.0"
