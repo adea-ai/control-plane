@@ -1,6 +1,6 @@
 # Continuous integration
 
-Code Foundry v1.30.0 is the CI runtime pinned by the generated callers under
+Code Foundry v1.48.1 is the CI runtime pinned by the generated callers under
 `.github/workflows/`. Feature branches target `main`; Railway staging is an
 on-demand reference environment, not a Git promotion branch.
 
@@ -46,6 +46,52 @@ reliability still require measurement on the actual runner.
 Repository settings allow squash merges and disable rebase and merge commits.
 Feature branches and Release Please version pull requests must squash into
 `main`; Code Foundry fails closed for any other configured merge strategy.
+
+## Release pull-request readiness
+
+Readiness of a Release Please version pull request is a validation transition:
+it cancels the pull request's current-head validation. An unchanged ready
+release head must therefore not be reset and re-readied when release
+preparation repeats, because that cancels a live validation and allocates a
+replacement run.
+
+The shared Code Foundry release workflow carries that behaviour from `v1.46.4`
+onwards. It classifies the current-head validation owner from the Actions runs
+for the exact head before it touches the pull request:
+
+- an owner that is live or successful is preserved, together with the pull
+  request's readiness;
+- a missing owner still needs the explicit readiness transition, because a
+  cancelled, skipped or neutral run proves nothing about the current head;
+- a failed, timed-out or action-required owner fails closed and is never
+  reallocated;
+- an unverified pull-request state, a run status the API does not define, a
+  nonpositive attempt number, a malformed entry and an incomplete Actions page
+  are refused rather than interpreted, and an unvalidated automation
+  credential leaves the pull request in draft for manual readiness.
+
+This repository owns a copy of that policy in `scripts/release-pr-readiness.mjs`
+so the behaviour can be proved offline, without executing a release and without
+deciding it by matching a workflow file. `tests/release-pr-readiness.test.mjs`
+proves the no-op path, the required-readiness path and the fail-closed cases.
+The policy decides; the shared workflow performs the mutation, and the release
+tier is not forked.
+
+**Compatibility limit.** The fix first appears in Code Foundry `v1.46.4`. Every
+earlier release, including the `v1.44.11` and `v1.45.2` pins named in issue
+#916, resets an unchanged ready release head instead of preserving it.
+`assertReleaseRuntimeCarriesReadinessFix` makes that limit executable: this
+repository's release wiring is checked against the floor and refused below it,
+and an empty detected-version set is refused rather than passing vacuously. A
+repository that cannot be moved to `v1.46.4` or later keeps the canonical
+behaviour of every other release, but must keep its release pull requests in
+draft until the shared runtime carries the fix.
+
+**Remaining gate.** The hosted repeated-preparation witness — the observation
+that an unchanged ready release head keeps its running validation when release
+preparation repeats — is not yet recorded. It requires repeating release
+preparation on a hosted runner, which is a release, so it remains an open gate
+and issue #916 stays open.
 
 ## Public-repository security gates
 
