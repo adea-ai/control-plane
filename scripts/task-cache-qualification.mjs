@@ -190,9 +190,13 @@ export function toolchainOf(command) {
  */
 function parseMiss(miss, label) {
   if (typeof miss === 'string') {
-    if (miss !== 'NotFound')
-      throw new MalformedSummaryError(`${label} reports an unknown cache miss "${miss}"`)
-    return { reason: 'not-found', path: null, inputKind: null }
+    // The task runner writes a payload-free miss reason as a bare string:
+    // `NotFound` when no entry existed and `ConfigChanged` when the task's
+    // declared input configuration differs from the one the entry was stored
+    // under. Any other name is a form this parser has not been taught.
+    if (miss === 'NotFound') return { reason: 'not-found', path: null, inputKind: null }
+    if (miss === 'ConfigChanged') return { reason: 'config-changed', path: null, inputKind: null }
+    throw new MalformedSummaryError(`${label} reports an unknown cache miss "${miss}"`)
   }
   if (!isPlainObject(miss)) throw new MalformedSummaryError(`${label} has a malformed cache miss`)
   const kinds = Object.keys(miss)
@@ -373,6 +377,9 @@ const workspaceDirectories = (root) => {
  * @returns {{ kind: string, path: string | null, package: string | null }}
  */
 export function classifyInvalidation(invalidation, packages) {
+  if (invalidation?.reason === 'config-changed') {
+    return { kind: 'input-config', path: null, package: null }
+  }
   if (!invalidation || invalidation.reason !== 'input-changed') {
     return { kind: 'cold', path: null, package: null }
   }
@@ -453,6 +460,9 @@ export function describeInvalidation(analysis, task) {
   const invalidation = analysis.invalidations.find((entry) => entry.task === task)
   if (!invalidation) return 'the summary does not say why'
   if (invalidation.kind === 'cold') return 'no cache entry existed'
+  if (invalidation.kind === 'input-config') {
+    return "the task's declared input configuration changed"
+  }
   return `the ${invalidation.kind} input "${invalidation.path}" changed`
 }
 
@@ -525,7 +535,7 @@ export function evaluateExpectation(analysis, expectation) {
   } else if (mode === 'invalidated') {
     for (const task of analysis.cached) {
       const invalidation = analysis.invalidations.find((entry) => entry.task === task)
-      if (!invalidation || invalidation.kind === 'cold') {
+      if (!invalidation || invalidation.kind === 'cold' || invalidation.kind === 'input-config') {
         failures.push(`"${task}" was not invalidated by a changed input`)
       }
     }

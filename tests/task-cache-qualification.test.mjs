@@ -9,6 +9,7 @@ import {
   analyzeRun,
   cacheState,
   compareInventories,
+  describeInvalidation,
   evaluateExpectation,
   expectedTasks,
   outputInventory,
@@ -35,6 +36,9 @@ const missed = (path, kind = 'ContentModified') => ({
     cache_status: { Miss: { InputChanged: { kind, path } } },
     outcome: { Success: {} },
   },
+})
+const configChanged = () => ({
+  Spawned: { cache_status: { Miss: 'ConfigChanged' }, outcome: { Success: {} } },
 })
 const notFound = () => ({
   Spawned: { cache_status: { Miss: 'NotFound' }, outcome: { Success: {} } },
@@ -101,6 +105,14 @@ describe('the summary parser fails closed on malformed input', () => {
     [
       'an unknown cache miss name',
       '{"exit_code": 0, "tasks": [{"package_name": "p", "task_name": "t", "command": "c", "result": {"Spawned": {"cache_status": {"Miss": "Weird"}}}}]}',
+    ],
+    [
+      'a cache miss name that differs from ConfigChanged only in case',
+      '{"exit_code": 0, "tasks": [{"package_name": "p", "task_name": "t", "command": "c", "result": {"Spawned": {"cache_status": {"Miss": "configchanged"}}}}]}',
+    ],
+    [
+      'a ConfigChanged miss carrying a payload',
+      '{"exit_code": 0, "tasks": [{"package_name": "p", "task_name": "t", "command": "c", "result": {"Spawned": {"cache_status": {"Miss": {"ConfigChanged": {}}}}}}]}',
     ],
     [
       'an input change without a path',
@@ -173,6 +185,64 @@ describe('the summary parser accepts what the task runner writes', () => {
     })
     expect(summary.tasks[3].invalidation.reason).toBe('not-found')
     expect(summary.tasks[3].failed).toBe(true)
+  })
+})
+
+describe('a ConfigChanged miss is a reason the runner writes, not an unknown one', () => {
+  const entry = (miss) =>
+    JSON.stringify({
+      exit_code: 0,
+      tasks: [
+        {
+          package_name: '@control-plane/workspace',
+          task_name: 'orch:build',
+          command: 'bun run build',
+          result: { Spawned: { cache_status: { Miss: miss }, outcome: { Success: {} } } },
+        },
+      ],
+    })
+
+  test('parses the bare-string form as its own reason', () => {
+    const summary = parseSummary(entry('ConfigChanged'))
+    expect(summary.tasks[0].kind).toBe('miss')
+    expect(summary.tasks[0].invalidation).toEqual({
+      reason: 'config-changed',
+      path: null,
+      inputKind: null,
+    })
+  })
+
+  test('still rejects a miss name the runner does not write', () => {
+    expect(() => parseSummary(entry('Exploded'))).toThrow(/unknown cache miss "Exploded"/)
+  })
+
+  test('is a miss with its own cause, neither cold nor a changed input', () => {
+    const analysis = analyze(summaryWith({ 'orch:contracts:build': configChanged() }))
+    const invalidation = analysis.invalidations.find((item) => item.task === 'orch:contracts:build')
+    expect(invalidation).toEqual({
+      task: 'orch:contracts:build',
+      kind: 'input-config',
+      path: null,
+      package: null,
+    })
+    expect(describeInvalidation(analysis, 'orch:contracts:build')).toBe(
+      "the task's declared input configuration changed"
+    )
+  })
+
+  test('does not satisfy a hits, source or invalidated expectation', () => {
+    const analysis = analyze(summaryWith({ 'orch:contracts:build': configChanged() }))
+    const hits = evaluateExpectation(analysis, 'hits')
+    expect(hits.ok).toBe(false)
+    expect(hits.failures.join('\n')).toContain('declared input configuration changed')
+    expect(evaluateExpectation(analysis, 'invalidated:source=orch:contracts:build').ok).toBe(false)
+    expect(evaluateExpectation(analysis, 'invalidated:config=orch:contracts:build').ok).toBe(false)
+    const overrides = {}
+    for (const task of expected.tasks.values()) {
+      if (task.cached) overrides[task.name] = configChanged()
+    }
+    expect(evaluateExpectation(analyze(summaryWith(overrides)), 'invalidated').ok).toBe(false)
+    expect(evaluateExpectation(analyze(summaryWith(overrides)), 'misses').ok).toBe(true)
   })
 })
 
