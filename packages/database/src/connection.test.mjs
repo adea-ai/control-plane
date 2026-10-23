@@ -74,6 +74,25 @@ describe('resolvePostgresClientOptions', () => {
     )
   })
 
+  test('does not let sslmode=require suppress sslrootcert=system verification', () => {
+    const requireUrl = applicationUrl.replace('verify-full', 'require')
+    expect(resolvePostgresClientOptions(requireUrl).ssl).toBe('require')
+    expect(resolvePostgresClientOptions(`${requireUrl}&sslrootcert=system`).ssl).toBe('verify-full')
+    expect(
+      resolvePostgresClientOptions(
+        `${applicationUrl.replace('?sslmode=verify-full', '')}?sslrootcert=system`
+      ).ssl
+    ).toBe('verify-full')
+    // A non-verifying mode still fails closed even with the system trust root.
+    expectDiagnostic(
+      () =>
+        resolvePostgresClientOptions(
+          `${applicationUrl.replace('verify-full', 'disable')}&sslrootcert=system`
+        ),
+      'INVALID_DATABASE_TLS'
+    )
+  })
+
   test('does not enable TLS when the URL does not request it', () => {
     expect(
       resolvePostgresClientOptions(applicationUrl.replace('?sslmode=verify-full', ''))

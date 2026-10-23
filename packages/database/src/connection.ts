@@ -129,12 +129,23 @@ function assertBoundedInteger(
  * distinctly, so it keeps certificate and hostname verification. Modes that
  * would skip verification (`disable`, `allow`, `prefer`) or repeat the
  * parameter fail closed.
+ *
+ * `sslrootcert=system` makes the driver escalate to `verify-full`. Passing an
+ * explicit `ssl` option (which this function does for a resolved `sslmode`)
+ * would otherwise suppress that escalation, so the system trust root always
+ * wins over a weaker `sslmode` and certificate/hostname verification is never
+ * silently disabled.
  */
 function resolveVerifiedTlsMode(url: URL): 'require' | 'verify-full' | undefined {
+  const systemTrustRoot = url.searchParams.getAll('sslrootcert').includes('system')
   const modes = url.searchParams.getAll('sslmode')
-  if (modes.length === 0) return undefined
   if (modes.length > 1) throw new DatabaseConnectionError('INVALID_DATABASE_TLS')
   const [mode] = modes
+  if (mode === 'disable' || mode === 'allow' || mode === 'prefer') {
+    throw new DatabaseConnectionError('INVALID_DATABASE_TLS')
+  }
+  if (systemTrustRoot) return 'verify-full'
+  if (mode === undefined) return undefined
   if (mode === 'require') return 'require'
   if (mode === 'verify-ca' || mode === 'verify-full') return 'verify-full'
   throw new DatabaseConnectionError('INVALID_DATABASE_TLS')
