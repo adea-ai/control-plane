@@ -94,7 +94,7 @@ function frontmatterFields(text: string): Record<string, unknown> | null {
 
 function frontmatterField(text: string, name: string): string | null {
   const fields = frontmatterFields(text)
-  const metadata = fields?.metadata
+  const metadata = fields?.['metadata']
   const metadataFields =
     typeof metadata === 'object' && metadata !== null && !Array.isArray(metadata)
       ? (metadata as Record<string, unknown>)

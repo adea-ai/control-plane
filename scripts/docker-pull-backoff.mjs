@@ -6,8 +6,31 @@ export const registryRateLimitPattern = /toomanyrequests|429 Too Many Requests|p
 
 export const defaultPullBackoffMs = [15_000, 45_000, 90_000]
 
+// The result a pull reports when the run was interrupted before a command could
+// be launched. An interrupted pull is not a rate limit and must not look like
+// one, and it must not start another command.
+export const pullInterruptedMessage = 'The image pull was interrupted'
+
+// The backoff wait is consumed in slices, so an interruption ends the wait
+// instead of running it out. The total wait is the same as the delay.
+const BACKOFF_SLICE_MS = 250
+
 export function isRegistryRateLimit(output) {
   return registryRateLimitPattern.test(output)
+}
+
+// Waits out a backoff delay, in slices, and reports whether the wait finished
+// without an interruption. Only used when the caller supplied an interruption
+// predicate; without one the delay is waited out in a single sleep, as before.
+async function waitForBackoff(delayMs, sleep, isInterrupted) {
+  let remaining = delayMs
+  while (remaining > 0) {
+    if (isInterrupted()) return false
+    const slice = Math.min(BACKOFF_SLICE_MS, remaining)
+    await sleep(slice)
+    remaining -= slice
+  }
+  return !isInterrupted()
 }
 
 export async function runWithPullBackoff(
@@ -17,18 +40,35 @@ export async function runWithPullBackoff(
     sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
     log = (message) => console.warn(message),
     onAttempt = () => {},
+    isInterrupted,
+    settlePendingSignal = async () => {},
   } = {}
 ) {
+  const interrupted = () => (isInterrupted === undefined ? false : isInterrupted())
   for (let retry = 0; ; retry += 1) {
+    // An interrupted run launches no further command: the attempt below would
+    // be a new command started after the signal. A caller that runs its commands
+    // synchronously supplies `settlePendingSignal`, because a signal delivered
+    // while such a command held the event loop is only processed on a later
+    // turn: without that turn the state read here is the state BEFORE the
+    // signal, and a command would start after the run was told to stop.
+    await settlePendingSignal()
+    if (interrupted()) return { status: 1, stdout: '', stderr: pullInterruptedMessage }
     const result = attempt()
     onAttempt(result, { attempt: retry + 1 })
+    if (isInterrupted !== undefined) {
+      await settlePendingSignal()
+      if (interrupted()) return interruptedResult()
+    }
     const rateLimited =
       result.status !== 0 && isRegistryRateLimit(`${result.stdout ?? ''}\n${result.stderr ?? ''}`)
     if (!rateLimited || retry >= delaysMs.length) return result
     const delayMs = delaysMs[retry]
     const attemptLabel = `retry ${retry + 1} of ${delaysMs.length}`
     log(`Image registry rate-limited a pull; ${attemptLabel} in ${delayMs / 1000}s.`)
-    await sleep(delayMs)
+    if (isInterrupted === undefined) await sleep(delayMs)
+    else if (!(await waitForBackoff(delayMs, sleep, interrupted)))
+      return { status: 1, stdout: '', stderr: pullInterruptedMessage }
   }
 }
 
@@ -75,22 +115,52 @@ export async function runWithPullFallback(
     sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
     log = (message) => console.warn(message),
     pull,
+    isInterrupted,
+    settlePendingSignal = async () => {},
   } = {}
 ) {
+  const interrupted = () => (isInterrupted === undefined ? false : isInterrupted())
   const fallbacks = pull === undefined ? [] : fallbackImages(image)
   for (let retry = 0; ; retry += 1) {
+    // An interrupted run launches no further command: neither the canonical
+    // attempt nor a fallback pull may start after the signal. A caller that runs
+    // its commands synchronously supplies `settlePendingSignal`, because a
+    // signal delivered while such a command held the event loop is only
+    // processed on a later turn: without that turn the state read here is the
+    // state BEFORE the signal, and a command would start after the run was told
+    // to stop.
+    await settlePendingSignal()
+    if (interrupted()) return { result: interruptedResult(), image: undefined }
     let result = await attempt(undefined)
+    // A synchronous command can finish before its queued signal handler runs.
+    // Observe that signal before returning success or selecting another command.
+    if (isInterrupted !== undefined) {
+      await settlePendingSignal()
+      if (interrupted()) return { result: interruptedResult(), image: undefined }
+    }
     if (!isRateLimitedResult(result)) return { result, image: undefined }
     for (const fallback of fallbacks) {
+      await settlePendingSignal()
+      if (interrupted()) return { result: interruptedResult(), image: undefined }
       log(`Image registry rate-limited a pull; trying ${fallback}.`)
       const pulled = await pull(fallback)
+      if (isInterrupted !== undefined) {
+        await settlePendingSignal()
+        if (interrupted()) return { result: interruptedResult(), image: undefined }
+      }
       if (pulled.status !== 0) {
         const reason =
           `${pulled.stderr ?? ''}`.trim() || pulled.error?.message || `exit ${pulled.status}`
         log(`Pulling ${fallback} failed: ${reason}`)
         continue
       }
+      await settlePendingSignal()
+      if (interrupted()) return { result: interruptedResult(), image: undefined }
       result = await attempt(fallback)
+      if (isInterrupted !== undefined) {
+        await settlePendingSignal()
+        if (interrupted()) return { result: interruptedResult(), image: undefined }
+      }
       if (result.status === 0) return { result, image: fallback }
       log(`Using ${fallback} failed (exit ${result.status}); trying the next registry.`)
     }
@@ -99,6 +169,13 @@ export async function runWithPullFallback(
     log(
       `Image registries rate-limited a pull; retry ${retry + 1} of ${delaysMs.length} in ${delayMs / 1000}s.`
     )
-    await sleep(delayMs)
+    if (isInterrupted === undefined) await sleep(delayMs)
+    else if (!(await waitForBackoff(delayMs, sleep, interrupted)))
+      return { result: interruptedResult(), image: undefined }
   }
+}
+
+// The result an interrupted pull reports: not a rate limit, and no image.
+function interruptedResult() {
+  return { status: 1, stdout: '', stderr: pullInterruptedMessage }
 }
