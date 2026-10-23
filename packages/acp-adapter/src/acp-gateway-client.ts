@@ -7,7 +7,7 @@ import {
   negotiateGatewayProtocolVersion,
   type GatewayCommandEnvelope,
 } from '@control-plane/runtime-gateway-protocol'
-import { RuntimeAdapterError } from '@control-plane/runtime-sdk'
+import { RuntimeAdapterError, type RuntimeCapabilityName } from '@control-plane/runtime-sdk'
 import { z } from 'zod'
 import {
   AcpSnapshotSchema,
@@ -124,9 +124,11 @@ export class AcpGatewayClient implements AcpTransport {
   /**
    * Fail-closed guard for one native capability claim. A route without a
    * qualification record is unqualified, so the claim is refused rather than
-   * assumed.
+   * assumed. Every dispatch that opens or exercises a native session (create,
+   * prompt, snapshot, replay, resume, cancel) passes through this guard, so a
+   * direct client call is held to the same evidence as the adapter path.
    */
-  #assertNativeCapability(capability: 'session.resume' | 'execution.cancel'): void {
+  #assertNativeCapability(capability: RuntimeCapabilityName): void {
     if (this.#nativeRoute === undefined)
       throw new NativeRouteDeniedError({
         code: 'ACP_NATIVE_ROUTE_UNQUALIFIED',
@@ -140,6 +142,9 @@ export class AcpGatewayClient implements AcpTransport {
     createToken: string,
     signal?: AbortSignal
   ): Promise<{ readonly sessionId: string }> {
+    // Checked on every call, before an in-flight create is coalesced: the
+    // route may have been revoked or drifted since that create was issued.
+    this.#assertNativeCapability('session.create')
     const pending = this.#pendingCreates.get(createToken)
     if (pending && !pending.signal?.aborted) return pending.promise
     const created = this.#sessionCommand(
@@ -222,6 +227,9 @@ export class AcpGatewayClient implements AcpTransport {
         })
         .strict()
         .parse(params)
+      // A prompt is the native effect itself: it needs the evidenced output
+      // stream claim before anything reaches the gateway.
+      this.#assertNativeCapability('stream.output')
       const attemptId =
         JSON.stringify(prompt.prompt).match(/att_[0-9A-HJKMNP-TV-Z]{26}/)?.[0] ??
         this.#defaultAttemptId
@@ -312,6 +320,7 @@ export class AcpGatewayClient implements AcpTransport {
 
   async snapshot(sessionRefInput: string, signal?: AbortSignal): Promise<AcpSnapshot> {
     const sessionRef = SessionReferenceSchema.parse(sessionRefInput)
+    this.#assertNativeCapability('stream.events')
     const exchange = await this.#dispatch(
       {
         operation: 'runtime.status',
@@ -337,6 +346,7 @@ export class AcpGatewayClient implements AcpTransport {
     options: { readonly afterSequence?: number; readonly signal?: AbortSignal } = {}
   ): Promise<AcpSessionReplay> {
     const sessionRef = SessionReferenceSchema.parse(sessionRefInput)
+    this.#assertNativeCapability('session.history')
     const result = await this.#sessionCommand(
       'replay',
       'session.history',

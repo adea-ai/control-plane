@@ -53,6 +53,19 @@ deployment milestone.
   native path (shell, network, hooks, mcp, extensions) appear only when the
   specific path is allow-listed by evidence; governed paths additionally require
   `policyEnforced: true` (pre-effect policy enforcement) in the evidence.
+- The gateway client holds every direct call to the same evidence as the
+  adapter path. `session/new` (`createSession`), `session/prompt`, `snapshot`,
+  `replay`, `session/resume` and `session/cancel` are each refused locally,
+  before any gateway command, unless the route is qualified and its evidence
+  allow-lists `session.create`, `stream.output`, `stream.events`,
+  `session.history`, `session.resume` or `execution.cancel` respectively. A
+  client with no `nativeRoute` is unqualified and is refused. `initialize`
+  (which advertises nothing for an unqualified route), `session/list`,
+  `session/close` and interaction responses are not gated.
+- `createLocalAcpRuntime` and `createInstalledLocalAcpRuntime` accept an
+  optional `nativeRouteGate` and hand it to the driver unchanged; they never
+  construct one. Without a gate the driver is ungated as before, so the
+  deployment milestone must still supply it from trusted evidence.
 - The codex route must exactly match the pinned ACP build identity
   (`pinnedAcpBuild`), including the pinned `codexVersion` harness version;
   fixture-valued installation evidence and evidence/observation pairs jointly

@@ -10,7 +10,15 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { URL } from 'node:url'
 import { AcpAdapter, AcpDriver } from './index.ts'
 import { AcpGatewayClient, ReferenceAcpDriver, ReferenceAcpGatewayTransport } from './gateway.ts'
-import { qualifiedAcpCapabilities, qualifiedNativeRouteFixture } from './native-route-fixtures.ts'
+import {
+  FIXTURE_NOW,
+  qualifiedAcpCapabilities,
+  qualifiedNativeRouteFixture,
+  qualifiedRouteEvidence,
+  qualifiedRouteObservation,
+} from './native-route-fixtures.ts'
+import { QualifiedNativeRoute } from './native-route-qualification.ts'
+import { ExecutorQualificationEvaluator } from './qualification.ts'
 
 const now = '2026-08-25T12:00:00.000Z'
 const digest = (character) => `sha256:${character.repeat(64)}`
@@ -405,6 +413,91 @@ describe('non-co-located ACP through Runtime Gateway', () => {
       code: 'ACP_NATIVE_CAPABILITY_NOT_ALLOWED',
     })
     expect(narrowed.transport.commands()).toHaveLength(0)
+  })
+
+  describe('direct client calls are held to the same route evidence as the adapter path', () => {
+    const sessionId = 'nses_01JABCDEF0123456789ABCDEFG'
+    const prompt = [{ type: 'text', text: 'hello' }]
+    // Each direct entry point and the evidenced capability it requires.
+    const entryPoints = [
+      ['createSession', 'session.create', (client) => client.createSession('direct-create')],
+      ['session/new', 'session.create', (client) => client.request('session/new', {})],
+      [
+        'session/prompt',
+        'stream.output',
+        (client) => client.request('session/prompt', { sessionId, prompt }),
+      ],
+      ['snapshot', 'stream.events', (client) => client.snapshot(sessionId)],
+      ['replay', 'session.history', (client) => client.replay(sessionId)],
+    ]
+
+    test.each(entryPoints)(
+      '%s is refused locally on an unqualified route',
+      async (_name, _c, call) => {
+        const { client, transport } = fixture({ nativeRoute: undefined })
+        await expect(call(client)).rejects.toMatchObject({
+          code: 'ACP_NATIVE_ROUTE_UNQUALIFIED',
+          details: { fallback: 'none' },
+        })
+        expect(transport.commands()).toHaveLength(0)
+      }
+    )
+
+    test.each(entryPoints)(
+      '%s is refused locally when the evidence omits its capability',
+      async (_name, capability, call) => {
+        const { client, transport } = fixture({
+          nativeRoute: qualifiedNativeRouteFixture({
+            evidence: {
+              capabilities: qualifiedAcpCapabilities.filter((entry) => entry !== capability),
+            },
+          }),
+        })
+        await expect(call(client)).rejects.toMatchObject({
+          code: 'ACP_NATIVE_CAPABILITY_NOT_ALLOWED',
+          details: { fallback: 'none' },
+        })
+        expect(transport.commands()).toHaveLength(0)
+      }
+    )
+
+    test.each(entryPoints)(
+      '%s is refused locally once the observed route goes offline',
+      async (_name, _c, call) => {
+        const { client, transport } = fixture({
+          nativeRoute: qualifiedNativeRouteFixture({ observation: { transport: 'offline' } }),
+        })
+        await expect(call(client)).rejects.toMatchObject({
+          code: 'ACP_NATIVE_ROUTE_UNQUALIFIED',
+          classification: 'unavailable',
+        })
+        expect(transport.commands()).toHaveLength(0)
+      }
+    )
+
+    test('a coalesced in-flight create re-checks the route on every call', async () => {
+      let transportState = 'online'
+      const route = new QualifiedNativeRoute({
+        evaluator: new ExecutorQualificationEvaluator(
+          [qualifiedRouteEvidence()],
+          () => new Date(FIXTURE_NOW)
+        ),
+        observation: () => qualifiedRouteObservation({ transport: transportState }),
+      })
+      const { client } = fixture({ nativeRoute: route })
+      const first = client.createSession('coalesced-create')
+      transportState = 'revoked'
+      await expect(client.createSession('coalesced-create')).rejects.toMatchObject({
+        code: 'ACP_NATIVE_ROUTE_UNQUALIFIED',
+      })
+      await first
+    })
+
+    test('initialize still reports an unqualified route as advertising nothing', async () => {
+      const { client } = fixture({ nativeRoute: undefined })
+      const initialize = await client.request('initialize', {})
+      expect(initialize.capabilities._meta.controlPlane.capabilities).toEqual([])
+    })
   })
 
   test('makes the runtime ineligible when a required capability is not reported', async () => {
