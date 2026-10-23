@@ -6,11 +6,11 @@ Performance evidence is profile-specific. The repository's existing M9 synthetic
 
 `bun run test:load` / `bun run test:m9-acceptance` exercises representative Control API, workflow/event, Runtime Gateway/routing, model/tool, orchestration, and telemetry paths with bounded admission. Existing budgets and historical local results remain regression evidence for the implementation they exercise.
 
-Do not reinterpret a synthetic/developer-host pass as proof that Railway, Neon, R2, Restate, SQLite, or a VPS profile meets production capacity requirements.
+Do not reinterpret a synthetic/developer-host pass as proof that Railway, PostgreSQL, R2, Restate, SQLite, or a VPS profile meets production capacity requirements.
 
 ## M9 managed-cloud evidence
 
-M9.6 #73 requires measurements from the accepted Railway + Neon + R2 + Restate staging candidate after M9.7–M9.13 configuration is complete.
+M9.6 #73 requires measurements from the accepted Railway + PostgreSQL + R2 + Restate sandbox candidate after M9.7–M9.13 configuration is complete.
 
 Record at minimum:
 
@@ -18,7 +18,7 @@ Record at minimum:
 - Railway CPU/RAM/network and service saturation;
 - execution acceptance and time-to-first-progress;
 - Restate invocation/wait/recovery overhead and state growth;
-- Neon query/pool/connection behavior and migration/reconnect impact;
+- PostgreSQL query/pool/connection behavior and migration/reconnect impact;
 - R2 request/storage/network behavior where used;
 - Runtime Gateway connection/ACK overhead where used;
 - event/tool/model/provider throughput and backpressure;
@@ -27,7 +27,7 @@ Record at minimum:
 - idle and representative active cost.
 - telemetry median overhead and representative p95 overhead.
 
-M9.6 recorded the initial Cloud baseline after live staging became healthy. M11 later reruns it from
+M9.6 recorded the initial Cloud baseline after live sandbox became healthy. M11 later reruns it from
 the frozen release candidate.
 
 ## M10 Local evidence

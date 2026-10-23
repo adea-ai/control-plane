@@ -1,4 +1,4 @@
-# M11 Neon budget-admission shard balance
+# M11 PostgreSQL budget-admission shard balance
 
 ## Scope and source
 
@@ -29,7 +29,7 @@ step alone used 43m22s of a 45-minute job budget, before considering other steps
 
 Move `packages/database/src/budget-admission.integration.test.mjs` as one whole
 file from shard 2 to shard 1. The runner still executes files serially, and each
-shard retains its own disposable Neon branch. No fourth branch, mutable shared
+shard retains its own disposable database sandbox. No fourth branch, mutable shared
 fixture, case filter, retry, timeout increase, or test omission is introduced.
 The complementary 37/28 foundation slices and shard 1's drill ownership remain
 unchanged. The existing executable inventory checks all integration file owners
@@ -38,13 +38,13 @@ and verifies actual Bun selection of all 65 foundation cases without duplication
 The timing sample identifies spare capacity and a timeout risk. Moving work does
 not reduce the number of assertions or database setup operations, and the
 observed file time cannot predict its duration on another compute instance.
-Post-change trusted-main timing, runner billing, Neon compute/transfer, and cost
+Post-change trusted-main timing, runner billing, PostgreSQL compute/transfer, and cost
 savings are unverified until measured. No percentage or dollar savings is claimed.
 
 ## Validation and resource limits
 
 Focused source validation and independent reviews are recorded in the pull
-request. Required current-head CI gates and a successful trusted-main Neon run
+request. Required current-head CI gates and a successful trusted-main PostgreSQL run
 remain necessary evidence after publication. The latter's branch deletion steps
 must also succeed; branch expiration alone is not cleanup proof.
 
@@ -54,6 +54,6 @@ fixture directory and child process at a time are bounded and removed. Local
 Docker, full builds, installs, and broad suites are excluded under the user's
 resource constraint; remote CI supplies the broader validation.
 
-The existing 150GB Docker footprint, the older failed Neon cleanup branch, release
+The existing 150GB Docker footprint, the older failed PostgreSQL cleanup branch, release
 token permissions, deployed profile acceptance, and full M11 acceptance remain
 separate unverified follow-ups.

@@ -20,8 +20,7 @@ export function parseApplicationMetadata<Service extends string>(
   applicationEnvironment: ApplicationEnvironment,
   environment: RawEnvironment
 ): MetadataParseResult<Service> {
-  const productionLike =
-    applicationEnvironment === 'staging' || applicationEnvironment === 'production'
+  const productionLike = applicationEnvironment === 'production'
   const version = environment['SERVICE_VERSION'] ?? environment['RAILWAY_DEPLOYMENT_ID']
   const commitSha = environment['COMMIT_SHA'] ?? environment['RAILWAY_GIT_COMMIT_SHA']
   const missing = [

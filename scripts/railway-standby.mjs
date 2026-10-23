@@ -3,7 +3,7 @@ import process from 'node:process'
 import { fileURLToPath } from 'node:url'
 import { resolve } from 'node:path'
 
-const environmentNames = new Set(['staging', 'production'])
+const environmentNames = new Set(['production'])
 const applicationServices = new Set([
   '@control-plane/control-api',
   '@control-plane/workflow-worker',
@@ -21,7 +21,7 @@ const reactivatableDeploymentStatuses = new Set([
 
 export function planStandbyActions({ environment, services }) {
   if (!environmentNames.has(environment)) {
-    throw new Error('Railway standby environment must be staging or production.')
+    throw new Error('Railway standby environment must be production.')
   }
   if (!Array.isArray(services)) {
     throw new Error('Railway service inventory must be an array.')
@@ -309,7 +309,7 @@ export function main(arguments_ = process.argv.slice(2)) {
   const options = parseArguments(arguments_)
   if (!environmentNames.has(options.environment)) {
     throw new Error(
-      'Usage: railway-standby --project <id> --environment <staging|production> [--apply --confirm <environment>]'
+      'Usage: railway-standby --project <id> --environment <production> [--apply --confirm <environment>]'
     )
   }
   if (options.apply && options.confirm !== options.environment) {

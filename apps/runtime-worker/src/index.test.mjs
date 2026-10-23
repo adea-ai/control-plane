@@ -23,8 +23,8 @@ function options(environment = 'production') {
   }
 }
 
-test('Runtime Worker rejects an absent hosted worker in staging and production', async () => {
-  for (const environment of ['staging', 'production']) {
+test('Runtime Worker rejects an absent hosted worker outside disposable test mode', async () => {
+  for (const environment of ['production']) {
     const input = options(environment)
     let runtime
     try {

@@ -6,7 +6,7 @@ acceptance. Observations were collected on 2026-09-27.
 ## Source and promotion
 
 - [Repair PR #740](https://github.com/adea-ai/control-plane/pull/740) passed
-  current-head required checks and its actual Neon integration lane, then
+  current-head required checks and its actual PostgreSQL integration lane, then
   squash-merged as `58559d9a0b4b4283396635f8b25bf633f4a87beb`.
 - The generated version/changelog-only [release PR #744](https://github.com/adea-ai/control-plane/pull/744)
   passed its required gates and was automatically squash-merged as
@@ -49,7 +49,7 @@ native-runtime execution. Restate remained on successful deployment
 
 ## Remaining gates
 
-No staging mutation, manual deployment, production-role rewrite, CI bypass or
+No sandbox mutation, manual deployment, production-role rewrite, CI bypass or
 milestone waiver was used. Durable holds and remaining retention classes,
 live-provider/runtime and full-profile acceptance, measured profile RPO/RTO,
 native-document reconciliation, blinded evaluations and independent human

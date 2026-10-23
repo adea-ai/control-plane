@@ -49,10 +49,11 @@ When instructions conflict: system/user instructions > this file and explicit ta
 
 Normal work branches from `main` and opens a pull request targeting `main`.
 Feature pull requests merge with squash after required checks pass. Railway
-staging is an on-demand reference environment that deploys from `main` (or a
-tag) for cloud-substrate debugging and is stood back down afterwards; Railway
-production tracks Git `main`. The staging and production Neon database branches
-are separate.
+production uses the protected promotion and database-schema gates. Railway hosts the production PostgreSQL database. Persistent preproduction
+environments are absent; use disposable test sandboxes.
+Tests use disposable local/CI databases. Optional hosted qualification requires
+a separately reviewed isolated ephemeral environment, never production data or
+credentials. See `docs/railway-production-database-cutover.md`.
 
 Nested `AGENTS.md` files and project documentation take precedence for their directory.
 
@@ -91,7 +92,7 @@ This core verification does not change the repository's CI runtime pin.
 ## Control Plane commands
 
 Run from the repository root unless a package directory is specified.
-`package.json` and `.bun-version` pin Bun 1.4.3; `.node-version` pins Node 24.21.0.
+`package.json` and `.bun-version` pin Bun 1.4.4; `.node-version` pins Node 24.21.0.
 
 | Task                        | Command                                                                                      |
 | --------------------------- | -------------------------------------------------------------------------------------------- |

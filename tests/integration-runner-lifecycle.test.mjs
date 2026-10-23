@@ -261,7 +261,7 @@ describe('integration runner resource ownership', () => {
   )
 
   test(
-    'remote Neon connection drops remain failed checks without automatic retries',
+    'remote PostgreSQL connection drops remain failed checks without automatic retries',
     () => {
       const result = executeRunner({
         ...remoteTarget,
@@ -280,7 +280,7 @@ describe('integration runner resource ownership', () => {
   )
 
   test(
-    'remote Neon does not retry assertion failures even when their output mentions a connection code',
+    'remote PostgreSQL does not retry assertion failures even when their output mentions a connection code',
     () => {
       const result = executeRunner({
         ...remoteTarget,
@@ -300,7 +300,7 @@ describe('integration runner resource ownership', () => {
   )
 
   test(
-    'remote Neon does not retry a mixed unknown failure that mentions a connection code',
+    'remote PostgreSQL does not retry a mixed unknown failure that mentions a connection code',
     () => {
       const result = executeRunner({
         ...remoteTarget,
@@ -320,7 +320,7 @@ describe('integration runner resource ownership', () => {
   )
 
   test(
-    'remote Neon streams oversized output completely and retains only bounded failure tails',
+    'remote PostgreSQL streams oversized output completely and retains only bounded failure tails',
     () => {
       const result = executeRunner({
         ...remoteTarget,
