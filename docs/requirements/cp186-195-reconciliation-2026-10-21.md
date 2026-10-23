@@ -219,24 +219,25 @@ inferred from file names or from the earlier summary of this section.
 
 Lanes with such a path: 5 of 7 (W1, W2, W3, W5, W6). W4 and W7 have none.
 
-| Worker | Path                                                                  | Blob at the lane head                      | Blob in this tree                          |
-| ------ | --------------------------------------------------------------------- | ------------------------------------------ | ------------------------------------------ |
-| W1     | `docs/architecture/decision-558-context-consumer-conformance.md`      | `35a24669ce734073ed083a63f5265a6365379aee` | `3ecb4635e46ffda7e6b03fa18f5cd73e72773177` |
-| W1     | `apps/control-api/src/decision-context-consumer-conformance.test.mjs` | `1eaab295753b133cba7478562471658e8e3f9989` | `8f6edefb83a0233f36cc58748718294496f494c2` |
-| W2     | `docs/requirements/control-plane-requirements-crosswalk.v1.json`      | `04d343c126d52b3cd6162c2f65f29beaef93c63c` | `91d9227b1155c4b16ac2618142d5e2d8c07e7aa5` |
-| W2     | `docs/requirements/cp186-195-reconciliation-2026-10-21.md`            | `5789b8d62607d437c201f8467e4845cc33af83c7` | not recorded (this record)                 |
-| W3     | `scripts/architecture-audit.mjs`                                      | `e9e869d59ea264e362a0379dc8f7aea898130fd7` | `5f3c7eb2e64d5c9fae5e5e69b58123d7aba9b17d` |
-| W5     | `docs/adversarial-corpus-v1.md`                                       | `866d865fc4738cfea360ba49813e2274ecd3bff4` | `fc2e8e8ef2e0c2cfd169cd322281b07a09040ee0` |
-| W6     | `docs/evals/skill-evals/blinded-comparison-packet.md`                 | `5c026a799de13883c18607b41ace410607fbfaef` | `cfea41d1675cbd389417717792387b4667e4512d` |
-| W6     | `docs/evals/skill-evals/README.md`                                    | `3be94bdd89aa009d476aafe446da0cc418e691d7` | `920ee64a37d4178ba10e34aee1edbb6f833dd6c0` |
+| Worker | Path                                                                          | Blob at the lane head                      | Blob in this tree                          |
+| ------ | ----------------------------------------------------------------------------- | ------------------------------------------ | ------------------------------------------ |
+| W1     | `docs/architecture/decision-558-context-consumer-conformance.md`              | `35a24669ce734073ed083a63f5265a6365379aee` | `3ecb4635e46ffda7e6b03fa18f5cd73e72773177` |
+| W1     | `apps/control-api/src/decision-context-consumer-conformance.test.mjs`         | `1eaab295753b133cba7478562471658e8e3f9989` | `8f6edefb83a0233f36cc58748718294496f494c2` |
+| W2     | `docs/requirements/control-plane-requirements-crosswalk.v1.json`              | `04d343c126d52b3cd6162c2f65f29beaef93c63c` | `91d9227b1155c4b16ac2618142d5e2d8c07e7aa5` |
+| W2     | `docs/requirements/cp186-195-reconciliation-2026-10-21.md`                    | `5789b8d62607d437c201f8467e4845cc33af83c7` | not recorded (this record)                 |
+| W3     | `docs/evidence/m11-architecture-audit-binding-detector-handoff-2026-10-21.md` | `f325249cdbf7116d3eeff8a04a51d325be8029cf` | `c0be0e08052cda90938af8fef6ced862e5fb15d3` |
+| W3     | `scripts/architecture-audit.mjs`                                              | `e9e869d59ea264e362a0379dc8f7aea898130fd7` | `f06e80b58866215590c1f2c2e6b2770c52110ec1` |
+| W5     | `docs/adversarial-corpus-v1.md`                                               | `866d865fc4738cfea360ba49813e2274ecd3bff4` | `fc2e8e8ef2e0c2cfd169cd322281b07a09040ee0` |
+| W6     | `docs/evals/skill-evals/blinded-comparison-packet.md`                         | `5c026a799de13883c18607b41ace410607fbfaef` | `cfea41d1675cbd389417717792387b4667e4512d` |
+| W6     | `docs/evals/skill-evals/README.md`                                            | `3be94bdd89aa009d476aafe446da0cc418e691d7` | `920ee64a37d4178ba10e34aee1edbb6f833dd6c0` |
 
 Paths whose content is identical, and so are not mismatches:
 
 - W2 `docs/requirements/canonical-figure-inventory.v1.json`, blob `43c717c7956dc999688b73ef11aa1e748710a418`.
 - W6 `.agents/skills/control-plane-audit/SKILL.md`, blob `61b1a77fa5be40dfe320c37313c60ad20e704455`. An earlier version of this table listed it as differing; it does not differ.
 
-Paths that exist at a lane's head and are absent from this tree: W3 the binding
-detector handoff and `scripts/m11-architecture-audit-regression.test.mjs`; W4 the
+Paths that exist at a lane's head and are absent from this tree: W3
+`scripts/m11-architecture-audit-regression.test.mjs`; W4 the
 audit record, the matrix and `scripts/security-trust-boundary-probes.mjs`; W5 the
 evaluation program record and the baseline scorecard; W7 the compatibility record
 and the reopen-race test. These are lane artifacts that are not in this tree.
