@@ -32,6 +32,7 @@ export * from './runtime-health-delivery-worker.js'
 export * from './runtime-message-handler.js'
 export * from './websocket-lifecycle.js'
 export * from './postgres-runtime-node-identity.js'
+export * from './acp-remote-gateway-channel.js'
 
 export const serviceName = 'runtime-gateway'
 export interface RuntimeGatewayStartOptions extends ServiceStartOptions {

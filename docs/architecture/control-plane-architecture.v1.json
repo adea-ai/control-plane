@@ -680,7 +680,10 @@
         "@control-plane/telemetry"
       ],
       "externalDependencies": [],
-      "developmentWorkspaceDependencies": ["@control-plane/object-store"],
+      "developmentWorkspaceDependencies": [
+        "@control-plane/acp-adapter",
+        "@control-plane/object-store"
+      ],
       "developmentExternalDependencies": [],
       "layer": "composition-root"
     },

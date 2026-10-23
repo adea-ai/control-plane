@@ -61,15 +61,29 @@ provider, hosted CI, hosted PostgreSQL/Restate or PostgreSQL.
 | Migrations 0072/0073 and SQLite v4/v5 triggers                                                     | `packages/sqlite-persistence/src/{migrations,restore-validation,workspace-scope-migration}.test.mjs`, `packages/database/src/workspace-execution-scope-version-pairing.integration.test.mjs` (database-gated)                                                                                                                                               |
 | Scope admission and lineage                                                                        | `packages/execution-plan/src/workspace-scope.test.mjs`, `apps/workflow-worker/src/workspace-scope-guards.test.mjs`                                                                                                                                                                                                                                          |
 | No implicit cloud reroute                                                                          | `apps/workflow-worker/src/runtime-attempt-router.test.mjs`                                                                                                                                                                                                                                                                                                  |
+| Production controller wire: opaque carrier, device agent, per-command reply artifact               | `packages/acp-adapter/src/acp-remote-wire.test.mjs`                                                                                                                                                                                                                                                                                                         |
+| Gateway relay of the sealed carrier and the attempt-scoped reply artifact                          | `apps/runtime-gateway/src/acp-remote-gateway-channel.test.mjs`                                                                                                                                                                                                                                                                                              |
 
 ## 4. Incomplete milestones (not done, deliberately)
 
-1. **Production controller wire (#1023).** `AcpRemoteWire` has no production implementation: nothing
-   sends sealed commands or inventory requests through `apps/runtime-gateway` to a device, and the
-   repository holds no node agent that answers them. Closing it needs a design decision, not wiring:
-   a sealed device reply is a per-command artifact the gateway protocol (`runtime.acp-remote-sealed`)
-   must carry back, and `RuntimeCommandArtifactVerifier` allows one result artifact per attempt.
-   Recommended: gateway-owned wire with a per-command reply artifact. Not started in this PR.
+1. **Live node agent and composition for the secure ACP controller wire (#1023).** The production
+   wire and the device agent now EXIST: `createGatewayOwnedAcpRemoteWire`
+   (`packages/acp-adapter/src/acp-remote-wire.ts`) is the first production `AcpRemoteWire`, and
+   `handleAcpRemoteCarrierCommand` (`packages/acp-adapter/src/acp-remote-device-agent.ts`) is the
+   device side that answers one sealed carrier command. The gateway side is
+   `createAcpRemoteGatewayChannel` (`apps/runtime-gateway/src/acp-remote-gateway-channel.ts`):
+   it carries the opaque sealed command through the gateway's ordinary durable command path as
+   `runtime.acp-remote-sealed`, and reads the device's sealed reply back as that command's single
+   per-command result artifact (`runtime-results/<attemptId>/result.json`), so the gateway's
+   existing `RuntimeCommandArtifactVerifier` verifies it with no protocol change. What is STILL
+   OPEN: (a) no product composition binds the gateway channel to the wire, because the repository
+   holds no production runtime-node WebSocket client for the device to answer over; (b) the live
+   acceptance of an authenticated controller-to-device exchange is not proven — the executable
+   evidence is offline and synthetic; (c) no hosted composition constructs a device endpoint. The
+   offline evidence is `packages/acp-adapter/src/acp-remote-wire.test.mjs` (controller wire, device
+   agent, revocation/offline fencing, nonce/replay and freshness) and
+   `apps/runtime-gateway/src/acp-remote-gateway-channel.test.mjs` (gateway relay and the
+   per-command reply artifact).
 2. **#1123 parent-plan repository dependency.** `DurableChildRuntimeBudgetAdmission({ store, plans })`
    exists only in draft CP #1123 (open, unmerged, head `1f8d735a`) and no composition root in this
    tree builds `CanonicalDelegationRuntimeBridge`, so there is nothing to wire it into. When both
