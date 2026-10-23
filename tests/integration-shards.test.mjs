@@ -98,10 +98,10 @@ function foundationCaseNames() {
 }
 
 describe('integration shard partition', () => {
-  test('historical three-file move redistributes recorded Neon work across three owners', () => {
+  test('historical three-file move redistributes recorded PostgreSQL work across three owners', () => {
     const measurement = JSON.parse(
       readFileSync(
-        new URL('../docs/evidence/m11-neon-shard-balance-2026-10-07.json', import.meta.url),
+        new URL('../docs/evidence/m11-postgres-shard-balance-2026-10-07.json', import.meta.url),
         'utf8'
       )
     )
@@ -122,7 +122,10 @@ describe('integration shard partition', () => {
   test('budget admission preserves all cases on the spare owner after the recorded timeout', () => {
     const measurement = JSON.parse(
       readFileSync(
-        new URL('../docs/evidence/m11-neon-budget-shard-balance-2026-10-07.json', import.meta.url),
+        new URL(
+          '../docs/evidence/m11-postgres-budget-shard-balance-2026-10-07.json',
+          import.meta.url
+        ),
         'utf8'
       )
     )
@@ -139,7 +142,7 @@ describe('integration shard partition', () => {
     expect(file.totalStaticCases).toBe(24)
     expect(measurement.integrationComplete).toEqual({ 1: false, 2: true, 3: true })
     // Both the interrupted step and file are censored. This evidence is
-    // historical and no longer qualifies the current Neon provider-only lane.
+    // historical and no longer qualifies the current PostgreSQL provider-only lane.
     const recorded = { ...measurement.integrationSeconds }
     recorded[file.fromShard] -= file.secondsLowerBound
     recorded[owners[0].shard] += file.secondsLowerBound

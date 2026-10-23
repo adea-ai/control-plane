@@ -4,7 +4,7 @@
 // The external closure the repository measures is above the committed
 // ceiling (the numbers are in docs/405-runtime-audit.md), and the overage
 // was investigated: none of it is attributable to this slice. The slice
-// added no dependency at all and removed four declarations that no source in
+// added no dependency at all and removed three declarations that no source in
 // those packages imports.
 //
 // These checks pin that fact so the slice cannot quietly grow the closure,

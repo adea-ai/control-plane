@@ -10,12 +10,12 @@ The current milestone display labels define implementation order; GitHub URL/dat
 - **[M19: Feature Completion & Production Audit](https://github.com/adea-ai/control-plane/milestone/11).** Complete the retained original issues #186–#197 and current follow-ups against the integrated Pi candidate. Security, authority and data-preservation repairs needed by the migration proceed alongside it.
 - **[M21: Cross-Product Integration & Release](https://github.com/adea-ai/control-plane/milestone/10).** Certify and release the integrated Control Plane, Adea and optional Cortana profiles after their dependencies qualify.
 
-The original M9 managed-cloud and M10 portability work remains historical implementation and evidence context. The managed-cloud reference uses Railway + Neon + Cloudflare R2 + Restate; Hosted retains its supported simple/server Compose profiles and Restate, while Local retains embedded SQLite and direct transport. These paths remain until qualified replacement and cutover. Local uses no Restate process under owner-approved #548. AWS/ECS/Terraform and Temporal are historical, not active targets. Superseding an engine or renumbering a milestone does not waive recovery, authority, retention, rollback or profile acceptance. See the [planned target and retained diagram sources](docs/architecture/diagram-sources.md).
+The original M9 managed-cloud and M10 portability work remains historical implementation and evidence context. The managed-cloud reference uses Railway + PostgreSQL + Cloudflare R2 + Restate; Hosted retains its supported simple/server Compose profiles and Restate, while Local retains embedded SQLite and direct transport. These paths remain until qualified replacement and cutover. Local uses no Restate process under owner-approved #548. AWS/ECS/Terraform and Temporal are historical, not active targets. Superseding an engine or renumbering a milestone does not waive recovery, authority, retention, rollback or profile acceptance. See the [planned target and retained diagram sources](docs/architecture/diagram-sources.md).
 
 ## Prerequisites
 
 - Node.js 24.21.0 (`.node-version`)
-- Bun 1.4.3 (`.bun-version` and `packageManager`)
+- Bun 1.4.4 (`.bun-version` and `packageManager`)
 
 Newer compatible Bun 1.x patch releases may run the workspace, but the pinned version is the reproducible baseline.
 
@@ -33,9 +33,9 @@ Run `bun install` without `--frozen-lockfile` only when intentionally updating d
 Key documentation:
 
 - [`docs/architecture.md`](docs/architecture.md): system ownership, deployment profiles, Restate/RuntimeTransport architecture, and current-vs-transitional implementation state.
-- [`docs/infrastructure.md`](docs/infrastructure.md): Railway/Neon/R2/Restate M9 target, migration/rollback flow, and M10 portability boundaries.
+- [`docs/infrastructure.md`](docs/infrastructure.md): Railway/PostgreSQL/R2/Restate M9 target, migration/rollback flow, and M10 portability boundaries.
 - [`docs/configuration.md`](docs/configuration.md): typed service bootstrap/configuration.
-- [`docs/database.md`](docs/database.md): Neon/PostgreSQL managed-cloud/server persistence and M10 SQLite Local/simple persistence.
+- [`docs/database.md`](docs/database.md): PostgreSQL managed-cloud/server persistence and M10 SQLite Local/simple persistence.
 - [`docs/remote-control-relay.md`](docs/remote-control-relay.md): optional outbound Local/Hosted remote control and the HPKE v1 envelope.
 - [`docs/profile-portability.md`](docs/profile-portability.md): versioned profile export/import, dry-run/apply, secret exclusions, artifact handling, and recovery.
 - [`docs/object-store.md`](docs/object-store.md): provider-neutral object storage and the Cloudflare R2 Cloud adapter.
@@ -72,10 +72,10 @@ Key documentation:
 | `bun run format:check`       | Check formatting without modifying files                                                               |
 | `bun run containers:print`   | Print the current service image build plan                                                             |
 | `bun run containers:build`   | Build current production-shaped service images                                                         |
-| `bun run test:m9-acceptance` | Run the existing M9 hardening/evidence suite; M9.6 additionally requires live Railway staging evidence |
+| `bun run test:m9-acceptance` | Run the existing M9 hardening/evidence suite; M9.6 additionally requires live Railway sandbox evidence |
 
 The repository-owned Railway manifest validator is the infrastructure composition check. A passing
-local check is not Railway staging evidence until the M9.6 live activation gate is completed.
+local check is not Railway sandbox evidence until the M9.6 live activation gate is completed.
 
 ## Architecture map
 
@@ -98,7 +98,7 @@ Hosted compose the same stable capabilities according to their supported topolog
 - `packages/policy`
 - `packages/context`
 
-These packages form the inward-facing platform boundary. They must not expose or depend on deployment/vendor details such as Railway, Neon, R2, SQLite/PostgreSQL drivers, Restate SDK types, LangGraph, Pi, ACP, LiteLLM, E2B, Runtime Gateway transport, or OS-specific secret implementations except through declared stable ports/contracts.
+These packages form the inward-facing platform boundary. They must not expose or depend on deployment/vendor details such as Railway, PostgreSQL, R2, SQLite/PostgreSQL drivers, Restate SDK types, LangGraph, Pi, ACP, LiteLLM, E2B, Runtime Gateway transport, or OS-specific secret implementations except through declared stable ports/contracts.
 
 ### Infrastructure and adapters
 

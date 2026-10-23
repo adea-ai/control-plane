@@ -36,7 +36,9 @@ export const CLEANUP_GRACE_MS = 5_000
  *
  * The inspection is a subprocess (`lsof`, `ps`), and a stalled one must not
  * hold the probe open: the probe owns the child's lifecycle, so a command that
- * never returns would keep the owned child alive past every deadline. The
+ * never returns would keep the owned child alive past every deadline. These
+ * owned inspection subprocesses are killed with SIGKILL on timeout, because
+ * SIGTERM can be ignored and leave spawnSync waiting past its bound. The
  * bound is short enough that the inspection, the child's termination and the
  * cleanup grace still fit inside the probe's own budgets, and a command that
  * hits it FAILS CLOSED — an inspection that cannot be made is an inability to
@@ -376,6 +378,7 @@ export async function runStartupBudgetProbe(options) {
 export function psRss(pid, { timeoutMs = INSPECTION_TIMEOUT_MS, env } = {}) {
   return spawnSync('ps', ['-o', 'rss=', '-p', String(pid)], {
     timeout: timeoutMs,
+    killSignal: 'SIGKILL',
     ...(env === undefined ? {} : { env }),
   })
 }
@@ -390,6 +393,7 @@ export function psRss(pid, { timeoutMs = INSPECTION_TIMEOUT_MS, env } = {}) {
 export function psParent(pid, { timeoutMs = INSPECTION_TIMEOUT_MS, env } = {}) {
   const result = spawnSync('ps', ['-o', 'ppid=', '-p', String(pid)], {
     timeout: timeoutMs,
+    killSignal: 'SIGKILL',
     ...(env === undefined ? {} : { env }),
   })
   if (result.error !== undefined && result.error !== null) {
@@ -419,6 +423,7 @@ export function readListenerPids(port, { timeoutMs = INSPECTION_TIMEOUT_MS, env 
   const result = spawnSync('lsof', ['-nP', '-iTCP:' + String(port), '-sTCP:LISTEN', '-F', 'pn'], {
     encoding: 'utf8',
     timeout: timeoutMs,
+    killSignal: 'SIGKILL',
     ...(env === undefined ? {} : { env }),
   })
   if (result.error !== undefined && result.error !== null) {

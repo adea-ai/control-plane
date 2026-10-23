@@ -1,9 +1,12 @@
 ---
 name: verification-before-completion
 metadata:
-  version: "1.0.0"
+  version: "1.1.0"
   owner: "Control Plane maintainers"
-description: Use when about to claim work is complete, fixed, or passing, before committing or creating PRs - requires running verification commands and confirming output before making any success claims; evidence before assertions always
+  provenance:
+    origin: repository-owned
+    integration_version: "1.1.0"
+description: "Use when about to claim that work is complete, fixed, or passing, including before a commit or pull request. Not for performing the work itself or for restating a status that was never verified. Requires running the verification command and reading its output before making any success claim."
 ---
 
 # Verification Before Completion
@@ -132,3 +135,12 @@ Skip any step = lying, not verifying
 - **Failure/skip reporting:** every check that could not run is stated with its exact reason; a skipped check is not a passing check, and partial verification proves nothing.
 - **Cleanup:** none — verification leaves no artifacts; it records only the commands run and their results.
 - **Completion-claim guard:** any check that was not executed is unverified work; a passing claim without the full command output in evidence is forbidden.
+- **Stop conditions:** Stop the claim when any required command fails, when a required command cannot run, or when the observed output does not match the claim being made.
+
+### Boundary contract
+
+- **Secrets:** Verification output is reported without secret values; a command that would print credentials is not run and is reported as skipped.
+- **Dirty worktree:** Verification is read-only over the working tree; it never cleans, resets, stages, or commits changes.
+- **Migration:** A migration claim requires the migration check to have run; an unrun migration check leaves the claim unverified.
+- **Generated files:** Generated artifacts are verified by their generator or drift check, never by asserting that the committed file looks right.
+- **Provider:** No provider activation and no paid call is implied by verification; a provider-dependent check stays unverified and is named as such.

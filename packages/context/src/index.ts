@@ -150,6 +150,49 @@ export const ContextPackageSchema = z
 export type ContextPackage = z.output<typeof ContextPackageSchema>
 export type ContextPackageReference = z.output<typeof ContextPackageReferenceSchema>
 
+/**
+ * The scope a consumer resolves a context package against: the Control Plane
+ * identity the run executes under (workspace and project), the project-state
+ * revision the run pinned, and — when the caller pinned an existing package —
+ * the schema and compiler version that package was compiled with.
+ */
+export interface ContextConsumerScope {
+  readonly workspaceId: string
+  readonly projectId: string
+  readonly projectStateRevision?: number | undefined
+  readonly schemaVersion?: number | undefined
+  readonly compilerVersion?: string | undefined
+}
+
+/**
+ * Consumer-side context scope for the decision layer's context output
+ * (control-plane#558). The decision layer selects a context package; the
+ * consumer resolves it against the identity the run executes under. This
+ * predicate states that rule once so the execution-validation and
+ * context-package-resolution consumers cannot drift apart.
+ *
+ * It is pure and reads no store: it never grants access, never narrows a
+ * scope, and never decides which context is assembled. A package whose scope
+ * does not match the consumer's scope is not the package the consumer may
+ * resolve, whether it was authored for another project, compiled against
+ * another project-state revision, or compiled by another compiler version.
+ */
+export function contextPackageMatchesConsumerScope(
+  package_: ContextPackage,
+  scope: ContextConsumerScope
+): boolean {
+  const state = package_.projectState
+  if (state.workspaceId !== scope.workspaceId) return false
+  if (state.projectId !== scope.projectId) return false
+  if (scope.projectStateRevision !== undefined && state.revision !== scope.projectStateRevision)
+    return false
+  if (scope.schemaVersion !== undefined && package_.schemaVersion !== scope.schemaVersion)
+    return false
+  if (scope.compilerVersion !== undefined && package_.compiler.version !== scope.compilerVersion)
+    return false
+  return true
+}
+
 const CandidateSchema = z.object({
   itemId: IdentifierSchemas.projectStateItemId,
   itemRevision: z.number().int().positive(),

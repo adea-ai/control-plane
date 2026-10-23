@@ -11,11 +11,17 @@ export type ContractVersion = z.infer<typeof ContractVersionSchema>
 
 export const PublicContractManifest = Object.freeze({
   name: 'agent-hq-control-plane',
-  current: { major: 3, minor: 0 },
+  // 3.1 adds the pi-durable observed generation (an optional field on the lead
+  // receipt and on the runtime execution status). A consumer that advertised
+  // an earlier same-major version still parses with the pre-3.1 strict target
+  // and runtime-status shapes, so the producer publishes that field only to a
+  // consumer whose negotiated version includes it.
+  current: { major: 3, minor: 1 },
   supported: [
     { major: 1, minor: 0 },
     { major: 2, minor: 0 },
     { major: 3, minor: 0 },
+    { major: 3, minor: 1 },
   ],
 })
 

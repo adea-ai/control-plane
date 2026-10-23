@@ -198,7 +198,7 @@ peak memory.
 Recorded verbatim in the evidence report (`unavailableCosts`):
 
 1. Restate server invocation latency/state growth (hosted profiles) — needs a running Restate server; Local has none.
-2. Managed-cloud operational cost (Railway/Neon/R2/Restate) — needs live billing accounts; no credentials used or requested.
+2. Managed-cloud operational cost (Railway/PostgreSQL/R2/Restate) — needs live billing accounts; no credentials used or requested.
 3. Cloudflare Worker/DO latency and cost — no deployment/account; Cloudflare host advertises no capability.
 4. Live model-provider latency and spend — no provider credentials; out of scope for #941 tooling.
 5. Physical RuntimeNode device supervision health — no device attached.
@@ -211,7 +211,7 @@ Measured: local marginal cost proxies for the four instrumented paths (latency d
 memory) on one developer host — that is the full extent of the retained cost baseline. Not measured
 and **not claimed passed**:
 
-- hosted idle/active operational cost (Railway CPU/RAM/network, Neon compute/storage/egress, R2
+- hosted idle/active operational cost (Railway CPU/RAM/network, PostgreSQL compute/storage/egress, R2
   storage/ops, Restate server state growth) — requires live metered accounts and billing exports;
   no credentials are used or requested;
 - Cloudflare Worker/Durable Object billing — no deployment or account;
@@ -241,8 +241,8 @@ describe that requested trailing window only. Observed means: CPU **0.0003852318
 
 Limits: these are resource averages plus **derived projections** — not invoices, not postmigration
 measurement, and not total spend. They exclude plan fees/minimums, credits, tax, and other
-resources; network usage units are unclear and are deliberately not priced; no verified Neon
-project ID or Neon data is included. The hosted cost gap above therefore remains `unavailable`:
+resources; network usage units are unclear and are deliberately not priced; no verified PostgreSQL
+project ID or PostgreSQL data is included. The hosted cost gap above therefore remains `unavailable`:
 this addendum is a bounded reference point only. Root reviews this exact addendum and the current
 CI before any closure or merge; no automatic acceptance.
 

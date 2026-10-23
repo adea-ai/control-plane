@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.10.0](https://github.com/adea-ai/control-plane/compare/runtime-gateway-v1.9.2...runtime-gateway-v1.10.0) (2026-10-23)
+
+
+### Features
+
+* **acp-adapter:** add the production secure ACP remote wire and device agent ([#1023](https://github.com/adea-ai/control-plane/issues/1023)) ([#1238](https://github.com/adea-ai/control-plane/issues/1238)) ([52c3b36](https://github.com/adea-ai/control-plane/commit/52c3b36bccd04e3419b28945e8cfc97342b8612a))
+
+## [1.9.2](https://github.com/adea-ai/control-plane/compare/runtime-gateway-v1.9.1...runtime-gateway-v1.9.2) (2026-10-22)
+
+
+### Bug Fixes
+
+* **railway:** verify production PostgreSQL identity and scoped migrations ([#1256](https://github.com/adea-ai/control-plane/issues/1256)) ([86b7515](https://github.com/adea-ai/control-plane/commit/86b751520c569106644c518dd5fd0819056cd169))
+
 ## [1.9.1](https://github.com/adea-ai/control-plane/compare/runtime-gateway-v1.9.0...runtime-gateway-v1.9.1) (2026-10-22)
 
 

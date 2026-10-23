@@ -1,5 +1,13 @@
 # #405 — runtime, latency, memory and CI-cost audit (2026-10-21)
 
+Current dependency remediation is recorded in
+[the #1230 receipt](1230-dependency-budget-attribution.md): the integrated
+candidate removes 40 actual full-lock identities (**591 → 551**) by
+consolidating existing formatter/linter versions. The ceiling remains **285**,
+leaving **266** unresolved. Bun 1.4.4's host-only CLI listing is reported
+separately; it does not replace the established all-platform scope. Historical
+measurements below retain their original head provenance.
+
 The consolidated audit the issue asks for, re-measured against the **current
 candidate**, plus the repairs the reopened acceptance comment
 (`6051493406`) requires. The earlier baselines and consolidation work are
@@ -106,7 +114,7 @@ $ bun scripts/check-budgets.mjs lane --group build --seconds 400
 BUDGET EXCEEDED: {"ok":false,"ceiling":300,"baseline":254,"measured":400}
 ```
 
-## 3. Measurements on this candidate
+## 3. Historical measurements by candidate
 
 All timings are wall-clock on the development host and are marked
 **[measured]**; every other number is a recorded baseline cited from the
@@ -206,7 +214,7 @@ belongs to the follow-up in §6.
 
 **The dependency breach is composition, and none of it is this slice.**
 The admitted runtime-audit slice contributed **zero** external packages: it
-added no dependency, and it removed four declarations that no source in
+added no dependency, and it removed three declarations that no source in
 those packages imports (`fastify` and `@nestjs/common` from
 local-control-plane, `@restatedev/restate-sdk` from workflow-worker). The
 measured closure is identical before and after the slice (591 at
@@ -312,7 +320,7 @@ another slice: the reduction
 candidates sit in `packages/pi-durable-adapter` (the Pi SDK), in
 `apps/control-api` (the Nest/Fastify, Sentry/OpenTelemetry and AWS families)
 and in the repository root (the `vite-plus` lint and format toolchain). The
-manifests this slice owns hold **no removable external dependency**: the four
+manifests this slice owns hold **no removable external dependency**: the three
 declarations it removed are gone, and the ones it still declares are used by
 its own sources (`zod` in `packages/production-readiness` and in
 local-control-plane, `semver` through `createRequire`, the Restate server

@@ -90,7 +90,7 @@
       "name": "@control-plane/control-api",
       "path": "apps/control-api",
       "version": "1.34.3",
-      "lockVersion": "1.34.2",
+      "lockVersion": "1.34.1",
       "kind": "application",
       "private": true,
       "browser": false,
@@ -674,7 +674,10 @@
         "@control-plane/telemetry"
       ],
       "externalDependencies": [],
-      "developmentWorkspaceDependencies": ["@control-plane/object-store"],
+      "developmentWorkspaceDependencies": [
+        "@control-plane/acp-adapter",
+        "@control-plane/object-store"
+      ],
       "developmentExternalDependencies": [],
       "layer": "composition-root"
     },
@@ -817,7 +820,7 @@
       "name": "@control-plane/telemetry",
       "path": "packages/telemetry",
       "version": "1.8.2",
-      "lockVersion": "1.8.2",
+      "lockVersion": "1.8.1",
       "kind": "package",
       "private": false,
       "browser": false,
@@ -939,7 +942,7 @@
       "name": "@control-plane/workflow-worker",
       "path": "apps/workflow-worker",
       "version": "1.18.2",
-      "lockVersion": "1.18.2",
+      "lockVersion": "1.18.1",
       "kind": "application",
       "private": true,
       "browser": false,
@@ -1504,7 +1507,7 @@
       "trace": {
         "auth": "service bearer with credential:write scope; authenticated caller and envelope workspace binding",
         "service": "CredentialAdministrationController -> VaultCredentialAdministrationService -> CredentialVault",
-        "persistence": "PostgresCredentialVaultRepository (Cloud) or SqliteCredentialVaultRepository; ciphertext only through NeonEncryptedSecretProvider",
+        "persistence": "PostgresCredentialVaultRepository (Cloud) or SqliteCredentialVaultRepository; ciphertext only through PostgresEncryptedSecretProvider",
         "execution": "server-generated crd_ ID; secret stored once through the secret provider; one live credential per workspace connector",
         "delivery": "strict metadata-only credential response; secrets never returned",
         "cleanup": "composition-owned connection shutdown; failed writes discard unbound secret revisions"
@@ -1547,7 +1550,7 @@
       "trace": {
         "auth": "service bearer with credential:read scope; authenticated caller and envelope workspace binding",
         "service": "CredentialAdministrationController -> VaultCredentialAdministrationService -> CredentialVault",
-        "persistence": "PostgresCredentialVaultRepository (Cloud) or SqliteCredentialVaultRepository; ciphertext only through NeonEncryptedSecretProvider",
+        "persistence": "PostgresCredentialVaultRepository (Cloud) or SqliteCredentialVaultRepository; ciphertext only through PostgresEncryptedSecretProvider",
         "execution": "workspace-scoped metadata read; other workspaces report not found",
         "delivery": "strict metadata-only credential response; secrets never returned",
         "cleanup": "composition-owned connection shutdown; failed writes discard unbound secret revisions"
@@ -1590,7 +1593,7 @@
       "trace": {
         "auth": "service bearer with credential:read scope; authenticated caller and envelope workspace binding",
         "service": "CredentialAdministrationController -> VaultCredentialAdministrationService -> CredentialVault",
-        "persistence": "PostgresCredentialVaultRepository (Cloud) or SqliteCredentialVaultRepository; ciphertext only through NeonEncryptedSecretProvider",
+        "persistence": "PostgresCredentialVaultRepository (Cloud) or SqliteCredentialVaultRepository; ciphertext only through PostgresEncryptedSecretProvider",
         "execution": "workspace-scoped cursor page ordered by credential ID",
         "delivery": "strict metadata-only credential response; secrets never returned",
         "cleanup": "composition-owned connection shutdown; failed writes discard unbound secret revisions"
@@ -1633,7 +1636,7 @@
       "trace": {
         "auth": "service bearer with credential:write scope; authenticated caller and envelope workspace binding",
         "service": "CredentialAdministrationController -> VaultCredentialAdministrationService -> CredentialVault",
-        "persistence": "PostgresCredentialVaultRepository (Cloud) or SqliteCredentialVaultRepository; ciphertext only through NeonEncryptedSecretProvider",
+        "persistence": "PostgresCredentialVaultRepository (Cloud) or SqliteCredentialVaultRepository; ciphertext only through PostgresEncryptedSecretProvider",
         "execution": "status revoked with active leases revoked atomically, then provider deletion of every secret revision",
         "delivery": "strict metadata-only credential response; secrets never returned",
         "cleanup": "composition-owned connection shutdown; failed writes discard unbound secret revisions"
@@ -1676,7 +1679,7 @@
       "trace": {
         "auth": "service bearer with credential:write scope; authenticated caller and envelope workspace binding",
         "service": "CredentialAdministrationController -> VaultCredentialAdministrationService -> CredentialVault",
-        "persistence": "PostgresCredentialVaultRepository (Cloud) or SqliteCredentialVaultRepository; ciphertext only through NeonEncryptedSecretProvider",
+        "persistence": "PostgresCredentialVaultRepository (Cloud) or SqliteCredentialVaultRepository; ciphertext only through PostgresEncryptedSecretProvider",
         "execution": "expected-revision compare-and-set adding a secret revision; pinned leases keep their revision",
         "delivery": "strict metadata-only credential response; secrets never returned",
         "cleanup": "composition-owned connection shutdown; failed writes discard unbound secret revisions"
@@ -3302,13 +3305,13 @@
         "discovery": "PostgresRuntimeDiscoveryRepository",
         "objectStore": "R2ObjectStore",
         "observability": "packages/telemetry",
-        "persistence": "PostgreSQL/Neon repositories",
+        "persistence": "PostgreSQL repositories",
         "processes": "Railway service lifecycle",
         "runtimeTransport": "DisabledCloudRuntime, CloudCertificationRuntime, or explicit DurableRemoteWorkflowRuntime",
         "secrets": "Railway environment; no SecretsProvider",
         "workflow": "Restate"
       },
-      "assessment": "Historical staging passed bounded Railway/Neon/R2/Restate certification. Explicit remote mode now composes PostgreSQL runtime discovery, managed-Pi command persistence and durable outcome polling; existing deployment configuration remains disabled or certification-only. Gateway/RuntimeNode identity, Artifact/usage delivery and frozen-candidate end-to-end acceptance remain unverified; shared deployment ports are not uniformly composed.",
+      "assessment": "Historical sandbox passed bounded Railway/PostgreSQL/R2/Restate certification. Explicit remote mode now composes PostgreSQL runtime discovery, managed-Pi command persistence and durable outcome polling; existing deployment configuration remains disabled or certification-only. Gateway/RuntimeNode identity, Artifact/usage delivery and frozen-candidate end-to-end acceptance remain unverified; shared deployment ports are not uniformly composed.",
       "evidence": [
         {
           "kind": "source",
@@ -3329,7 +3332,7 @@
         "owner": "managed-cloud-runtime",
         "disposition": "Verify the explicit remote composition with authenticated Gateway/RuntimeNode execution, Artifact and usage delivery, recovery and provider boundaries from the frozen deployed candidate before claiming general Cloud execution readiness."
       },
-      "sourceDigest": "sha256:4c86c5760647e67d2361934a8dabb062eadb2cffd6498a0d0cfe7dcc38554601"
+      "sourceDigest": "sha256:765541d709c05f1c6687bd80e866e6c075938ad1767dca05c7ade21db781ca27"
     },
     {
       "id": "hosted-server",
@@ -3837,7 +3840,7 @@
   "persistenceParity": [
     {
       "id": "PERSIST-BACKUP-RESTORE",
-      "postgresql": "Operator/Neon backup plus profile-portability export/import; no PersistenceProvider backup method",
+      "postgresql": "Operator/PostgreSQL backup plus profile-portability export/import; no PersistenceProvider backup method",
       "sqlite": "Online backup/restore with SHA-256 and quick_check",
       "classification": "partially_verified",
       "assessment": "SQLite has a concrete provider backup while PostgreSQL backup remains an external operational responsibility.",

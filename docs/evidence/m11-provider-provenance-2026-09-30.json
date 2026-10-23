@@ -119,7 +119,7 @@
         ]
       }
     },
-    "railway-staging-deployments.json": {
+    "railway-sandbox-deployments.json": {
       "rawCaptureSha256": "2e04560eb17959fac6548455b91159b40c28b502034e5b35bf962b14852e8180",
       "providerResponse": {
         "deployments": [
@@ -208,12 +208,12 @@
         ]
       }
     },
-    "railway-staging.json": {
+    "railway-sandbox.json": {
       "rawCaptureSha256": "d7fc0fe68c76e698d802d94504e18f7a44236ec3a07d512c50cedeec30d9cfef",
       "providerResponse": {
         "environment": {
           "id": "3beb119e-1b23-4fa6-9af3-2c6b9976708f",
-          "name": "staging",
+          "name": "sandbox",
           "stagedChanges": null,
           "unmergedChangesCount": null
         },
@@ -250,7 +250,7 @@
         "destructive": false,
         "environment": {
           "id": "3beb119e-1b23-4fa6-9af3-2c6b9976708f",
-          "name": "staging"
+          "name": "sandbox"
         },
         "privateNetworkDisabled": null,
         "project": {
@@ -262,12 +262,12 @@
         "staged": null
       }
     },
-    "railway-staging-api-config.json": {
+    "railway-sandbox-api-config.json": {
       "rawCaptureSha256": "3c6216f6481d930e8e0c593a8d3358d5cfcb2c0799c40402ef8f4e6cc4a545fb",
       "providerResponse": {
         "environment": {
           "id": "3beb119e-1b23-4fa6-9af3-2c6b9976708f",
-          "name": "staging"
+          "name": "sandbox"
         },
         "service": {
           "id": "9167a33b-af0f-4780-8614-a5a161697c9c",
@@ -277,12 +277,12 @@
         "staged": null
       }
     },
-    "railway-staging-worker-config.json": {
+    "railway-sandbox-worker-config.json": {
       "rawCaptureSha256": "0ea159eff1b2f7e7d30b7d29bc4cd9cf9d63101040c68c2712e5d5eb7f45fc27",
       "providerResponse": {
         "environment": {
           "id": "3beb119e-1b23-4fa6-9af3-2c6b9976708f",
-          "name": "staging"
+          "name": "sandbox"
         },
         "service": {
           "id": "d733ec0d-bda5-4be5-86b9-637154d282eb",
@@ -292,12 +292,12 @@
         "staged": null
       }
     },
-    "railway-staging-restate-config.json": {
+    "railway-sandbox-restate-config.json": {
       "rawCaptureSha256": "28021b2932155b787dcf60a16b5a9b410416b96c3ba42acc142471520ffbe2cf",
       "providerResponse": {
         "environment": {
           "id": "3beb119e-1b23-4fa6-9af3-2c6b9976708f",
-          "name": "staging"
+          "name": "sandbox"
         },
         "service": {
           "id": "31dc2df5-9ca8-46f0-ab1b-bf89caeda5d6",

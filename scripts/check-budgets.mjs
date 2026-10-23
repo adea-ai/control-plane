@@ -87,10 +87,10 @@ export function normalizePackageName(raw) {
  * The number of distinct external `package@version` pairs in a
  * `bun pm ls --all` listing.
  *
- * The listing is the **lockfile's** dependency tree (`bun pm ls` lists the
- * tree "according to the current lockfile"), so it also carries the optional
- * platform-specific binaries of every supported platform, not only the ones
- * installed on the host that runs the measurement. The name is normalized
+ * Bun 1.4.3 lists the full lock tree, whereas 1.4.4 reports host-installed
+ * packages. This parser counts whichever listing is explicitly supplied; the
+ * real gate uses lockfileExternalPairs to preserve its all-platform scope.
+ * The name is normalized
  * before it is counted: the same package installed under two paths is one
  * package, and a nested scoped package is counted rather than dropped.
  */
@@ -109,6 +109,31 @@ export function externalPackagePairs(lsOutput) {
 
 export function countExternalPackages(lsOutput) {
   return externalPackagePairs(lsOutput).size
+}
+
+/**
+ * Stable all-platform receipt. Bun 1.4.4's installed-host listing omits
+ * optional entries that Bun 1.4.3 listed. Count every lock entry directly so
+ * that runtime change cannot silently narrow the established budget scope.
+ * Unreachable entries remain counted; graph attribution never filters the gate.
+ */
+export function lockfileExternalPairs(lockfileText) {
+  const lock = JSONC.parse(lockfileText)
+  if (lock.packages === null || typeof lock.packages !== 'object' || Array.isArray(lock.packages))
+    throw new Error('dependency lockfile has no package inventory')
+  const pairs = new Set()
+  for (const [key, entry] of Object.entries(lock.packages)) {
+    const name = normalizePackageName(key)
+    const spec = Array.isArray(entry) ? entry[0] : undefined
+    if (typeof spec !== 'string') throw new Error(`invalid lockfile entry: ${key}`)
+    if (name.startsWith('@control-plane/')) continue
+    const at = spec.lastIndexOf('@')
+    const version = spec.slice(at + 1)
+    if (at <= 0 || !/^[0-9][^\s@]*$/u.test(version))
+      throw new Error(`invalid lockfile identity: ${key}`)
+    pairs.add(`${name}@${version}`)
+  }
+  return pairs
 }
 
 /**
@@ -552,25 +577,36 @@ if (import.meta.main) {
       }
     }
     if (listing !== undefined) {
-      const pairs = [...externalPackagePairs(listing)].toSorted()
-      const check = checkDependencyBudget(budgets, pairs.length)
-      // The attribution explains the measured count: which declared root pulls
-      // in how much of the closure, and what removing a root would shed. It is
-      // read from the lockfile and never changes the measurement or the
-      // verdict.
-      let attribution
+      const explicitListing = listingFile !== undefined && listingFile !== ''
+      // Listing fixtures remain explicit inputs; the real gate always counts
+      // the full lock inventory. Failure to read that inventory fails closed.
+      let lockfileText
       try {
-        attribution = summarizeAttribution(
-          await readFile(new URL('../bun.lock', import.meta.url), 'utf8'),
-          listing,
-          budgets.dependencies.externalPackageCeiling
-        )
+        lockfileText = await readFile(new URL('../bun.lock', import.meta.url), 'utf8')
       } catch (error) {
-        attribution = { unavailable: error instanceof Error ? error.message : String(error) }
+        if (!explicitListing) throw error
       }
-      if (listingFile !== undefined && listingFile !== '')
-        report({ ...check, pairs, scope: 'listing file', attribution })
-      else report({ ...check, scope: 'lockfile tree', attribution })
+      const pairs = [
+        ...(explicitListing ? externalPackagePairs(listing) : lockfileExternalPairs(lockfileText)),
+      ].toSorted()
+      const check = checkDependencyBudget(budgets, pairs.length)
+      const attribution =
+        lockfileText === undefined
+          ? { unavailable: 'dependency lockfile could not be read' }
+          : summarizeAttribution(lockfileText, listing, budgets.dependencies.externalPackageCeiling)
+      if (explicitListing) report({ ...check, pairs, scope: 'listing file', attribution })
+      else
+        report({
+          ...check,
+          scope: 'all-platform lockfile identities',
+          installedListing: {
+            command: 'bun pm ls --all',
+            runtime: `bun@${process.versions.bun}`,
+            platform: `${process.platform}-${process.arch}`,
+            measured: externalPackagePairs(listing).size,
+          },
+          attribution,
+        })
     }
   } else {
     console.error(usage)

@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import {
   CredentialVault,
   InMemoryCredentialVaultRepository,
-  NeonEncryptedSecretProvider,
+  PostgresEncryptedSecretProvider,
   VaultToolCredentialBroker,
 } from '@control-plane/credential-vault'
 import { McpAdapter, McpAdapterError } from './mcp-adapter.ts'
@@ -92,7 +92,7 @@ async function fixture() {
   const policyRequests = []
   const records = new Map()
   const vault = new CredentialVault({
-    provider: new NeonEncryptedSecretProvider({
+    provider: new PostgresEncryptedSecretProvider({
       store: {
         async put(input) {
           records.set(`${input.locator}:${input.version}`, input)

@@ -1,6 +1,6 @@
 {
   "name": "@control-plane/runtime-gateway",
-  "version": "1.9.1",
+  "version": "1.10.0",
   "private": true,
   "type": "module",
   "main": "./dist/index.js",
@@ -30,6 +30,7 @@
     "@control-plane/telemetry": "workspace:*"
   },
   "devDependencies": {
+    "@control-plane/acp-adapter": "workspace:*",
     "@control-plane/object-store": "workspace:*"
   },
   "engines": {

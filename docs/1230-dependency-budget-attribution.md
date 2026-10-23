@@ -1,4 +1,126 @@
-# #1230 — Dependency budget: attribution of the 591-against-285 closure
+# #1230 — Dependency budget remediation
+
+## Current candidate: 40 real identities removed, residual 266
+
+The integrated candidate preserves the transferred #1270 head
+`0b190108b34d2feef46bd29d8b3f0aeadda347e7`, #1214 head
+`5f078dc25d4a86434d3cbea1d7fe6949d21dba7e`, and unpublished recovery tip
+`a548b164942e6e9215deaa0e6aabd75aca19f26a`. It reconciles source with main
+`ab931d068142a0c5629ed4d6cc2c96a1b377a986`; main pins Bun **1.4.4**.
+
+Root `oxfmt` and `oxlint` now pin **0.73.0** and **1.88.0**, exactly the
+versions already required by Vite+ 1.3.0. Both exact packages and integrity
+values were verified with `npm view ... --registry=https://registry.npmjs.org`.
+Direct binaries, package scripts, custom lint behavior, and hooks are retained.
+The obsolete 0.72.0/1.86.0 copies and their platform bindings disappear from the
+actual regenerated lockfile. A real `bun install --frozen-lockfile` succeeded.
+
+| Full lock receipt                 | Identities | Ceiling | Overage |
+| --------------------------------- | ---------: | ------: | ------: |
+| Current main before consolidation |        591 |     285 |     306 |
+| Candidate after consolidation     |        551 |     285 |     266 |
+
+This is a **40-identity source reduction**, not a change in counting scope.
+The final lockfile SHA-256 is
+`6b42afa9967a45911c55b8b4e45da6601a0bd62dbd7a42611ef6845d02517543`.
+No ceiling is raised or disabled, and #1230 remains open.
+
+### Preserve the all-platform scope across the Bun upgrade
+
+The same candidate lockfile produces **551** pairs from Bun 1.4.3's real
+`bun pm ls --all`, but **370** on Bun 1.4.4 on this Darwin ARM64 host.
+The installed Bun 1.4.4 help describes this command as the installed dependency
+tree and exposes no all-platform listing option. Reporting the 370 as the old
+all-platform closure would silently narrow the established scope.
+
+The real gate therefore takes an independent stable inventory directly from
+**every** `bun.lock` entry, including optional other-platform packages and
+unreachable entries. Aliases retain the established listing identity; workspace
+links are excluded by the unchanged namespace rule. Invalid or missing lock
+inventories fail closed. The fixture-listing seam remains an explicitly labeled
+fixture measurement and is unset for real acceptance.
+
+The gate reports the unchanged all-platform verdict separately from the real
+CLI listing's runtime, host, and measured count:
+
+```text
+env -u ADEA_DEPS_LISTING_FILE bun scripts/check-budgets.mjs deps
+BUDGET EXCEEDED: measured 551, ceiling 285, scope all-platform lockfile identities
+installedListing: bun@1.4.4, darwin-arm64, measured 370
+exit 1
+```
+
+The two committed listing fixtures were produced by real Bun 1.4.3 on main's
+before and candidate's after lockfiles; only the machine-specific header is
+replaced by `node_modules`. Tests pin **591 → 551**, exactly 40 removed pairs,
+no added pairs, and exact agreement between the after fixture, independent
+lock-entry inventory, and reachable graph. Every current installed CLI identity
+must be covered. Replacing equality with the runtime's host-only listing is
+necessary to preserve the original scope, not to waive it.
+
+### Attribution, reconciliation, and remaining ownership
+
+Dependency edges resolve through scoped ancestors; declaration resolution is
+preserved per workspace before roots are grouped by name. Aliases and conflicting
+nested versions have regression fixtures. The greedy reduction plan reports a
+sufficient sequence, with an unknown minimum represented by `null`. Individual
+exclusive shares do not bound the saving of combined removals.
+
+The prior unused local/worker declarations remain removed, and generated
+architecture changes describe only those declaration removals. The two inherited
+fresh-array sorts in the skill evaluation harness now use `toSorted`; this fixes
+the current linter without changing sorting behavior or weakening the gate.
+
+Miniflare is required by emulator/security tests, Drizzle Kit by migration
+configuration and commands, Sentry by supported instrumentation, and Railway by
+infrastructure/guarded CLI scripts. Deleting them would remove required consumers.
+Further reduction needs scoped owner-approved implementation; no architectural
+feature, supported runner, or required check is removed here. This work authorizes
+no release, deployment, provider change, production data access, or live account.
+
+### Checked output optimization and validation limits
+
+The SDK operation catalog now preserves imported schema type references in its
+emitted declarations. These are 108 `as typeof ImportedSchema` assertions over
+the exact existing values. They preserve all 54 operations in this independent main catalog, including
+its existing lead-publication operation, and change no runtime schema or
+operation definition. The separate unmerged Pi child-publication operation
+is not part of this candidate or this receipt. Strict
+TypeScript type equality and bidirectional assignment checks pass with
+`skipLibCheck=false`; generated JavaScript remains byte-identical (SHA-256
+`8842111d497096f0c02c512eb10daef9127dc4c3a4f8669c88611dadf0a8dfbf`).
+
+`operations.d.ts` shrinks from **373,997** to **22,052** bytes without stripping
+public declaration documentation or license notices. The real distribution
+check goes from **12,611,584** bytes (28,672 above its ceiling) to **12,259,328**
+bytes, below the unchanged **12,582,912** ceiling. SDK types, OpenAPI parity and
+all **38** SDK tests pass, including the isolated packed consumer test.
+
+The existing requirements candidate-tree repair is consumed identically from
+reviewed donor heads `90d0bac8ad3e5ce58b977157649f6b7230b26310` (#1210) and
+`5d9842a64e4ce8c5d71f91664efa2ca7262d1037` (#1204), limited to its checker,
+regression tests and reconciliation record. Its **84** tests pass and the real
+check validates **200** requirements and **103** issue audits. Provenance
+warnings remain visible; the repair compares the same candidate bytes read by
+the rest of the check rather than substituting historical HEAD contents.
+
+The startup inspection subprocesses now use an unignorable timeout signal.
+Three pinned-Bun regressions install a TERM-ignoring finite command and confirm
+that RSS, parent-PID and listener inspections still stop within the existing
+bound. The probe's unrelated-listener authority and owned-child cleanup guards
+are retained.
+
+The earlier aggregate test run encountered lifecycle and digest-history
+failures, then was interrupted to release the shared host. It is **not** a
+passing aggregate suite. Focused qualification and normal hooks are reported
+separately; dependency acceptance remains failing at **551 / 285**.
+
+## Historical audit evidence before consolidation
+
+The following original audit/recovery receipts are preserved for provenance.
+Their **591** totals, old tool versions, per-root figures and installation layout
+refer to those historical heads; current acceptance and the residual above
+supersede them.
 
 This is the dedicated dependency-budget audit document for
 [adea-ai/control-plane#1230](https://github.com/adea-ai/control-plane/issues/1230).
@@ -177,25 +299,25 @@ the other roots stop reaching when it is removed. The two agree
 between them would mean the attribution is charging a shared dependency to a
 root that does not own it.
 
-| Declared root                                                                                                                         | Exclusive share = what removing it sheds |
-| ------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
-| `vite-plus`                                                                                                                           | 160                                      |
-| `miniflare`                                                                                                                           | 50                                       |
-| `@sentry/node`                                                                                                                        | 40                                       |
-| `typescript`                                                                                                                          | 21                                       |
-| `oxfmt`                                                                                                                               | 20                                       |
-| `oxlint`                                                                                                                              | 20                                       |
-| `@langchain/langgraph-checkpoint-postgres`                                                                                            | 14                                       |
-| `@langchain/langgraph`                                                                                                                | 9                                        |
-| `drizzle-kit`                                                                                                                         | 9                                        |
-| `@nestjs/swagger`                                                                                                                     | 7                                        |
-| `@restatedev/restate-server`                                                                                                          | 5                                        |
-| `@nestjs/platform-fastify`, `@opentelemetry/sdk-metrics`                                                                              | 4 each                                   |
-| `railway`, `@aws-sdk/client-s3`                                                                                                       | 3 each                                   |
-| `@fastify/helmet`, `@earendil-works/pi-durable`, `@restatedev/restate-sdk`                                                            | 2 each                                   |
-| `acorn`, `code-foundry`, `typescript6`, `drizzle-orm`, `@hpke/core`, `@hpke/dhkem-x25519`, `@langchain/langgraph-checkpoint-postgres` | 1 each                                   |
+| Declared root                                                                                                              | Exclusive share = what removing it sheds |
+| -------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
+| `vite-plus`                                                                                                                | 160                                      |
+| `miniflare`                                                                                                                | 50                                       |
+| `@sentry/node`                                                                                                             | 40                                       |
+| `typescript`                                                                                                               | 21                                       |
+| `oxfmt`                                                                                                                    | 20                                       |
+| `oxlint`                                                                                                                   | 20                                       |
+| `@langchain/langgraph-checkpoint-postgres`                                                                                 | 14                                       |
+| `@langchain/langgraph`                                                                                                     | 9                                        |
+| `drizzle-kit`                                                                                                              | 9                                        |
+| `@nestjs/swagger`                                                                                                          | 7                                        |
+| `@restatedev/restate-server`                                                                                               | 5                                        |
+| `@nestjs/platform-fastify`, `@opentelemetry/sdk-metrics`, `class-validator`                                                | 4 each                                   |
+| `railway`, `@aws-sdk/client-s3`                                                                                            | 3 each                                   |
+| `@fastify/helmet`, `@earendil-works/pi-durable`, `@restatedev/restate-sdk`                                                 | 2 each                                   |
+| `acorn`, `code-foundry`, `typescript6`, `drizzle-orm`, `@hpke/core`, `@hpke/dhkem-x25519`, `class-transformer`, `postgres` | 1 each                                   |
 
-Thirty declared roots have an exclusive share, and the shares sum to **387**
+Twenty-seven declared roots have an exclusive share, and the shares sum to **387**
 identities of the 591 — more than the 306 the ceiling needs, so the gap **is**
 reachable by removing declarations, and §5 measures how.
 

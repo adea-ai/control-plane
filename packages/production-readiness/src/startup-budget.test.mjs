@@ -7,7 +7,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawn, spawnSync } from 'node:child_process'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { delimiter, join } from 'node:path'
 
@@ -18,6 +18,8 @@ import {
   coversProbeAddress,
   createOwnedChildHandle,
   parseRssSample,
+  psParent,
+  psRss,
   readListenerPids,
   runStartupBudgetProbe,
   stopOwnedChild,
@@ -785,6 +787,57 @@ function stallingLsofEnvironment(directory, stallFrom) {
     ...process.env,
     PATH: `${directory}${delimiter}${process.env.PATH ?? ''}`,
   }
+}
+
+// The TERM disposition survives exec, so these finite stand-ins cannot be
+// stopped by spawnSync's default timeout signal. The start marker proves the
+// trap was installed before the timeout, rather than testing an early kill.
+for (const { name, command, inspect } of [
+  {
+    name: 'RSS',
+    command: 'ps',
+    inspect: (env) => {
+      const sample = psRss(4242, { timeoutMs: 500, env })
+      assert.equal(sample.error?.code, 'ETIMEDOUT')
+      assert.equal(parseRssSample(sample).ok, false)
+    },
+  },
+  {
+    name: 'parent-PID',
+    command: 'ps',
+    inspect: (env) => assert.throws(() => psParent(4242, { timeoutMs: 500, env }), /timed out/u),
+  },
+  {
+    name: 'listener',
+    command: 'lsof',
+    inspect: (env) =>
+      assert.throws(() => readListenerPids(3917, { timeoutMs: 500, env }), /timed out/u),
+  },
+]) {
+  test(`a TERM-resistant ${name} inspection cannot outlive its timeout`, () => {
+    const directory = mkdtempSync(join(tmpdir(), 'control-plane-inspection-term-'))
+    const startedFile = join(directory, 'started')
+    try {
+      writeFileSync(
+        join(directory, command),
+        '#!/bin/sh\ntrap "" TERM\nprintf started > "$INSPECTION_STARTED_FILE"\nexec /bin/sleep 2\n',
+        { mode: 0o700 }
+      )
+      // Warm subprocess startup before measuring the inspection timeout itself.
+      assert.equal(spawnSync('/usr/bin/true').status, 0)
+      const startedAt = Date.now()
+      inspect({
+        ...process.env,
+        PATH: `${directory}${delimiter}${process.env.PATH ?? ''}`,
+        INSPECTION_STARTED_FILE: startedFile,
+      })
+      const elapsedMs = Date.now() - startedAt
+      assert.equal(readFileSync(startedFile, 'utf8'), 'started')
+      assert.ok(elapsedMs < 1_500, `the inspection ignored its timeout for ${elapsedMs} ms`)
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
 }
 
 test('the real listener lookup refuses a stalled lsof within its bound', async () => {

@@ -101,5 +101,5 @@ quotes; actual operator invoices depend on provider and region.
 The Local and Hosted runbooks contain exact checkpoint, restore, upgrade, rollback/forward-repair,
 incident, host-loss, TLS, secret, and provider-replacement procedures. The M10 Operability workflow
 repeats both Hosted launches and dependency disruption checks on a fresh Ubuntu runner for every PR
-to `staging` or `main`. This evidence is accepted only with that workflow's green gate for the exact
+to `sandbox` or `main`. This evidence is accepted only with that workflow's green gate for the exact
 revision being released.

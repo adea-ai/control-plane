@@ -18,7 +18,7 @@ jobs:
     permissions:
       contents: read
     # These credentials are synthetic, local-only compose defaults. This
-    # workflow contains no repository-secret references and never connects to Neon.
+    # workflow contains no repository-secret references and never connects to production.
     env:
       DATABASE_ADMIN_URL: postgresql://control_plane_admin:local-admin-only@127.0.0.1:54329/postgres
       DATABASE_MIGRATION_URL: postgresql://control_plane_migrator:local-migration-only@127.0.0.1:54329/control_plane
@@ -66,6 +66,12 @@ jobs:
         env:
           RUN_CP_FRESH_SCHEMA_ACCEPTANCE: 'true'
         run: bun test --timeout 30000 ./packages/database/src/fresh-schema-bootstrap.integration.test.mjs
+
+      - name: Verify migrations without database-wide CREATE
+        timeout-minutes: 5
+        env:
+          SCOPED_MIGRATION_TEST_ADMIN_URL: ${{ env.DATABASE_ADMIN_URL }}
+        run: bun test ./packages/database/src/scoped-migrations.integration.test.mjs
 
       - name: Verify the pool teardown releases its connections
         timeout-minutes: 5

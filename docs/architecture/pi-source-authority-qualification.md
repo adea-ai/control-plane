@@ -78,7 +78,7 @@ source-authority tests is skipped.
   container runs as uid 0, which ignores file modes, so both fail here. Neither file
   is touched by this PR, and neither relates to source authority. They need a
   non-root run (hosted CI) to be confirmed.
-- **Hosted CI, Restate and Neon.** Draft PRs skip the hosted lanes. No Neon target
+- **Hosted CI, Restate and PostgreSQL.** Draft PRs skip the hosted lanes. No PostgreSQL target
   or credentials are available.
 - **Anything in section 2.** These need real identities, tools, grants and payers.
 

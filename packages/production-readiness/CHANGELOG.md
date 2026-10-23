@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.2](https://github.com/adea-ai/control-plane/compare/production-readiness-v1.5.1...production-readiness-v1.5.2) (2026-10-23)
+
+
+### Bug Fixes
+
+* **ci:** retry the npm bulk advisory audit only on a confirmed transient 503 ([#1249](https://github.com/adea-ai/control-plane/issues/1249)) ([4c9d41b](https://github.com/adea-ai/control-plane/commit/4c9d41be40da81fd5ca7e3ad364158865a10c013))
+
 ## [1.5.1](https://github.com/adea-ai/control-plane/compare/production-readiness-v1.5.0...production-readiness-v1.5.1) (2026-10-17)
 
 

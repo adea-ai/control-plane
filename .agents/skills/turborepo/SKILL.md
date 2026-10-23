@@ -1,16 +1,14 @@
 ---
 name: turborepo
-description: |
-  Turborepo monorepo build system guidance. Triggers on: turbo.json, task pipelines,
-  dependsOn, caching, remote cache, the "turbo" CLI, --filter, --affected, CI optimization, environment
-  variables, internal packages, monorepo structure/best practices, and boundaries.
-
-  Use when user: configures tasks/workflows/pipelines, creates packages, sets up
-  monorepo, shares code between apps, runs changed/affected packages, debugs cache,
-  or has apps/packages directories.
+description: "Use when the question is about turbo.json, task pipelines, dependsOn, caching, the turbo CLI, --filter or --affected, CI optimization, or monorepo package boundaries. Not for general package-manager, application-framework, or non-Turborepo build questions. Covers task graphs, caching, filtering, environment variables, and package boundaries."
 metadata:
   version: "2.10.11-canary.4"
   owner: "vendored — Vercel upstream (pinned)"
+  provenance:
+    origin: vendored-upstream
+    source: "Vercel Turborepo agent skill (upstream docs: apps/docs/content/docs/ in the Turborepo repository, https://turborepo.dev/docs)"
+    upstream_version: "2.10.11-canary.4"
+    integration_version: "1.1.1"
 ---
 
 # Turborepo Skill
@@ -961,3 +959,12 @@ This skill is based on the official Turborepo documentation at:
 - **Failure/skip reporting:** an affected task that fails, or a cache hit that shouldn't happen, is reported with the failing task name and the config diff — never described as fixed without a passing run.
 - **Cleanup:** no root-package task logic, `&&`-chained scripts, or leftover `prebuild` shims remain; reverted experiments leave no orphan config keys.
 - **Completion-claim guard:** the skill must not claim configuration success if any affected task fails or the dependency graph changes task semantics silently.
+- **Stop conditions:** Stop and report when a task's declared output would change, when the dependency graph cannot express the required ordering, or when a cache configuration would hide a failing task.
+
+### Boundary contract
+
+- **Secrets:** Never inline environment secrets into task definitions or cached outputs; variables stay in the environment configuration.
+- **Dirty worktree:** Task-graph changes never reset, stash, or discard working-tree edits; the pipeline is verified against the current tree.
+- **Migration:** Migrations are separate tasks with their own dependsOn edges; a task must never imply that a migration ran.
+- **Generated files:** Generated outputs are produced by the declared pipeline task rather than committed by hand.
+- **Provider:** No provider activation is implied by a task graph; tasks that call providers stay explicit and separately authorized.
