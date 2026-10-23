@@ -791,7 +791,10 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
       const claimed = this.journal.get(handle.handleId)
       if (claimed.epoch !== epoch) return this.status(handle)
       const authority = this.#stored(claimed)
-      await this.#recoveryAuthority(authority)
+      await this.#recoveryAuthority(
+        authority,
+        claimed.state === 'cancelling' ? 'cancel' : 'recovery'
+      )
       this.#assertOpen()
       if (claimed.state === 'cancelling') {
         const intent = readCancellationIntent(claimed)
@@ -815,7 +818,7 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
           // Compatibility for cancellation records written before exact generation tracking.
           safe = await this.#probeInference(authority, turnKey(claimed))
         }
-        await this.#recoveryAuthority(authority)
+        await this.#recoveryAuthority(authority, 'cancel')
         this.#assertOpen()
         const current = this.journal.get(handle.handleId)
         if (current.epoch !== epoch || current.state !== claimed.state) return this.status(handle)
@@ -1717,12 +1720,17 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
     }
   }
 
-  async #recoveryAuthority(authority: DurableExecutionAuthority): Promise<void> {
+  async #recoveryAuthority(
+    authority: DurableExecutionAuthority,
+    purpose: 'recovery' | 'cancel' = 'recovery'
+  ): Promise<void> {
     this.#assertUnexpired(authority)
     try {
-      // Scope is rechecked first so canonical recovery authority is the final awaited check.
+      // Scope is rechecked first so canonical authority is the final awaited check.
       await this.#assertExecutionScope(authority)
-      await (this.#options.assertRecoveryAuthority ?? this.#options.assertAuthority)(authority)
+      // Settling an accepted stop observes retained authority; it cannot admit inference.
+      if (purpose === 'cancel') await this.#options.assertAuthority(authority, 'cancel')
+      else await (this.#options.assertRecoveryAuthority ?? this.#options.assertAuthority)(authority)
     } catch (error) {
       authorityFailure(error)
     }

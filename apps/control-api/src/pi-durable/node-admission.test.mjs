@@ -28,13 +28,18 @@ import {
   SqlitePiDurableLeadReceiptStore,
 } from './pi-durable-lead.service.ts'
 import { createUnusedPiLeadAllocationReleaser } from './unused-lead-allocation.ts'
+import { PiDurableRuntimeAdapter } from '../../../../packages/pi-durable-adapter/src/adapter.ts'
 
 const at = '2026-10-08T00:00:00.000Z'
 const expiresAt = '2026-10-08T01:00:00.000Z'
 const intentId = 'f643a115-617d-4bae-8d52-cfe458c0b8ac'
 async function fixture(
   operation,
-  { explicitProjectScope = false, canonicalActorPrincipalId = 'product:original-sender' } = {}
+  {
+    explicitProjectScope = false,
+    canonicalActorPrincipalId = 'product:original-sender',
+    runtimeCompatible = false,
+  } = {}
 ) {
   const directory = await mkdtemp(join(tmpdir(), 'pi-node-admission-'))
   const path = join(directory, 'node.sqlite')
@@ -56,6 +61,7 @@ async function fixture(
   try {
     let repositories = await open()
     const inputs = createExecutionPlanTestFixtureInputs()
+    if (runtimeCompatible) inputs.profile.definition.capabilityRequirements = []
     inputs.profile.definition.skills = []
     inputs.skills = []
     const ids = deterministicPiLeadIntentIds(inputs.correlation.workspaceId, intentId)
@@ -1583,6 +1589,20 @@ test('a crash at any admission boundary leaves ready and binding both durable or
         operation: 'status',
       })
       setup.setFenceBody(undefined)
+      // Fenced observation carries the immutable retained binding, never a fresh admission.
+      expect(observed.retained).toEqual({
+        intentId,
+        workspaceId: setup.plan.correlation.workspaceId,
+        executionId: setup.ids.executionId,
+        attemptId: setup.ids.attemptId,
+        allowedPrincipalIds: admission.allowedPrincipalIds,
+        executionPlanId: setup.plan.executionPlanId,
+        executionPlanDigest: setup.plan.contentDigest,
+        admissionDigest: admission.admissionDigest,
+        startDigest: digestOf(admission.startRequest),
+        deadlineAt: admission.deadlineAt,
+      })
+      expect(readyAndBindings(setup.database)).toEqual(healed)
       report.push({
         point,
         outcome,
@@ -1593,7 +1613,8 @@ test('a crash at any admission boundary leaves ready and binding both durable or
         fencedResultIsReadOnly:
           observed.kind === 'fenced' &&
           !('admissionDigest' in observed) &&
-          !('retained' in observed),
+          !('startRequest' in observed) &&
+          observed.operation === 'status',
       })
     }, fencedScope)
   }
@@ -1683,3 +1704,167 @@ test('public canonical reads never expose a pending intent, even while its own p
     expect(admitted).toMatchObject({ admittedAttempt: { attemptId: setup.ids.attemptId } })
     expect(await bridge.store.get(intentId)).toMatchObject({ intentId })
   }, fencedScope))
+
+// Scripted engine only: canonical CP/Node authority and funding are real, no provider is called.
+test.each([
+  ['cancelling CP lifecycle', true, false, null],
+  ['withheld model readiness', false, true, null],
+  ['both lifecycle and readiness', true, true, null],
+  ['revoked audience before observation', true, true, 'audience-before'],
+  ['changed actor before observation', true, true, 'actor-before'],
+  ['revoked scope before observation', true, true, 'scope-before'],
+  ['revoked audience during observation', true, true, 'audience-during'],
+  ['revoked scope during observation', true, true, 'scope-during'],
+  ['expiry during observation', true, true, 'expiry-during'],
+  ['inference recovery with cancelling lifecycle', true, false, 'inference'],
+  ['inference recovery with withheld readiness', false, true, 'inference'],
+])(
+  'retained cancellation recovery observes authority with %s',
+  async (_label, cancelling, withheld, fault) => {
+    await fixture(
+      async (setup) => {
+        const admission = await setup.resolve(setup.bridge)
+        const canonical = setup.bridge.canonicalAuthority
+        const directory = await mkdtemp(join(tmpdir(), 'pi-node-cancel-recovery-'))
+        const runtimeEffects = { providers: 0, engines: 0, authorizations: 0, probes: 0 }
+        let adapter
+        const purposes = []
+        let refuseInference = false
+        let scopeActive = true
+        let currentTime = at
+        const scope = setup.options().scopeAuthority
+        const revoke = () => {
+          if (fault?.startsWith('audience')) setup.setEvidence({ allowedPrincipalIds: [] })
+          if (fault?.startsWith('actor'))
+            setup.setEvidence({ canonicalActorPrincipalId: 'product:other' })
+          if (fault?.startsWith('scope')) scopeActive = false
+          if (fault?.startsWith('expiry')) {
+            currentTime = expiresAt
+            setup.setTime(expiresAt)
+          }
+        }
+        const read = setup.bridge.options.product.readCurrent
+        setup.bridge.options.product.readCurrent = async (input, context) => {
+          purposes.push(context.purpose)
+          if (refuseInference && context.purpose === 'inference') throw new Error('MODEL_NOT_READY')
+          return read(input, context)
+        }
+        const options = {
+          directory,
+          now: () => currentTime,
+          scopeAuthority: {
+            readCurrent: async (input) => ({
+              ...(await scope.readCurrent(input)),
+              grantActive: scopeActive,
+            }),
+          },
+          resolveAdmission: (request) => canonical.resolveAdmission(request),
+          assertAuthority: (authority, purpose) => canonical.assertAuthority(authority, purpose),
+          assertReadAuthority: (authority) => canonical.assertReadAuthority(authority),
+          assertRecoveryAuthority: (authority) => canonical.assertRecoveryAuthority(authority),
+          resolveProvider: async (selection) => {
+            runtimeEffects.providers++
+            return {
+              selectionRef: selection.selectionRef,
+              selectionRevision: selection.selectionRevision,
+              workspaceId: setup.plan.correlation.workspaceId,
+              provider: 'scripted',
+              providerModel: 'cancel-model',
+              location: 'remote_host',
+              harness: 'pi_durable',
+              harnessVersion: '1.1.0',
+              providerBinding: 'pi_durable_models',
+              withModels: async (use) => use({}),
+            }
+          },
+          authorizeInference: async () => {
+            runtimeEffects.authorizations++
+            return { maxOutputTokens: 10, maximumInputTokens: 64, assertActive: async () => {} }
+          },
+          settleUsage: async (_authority, _key, usage) => usage,
+          reconcileInference: async () => {
+            runtimeEffects.probes++
+            if (fault?.endsWith('-during')) revoke()
+            return 'safe_to_resume'
+          },
+          engineFactory: async (engine) => {
+            runtimeEffects.engines++
+            return {
+              run: async () => {
+                await engine.authorizeInference({
+                  sessionId: 'cancel-session',
+                  inferenceId: 'pi-generation:1',
+                  provider: 'scripted',
+                  modelId: 'cancel-model',
+                })
+                throw new Error('RETAIN_UNCERTAIN_GENERATION')
+              },
+              close: async () => {},
+              cancel: async () => {},
+            }
+          },
+        }
+        try {
+          adapter = new PiDurableRuntimeAdapter(options)
+          const handle = await adapter.start(admission.startRequest)
+          await adapter.drain()
+          expect((await adapter.status(handle)).state).toBe('unknown')
+          if (fault !== 'inference')
+            expect(
+              (await adapter.cancel(handle, { idempotencyKey: 'stop:retained', requestedAt: at }))
+                .state
+            ).toBe('cancelling')
+          await adapter.close()
+          if (cancelling) {
+            const execution = await setup.repositories.executions.getExecution(
+              setup.ids.executionId
+            )
+            await new ExecutionLifecycleService(setup.repositories.executions).transitionExecution({
+              executionId: execution.executionId,
+              expectedVersion: execution.version,
+              to: 'cancelling',
+              transitionedAt: at,
+            })
+          }
+          refuseInference = withheld
+          purposes.length = 0
+          setup.scopeReadActors.length = 0
+          const before = { ...runtimeEffects }
+          const funding = await setup
+            .ledger()
+            .entries(setup.plan.correlation.workspaceId, setup.ids.executionId)
+          adapter = new PiDurableRuntimeAdapter(options)
+          if (fault?.endsWith('-before')) revoke()
+          if (fault) {
+            await expect(adapter.reconcile(handle)).rejects.toThrow(
+              /PI_AUTHORITY_REJECTED|PI_EXECUTION_SCOPE_REJECTED|PI_AUTHORITY_EXPIRED/
+            )
+            expect(adapter.journal.get(handle.handleId).state).toBe(
+              fault === 'inference' ? 'unknown' : 'cancelling'
+            )
+          } else expect((await adapter.reconcile(handle)).state).toBe('cancelled')
+          expect(runtimeEffects).toEqual({
+            ...before,
+            probes: before.probes + (fault && !fault.endsWith('-during') ? 0 : 1),
+          })
+          if (!fault) {
+            expect(purposes.length).toBeGreaterThan(0)
+            expect(new Set(purposes)).toEqual(new Set(['observe']))
+            expect(setup.scopeReadActors).toContain('product:original-sender')
+            expect(new Set(setup.scopeReadActors)).toEqual(
+              new Set(['product:original-sender', 'svc_pi-admission'])
+            )
+          }
+          expect(
+            await setup.ledger().entries(setup.plan.correlation.workspaceId, setup.ids.executionId)
+          ).toEqual(funding)
+          expect(await setup.counts()).toEqual({ commands: 1, executions: 1 })
+        } finally {
+          await adapter?.close()
+          await rm(directory, { recursive: true, force: true })
+        }
+      },
+      { explicitProjectScope: true, runtimeCompatible: true }
+    )
+  }
+)
