@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import process from 'node:process'
 import { loadDatabaseCredentials } from '@control-plane/config'
 import { VersionedCatalog, WorkspaceCatalog } from '@control-plane/domain'
@@ -46,7 +46,8 @@ describe.skipIf(process.env.RUN_DATABASE_INTEGRATION !== 'true')(
     let catalog
     let commands
 
-    beforeAll(async () => {
+    // A fresh seeded database per test: each case owns its state, so the suite passes in any order.
+    beforeEach(async () => {
       isolated = await createIsolatedTestDatabase({
         administration: loadDatabaseCredentials(process.env, 'administration'),
         application: loadDatabaseCredentials(process.env, 'application'),
@@ -72,7 +73,7 @@ describe.skipIf(process.env.RUN_DATABASE_INTEGRATION !== 'true')(
       })
     }, integrationTestTimeout(60_000))
 
-    afterAll(async () => {
+    afterEach(async () => {
       await isolated?.dispose()
     })
 
@@ -143,6 +144,23 @@ describe.skipIf(process.env.RUN_DATABASE_INTEGRATION !== 'true')(
     test(
       'lists only system and exact-workspace records in binary ID order',
       async () => {
+        // Own setup: the two workspace skills this case lists, published here rather than left
+        // behind by the other cases.
+        for (const [suffix, key] of [
+          ['1', 'pg-catalog-key-0020'],
+          ['3', 'pg-catalog-key-0021'],
+        ]) {
+          await commands.executeCommand(
+            workspaceId,
+            command(key),
+            publish(
+              workspaceId,
+              `skl_01JABCDEF0123456789ABCDEF${suffix}`,
+              `skv_01JABCDEF0123456789ABCDEF${suffix}`,
+              '1.0.0'
+            )
+          )
+        }
         const page = await catalog.listWorkspaceSkills({ workspaceId, limit: 10 })
         expect(page.map(({ skillId }) => skillId)).toEqual([
           'skl_01JABCDEF0123456789ABCDEF0',
