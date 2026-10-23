@@ -56,6 +56,11 @@ const activeChildren = new Set()
 // Per-child state: the command it runs, whether it has been terminated, and
 // the bound that makes its completion settle.
 const childStates = new WeakMap()
+// Owned processes that outlived every attempt to reap them. A run that leaves
+// one behind has not cleaned up after itself, whatever its commands reported,
+// so the overall outcome is nonzero (see failOnUnreapedOwnedPids).
+const unreapedOwnedPids = new Set()
+let unreapedOwnedPidsReported = false
 
 function trackRunnerChild(child, command, ownerToken) {
   activeChildren.add(child)
@@ -338,8 +343,11 @@ function armCompletionBound(child) {
     }
     const survivors = survivingOwnedPids(remnants)
     if (state.closed) {
-      // The child's own promise settled when it closed; the bound only reaps
-      // what it left behind, and ownership ends once nothing of it is alive.
+      // The child's own promise settled when it closed, possibly with success,
+      // so a survivor can no longer fail that command. It is recorded for the
+      // overall outcome instead; the bound only reaps what the child left behind,
+      // and ownership ends once nothing of it is alive.
+      recordUnreapedOwnedPids(survivors)
       if (survivors.length === 0) releaseChild(child)
       if (remnants.length > 0) {
         console.error(
@@ -381,8 +389,38 @@ function terminateActiveChildren() {
   // The owned trees are VERIFIED, not assumed: the direct child's exit is not
   // proof that its descendants were reaped.
   const survivors = survivingOwnedPids(descendants)
+  recordUnreapedOwnedPids(survivors)
   releaseSettledChildren()
   return survivors
+}
+
+/** Remembers owned processes that could not be reaped. */
+function recordUnreapedOwnedPids(pids) {
+  for (const pid of pids) unreapedOwnedPids.add(pid)
+}
+
+/**
+ * Turns an owned process that is still alive into a nonzero exit status.
+ *
+ * It does not matter whether the command that owned the process already
+ * resolved or the runner is already exiting: both paths end here. A status that
+ * is already nonzero (a failure or an interruption) is kept, and the report is
+ * written once.
+ */
+function failOnUnreapedOwnedPids() {
+  const alive = [...unreapedOwnedPids].filter((pid) => isProcessAlive(pid))
+  if (alive.length === 0) return
+  if (!process.exitCode) process.exitCode = 1
+  if (!unreapedOwnedPidsReported) {
+    unreapedOwnedPidsReported = true
+    console.error(`Owned process(es) survived the runner's cleanup: ${alive.join(', ')}.`)
+  }
+}
+
+/** The last synchronous reap of a runner that is exiting. */
+function reapOwnedChildrenAtExit() {
+  terminateActiveChildren()
+  failOnUnreapedOwnedPids()
 }
 
 function run(command, arguments_, options = {}) {
@@ -726,7 +764,7 @@ for (const signal of ['SIGINT', 'SIGTERM']) {
 // Last-resort synchronous reap for any still-tracked child on a normal or
 // first-signal exit. A SIGKILL of the runner itself bypasses this, which is why
 // runner-owned children also share the runner's process group.
-process.on('exit', terminateActiveChildren)
+process.on('exit', reapOwnedChildrenAtExit)
 
 async function main() {
   try {
@@ -871,5 +909,8 @@ try {
   console.error(`Integration run interrupted by ${interruptedSignal}.`)
 }
 if (interruptedSignal !== null) process.exitCode = signalExitCode(interruptedSignal)
+// A closed command's survivors are found after its promise has resolved, so the
+// verdict cannot come from the command itself.
+failOnUnreapedOwnedPids()
 
 void COMPOSE_COMMAND

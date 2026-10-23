@@ -160,22 +160,39 @@ function createRunnerHarness(overrides = {}) {
 
 const FIXTURE_MARKER_VARIABLE = 'CP_LIFECYCLE_FIXTURE'
 const TEARDOWN_WAIT_MS = 5_000
+const SAMPLE_INTERVAL_MS = 100
+
+// Whether /proc can prove a process belongs to a fixture. Cases that re-parent
+// fixture processes out of the runner's tree depend on it and are gated on it;
+// a case can switch it off to exercise the portable path of the teardown.
+let procFilesystem = existsSync('/proc/self')
+
+async function withoutProcFilesystem(callback) {
+  const previous = procFilesystem
+  procFilesystem = false
+  try {
+    return await callback()
+  } finally {
+    procFilesystem = previous
+  }
+}
 
 /** Whether a PID is provably a process of this fixture's harness directory. */
 function carriesFixtureMarker(pid, marker) {
-  let environ
+  // Without /proc nothing can be proven from the environment, and a receipt
+  // alone is not proof: the PID may have been recycled since it was written.
+  if (!procFilesystem) return false
   try {
-    environ = readFileSync(`/proc/${pid}/environ`, 'latin1')
-  } catch (error) {
-    // Without /proc nothing can be proven; the receipt the fixture itself wrote
-    // in its private directory is then the only evidence.
-    return !existsSync('/proc/self') && error.code !== 'EACCES'
+    const environ = readFileSync(`/proc/${pid}/environ`, 'latin1')
+    return `\0${environ}\0`.includes(`\0${FIXTURE_MARKER_VARIABLE}=${marker}\0`)
+  } catch {
+    return false
   }
-  return `\0${environ}\0`.includes(`\0${FIXTURE_MARKER_VARIABLE}=${marker}\0`)
 }
 
 /** The live PIDs whose environment carries this fixture's marker, from /proc. */
 function pidsCarryingFixtureMarker(marker) {
+  if (!procFilesystem) return []
   let entries
   try {
     entries = readdirSync('/proc')
@@ -189,47 +206,153 @@ function pidsCarryingFixtureMarker(marker) {
 }
 
 /**
+ * A token that names one process rather than one PID: the PID with the moment
+ * the process started, so a recycled PID has a different identity.
+ */
+function processIdentity(pid) {
+  if (procFilesystem) {
+    try {
+      const stat = readFileSync(`/proc/${pid}/stat`, 'latin1')
+      // The command name may hold spaces; the fields that follow it do not.
+      return `${pid}@${stat.slice(stat.lastIndexOf(')') + 2).split(' ')[19]}`
+    } catch {
+      return undefined
+    }
+  }
+  const result = spawnSync('ps', ['-o', 'lstart=', '-p', String(pid)], { encoding: 'utf8' })
+  const started = String(result.stdout ?? '').trim()
+  return result.status === 0 && started !== '' ? `${pid}@${started}` : undefined
+}
+
+/** The runner and everything below it, from one parent-link snapshot. */
+function processTree(rootPid) {
+  if (!Number.isSafeInteger(rootPid) || rootPid <= 1) return []
+  const result = spawnSync('ps', ['-A', '-o', 'pid=,ppid='], { encoding: 'utf8' })
+  if (result.status !== 0) return []
+  const childrenByParent = new Map()
+  for (const line of String(result.stdout ?? '').split('\n')) {
+    const match = line.trim().match(/^(\d+)\s+(\d+)$/u)
+    if (match === null) continue
+    const [pid, parent] = [Number(match[1]), Number(match[2])]
+    if (!childrenByParent.has(parent)) childrenByParent.set(parent, [])
+    childrenByParent.get(parent).push(pid)
+  }
+  const tree = [rootPid]
+  for (let index = 0; index < tree.length; index += 1) {
+    for (const child of childrenByParent.get(tree[index]) ?? []) {
+      if (child > 1 && child !== process.pid && !tree.includes(child)) tree.push(child)
+    }
+  }
+  return tree
+}
+
+/**
+ * The processes a harness has PROVEN to be its own, retained before their parent
+ * dies.
+ *
+ * A process is added while it is still part of the runner's tree, so its
+ * lineage is the proof, and it is kept with its identity: once the runner is
+ * gone and the process is re-parented, or its PID is recycled, the identity
+ * still tells the two apart. This is what makes the teardown safe where /proc
+ * cannot be read.
+ */
+function createFixtureLedger() {
+  const identities = new Map()
+  return {
+    identities,
+    sample(rootPid) {
+      for (const pid of processTree(rootPid)) {
+        if (pid === process.pid || identities.has(pid)) continue
+        const identity = processIdentity(pid)
+        if (identity !== undefined) identities.set(pid, identity)
+      }
+    },
+    owns(pid) {
+      const identity = identities.get(pid)
+      return identity !== undefined && processIdentity(pid) === identity
+    },
+  }
+}
+
+/**
  * Bounded, unconditional reaping of the processes a harness directory spawned.
  *
- * A process is signalled only when it provably belongs to this fixture: it
- * carries the marker of this harness directory (a unique mkdtemp path that
- * every double and every descendant inherits, including the ones that drop the
- * runner's owner token on purpose). PIDs the fixture recorded in its receipt
- * are checked against the same marker, so a recycled PID or an unrelated
- * process is never signalled. Resolves with the PIDs still alive after the wait.
+ * Only a process that is proven to belong to this fixture is signalled: it was
+ * retained in the ledger while it was part of the runner's tree and still has
+ * the identity it was retained with, or (where /proc exists) it carries the
+ * marker of this harness directory, which every double and every descendant
+ * inherits, including the ones that drop the runner's owner token on purpose.
+ * A receipt names a PID, not a process, so a receipt PID without either proof
+ * is never signalled; it is returned as unverified. Resolves with the PIDs still
+ * alive after the wait and the unverified ones.
  */
-async function reapFixtureProcesses(descendants, marker) {
-  const candidates = new Set([
-    ...readDescendantPids(descendants).filter((pid) => Number.isSafeInteger(pid) && pid > 1),
-    ...pidsCarryingFixtureMarker(marker),
-  ])
-  const pids = [...candidates].filter(
-    (pid) => isProcessAlive(pid) && carriesFixtureMarker(pid, marker)
+async function reapFixtureProcesses({ descendants, directory, ledger }) {
+  const receipts = readDescendantPids(descendants).filter(
+    (pid) => Number.isSafeInteger(pid) && pid > 1
   )
-  for (const pid of pids) killQuietly(pid)
+  const verified = new Set()
+  for (const pid of ledger?.identities.keys() ?? []) {
+    if (isProcessAlive(pid) && ledger.owns(pid)) verified.add(pid)
+  }
+  for (const pid of [...receipts, ...pidsCarryingFixtureMarker(directory)]) {
+    if (isProcessAlive(pid) && carriesFixtureMarker(pid, directory)) verified.add(pid)
+  }
+  const unverified = receipts.filter((pid) => isProcessAlive(pid) && !verified.has(pid))
+  for (const pid of verified) killQuietly(pid)
   const deadline = Date.now() + TEARDOWN_WAIT_MS
-  let alive = pids.filter((pid) => isProcessAlive(pid))
+  let alive = [...verified].filter((pid) => isProcessAlive(pid))
   while (alive.length > 0 && Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, 25))
     alive = alive.filter((pid) => isProcessAlive(pid))
   }
-  return alive
+  return { survivors: alive, unverified }
 }
 
 /**
- * The teardown every harness run ends with, whatever happened before it: the
- * runner process is killed and waited for within a bound, the fixture's own
- * descendants are reaped while their receipt still exists, and only then is the
- * directory removed. Resolves with what could not be reaped.
+ * The teardown every harness run ends with, whatever happened before it.
+ *
+ * The runner's tree is recorded while the runner is alive, the runner is killed
+ * and waited for within a bound, and the fixture's own processes are reaped
+ * while their receipt still exists. The directory is removed only when nothing
+ * is left over: a survivor or an unverifiable receipt keeps the directory and
+ * its receipts for whoever has to clean up. It never throws; it resolves with
+ * the problems it found, which an empty list means there were none.
  */
-async function tearDownRunnerHarness({ child, gone, directory, descendants }) {
-  reapHarnessChild(child)
-  if (child !== undefined && gone !== undefined) {
-    await Promise.race([gone, new Promise((resolve) => setTimeout(resolve, TEARDOWN_WAIT_MS))])
+async function tearDownRunnerHarness({ child, gone, directory, descendants, ledger }) {
+  const problems = []
+  try {
+    // The last look at the runner's tree must come before the runner dies.
+    if (isRunning(child)) ledger?.sample(child.pid)
+    reapHarnessChild(child)
+    if (child !== undefined && gone !== undefined) {
+      const timedOut = Symbol('timed out')
+      const outcome = await Promise.race([
+        gone,
+        new Promise((resolve) => setTimeout(() => resolve(timedOut), TEARDOWN_WAIT_MS)),
+      ])
+      if (outcome === timedOut)
+        problems.push(`the runner process ${child.pid} did not exit after SIGKILL`)
+    }
+    const { survivors, unverified } = await reapFixtureProcesses({ descendants, directory, ledger })
+    if (survivors.length > 0)
+      problems.push(`fixture process(es) ${survivors.join(', ')} survived SIGKILL`)
+    if (unverified.length > 0)
+      problems.push(
+        `receipt PID(s) ${unverified.join(', ')} could not be verified as fixture-owned and were left running`
+      )
+  } catch (error) {
+    problems.push(`the teardown itself failed: ${error?.message ?? String(error)}`)
   }
-  const survivors = await reapFixtureProcesses(descendants, directory)
-  rmSync(directory, { recursive: true, force: true })
-  return survivors
+  if (problems.length > 0) {
+    problems.push(`the harness directory was kept with its receipts at ${directory}`)
+    return problems
+  }
+  try {
+    rmSync(directory, { recursive: true, force: true })
+  } catch (error) {
+    problems.push(`could not remove ${directory}: ${error?.message ?? String(error)}`)
+  }
+  return problems
 }
 
 // These executable doubles exercise the real runner without a Docker engine,
@@ -285,6 +408,11 @@ function executeRunner(overrides = {}) {
     rmSync(directory, { recursive: true, force: true })
     record({ directory, state: 'removed' })
   }
+}
+
+/** Whether the spawned runner is still the process its PID names. */
+function isRunning(child) {
+  return child !== undefined && child.exitCode === null && child.signalCode === null
 }
 
 function reapHarnessChild(child) {
@@ -357,6 +485,19 @@ function isProcessAlive(pid) {
   }
 }
 
+/** Keeps the ledger current while the runner runs, so its tree is known before it dies. */
+function startSampling(ledger, child) {
+  const timer = setInterval(() => {
+    try {
+      if (isRunning(child)) ledger.sample(child.pid)
+    } catch {
+      // A failed snapshot is retried at the next tick and once more at teardown.
+    }
+  }, SAMPLE_INTERVAL_MS)
+  timer.unref?.()
+  return timer
+}
+
 // Spawn the real runner asynchronously, wait until its receipt records the
 // injected command, deliver a real signal, and report how it exited. A runner
 // without an installed handler dies from the signal (status null, signal name);
@@ -371,8 +512,10 @@ async function executeRunnerInterrupted(
   { signal, predicate, description, settleMs = 15_000, waitFor = 'close', inspect }
 ) {
   const { directory, commands, descendants, environment } = createRunnerHarness(overrides)
+  const ledger = createFixtureLedger()
   let child
   let gone
+  let sampler
   let failure
   try {
     child = spawn(process.execPath, [runner], {
@@ -381,6 +524,7 @@ async function executeRunnerInterrupted(
       stdio: ['ignore', 'pipe', 'pipe'],
     })
     gone = new Promise((resolve) => child.once('exit', () => resolve()))
+    sampler = startSampling(ledger, child)
     let stdout = ''
     let stderr = ''
     child.stdout.setEncoding('utf8')
@@ -441,18 +585,27 @@ async function executeRunnerInterrupted(
     failure = error
     throw error
   } finally {
-    await finishHarness({ child, gone, directory, descendants }, failure)
+    await finishHarness({ child, gone, directory, descendants, ledger, sampler }, failure)
   }
 }
 
 /**
- * Runs the teardown and fails the case when a fixture process outlived it,
- * unless an earlier failure is already being reported.
+ * Runs the teardown. A cleanup problem fails the case when nothing else failed;
+ * when the case already failed, the report is appended to that failure's message
+ * and the failure itself is still the one that propagates.
  */
 async function finishHarness(harness, failure) {
-  const survivors = await tearDownRunnerHarness(harness)
-  if (survivors.length > 0 && failure === undefined)
-    throw new Error(`Fixture process(es) survived the teardown: ${survivors.join(', ')}`)
+  clearInterval(harness.sampler)
+  const problems = await tearDownRunnerHarness(harness)
+  if (problems.length === 0) return
+  const report = `Harness cleanup problem(s):\n- ${problems.join('\n- ')}`
+  if (failure === undefined) throw new Error(report)
+  if (failure instanceof Error) {
+    failure.message = `${failure.message}\n\n${report}`
+    failure.cleanupReport = report
+  } else {
+    console.error(report)
+  }
 }
 
 /** Kills a process the case spawned, tolerating one that is already gone. */
@@ -473,8 +626,10 @@ function killQuietly(pid) {
  */
 async function executeRunnerToExit(overrides, { settleMs = 30_000, inspect } = {}) {
   const { directory, descendants, environment } = createRunnerHarness(overrides)
+  const ledger = createFixtureLedger()
   let child
   let gone
+  let sampler
   let failure
   try {
     child = spawn(process.execPath, [runner], {
@@ -482,6 +637,7 @@ async function executeRunnerToExit(overrides, { settleMs = 30_000, inspect } = {
       env: environment,
       stdio: ['ignore', 'pipe', 'pipe'],
     })
+    sampler = startSampling(ledger, child)
     let stdout = ''
     let stderr = ''
     child.stdout.setEncoding('utf8')
@@ -512,7 +668,7 @@ async function executeRunnerToExit(overrides, { settleMs = 30_000, inspect } = {
     failure = error
     throw error
   } finally {
-    await finishHarness({ child, gone, directory, descendants }, failure)
+    await finishHarness({ child, gone, directory, descendants, ledger, sampler }, failure)
   }
 }
 
@@ -1369,36 +1525,40 @@ describe('integration runner owned process tree', () => {
     expect(released.toSorted()).toEqual(['stderr', 'stdout'])
   })
 
-  test('a stalled pipe is bounded when the survivor carries no proof of ownership', async () => {
-    // The descendant is re-parented to init before the runner terminates the
-    // direct child and has dropped the owner token, so the runner can no longer
-    // attribute it to its own tree and must not kill what it cannot prove it owns. The inherited pipe
-    // stays open, so the runner's completion has to be BOUNDED rather than
-    // waited on forever.
-    await executeRunnerInterrupted(
-      { FAKE_BUN_SPAWN_DETACHED_DESCENDANT: 'true', FAKE_DESCENDANT_SCRUBS_OWNER: 'true' },
-      {
-        signal: 'SIGTERM',
-        predicate: ({ program, args }) => program === 'bun' && args.includes('test'),
-        description: 'the owned test execution',
-        // The survivor holds the runner's pipe, so `close` cannot arrive; the
-        // case waits for the runner PROCESS to be gone.
-        waitFor: 'exit',
-        settleMs: 25_000,
-        // The survivor is read while it is still alive; the harness teardown
-        // reaps it afterwards, whether or not these assertions pass.
-        inspect: (result) => {
-          expect(result.status).toBe(143)
-          // The completion was bounded and reported instead of hanging.
-          expect(result.stderr).toMatch(/did not complete within \d+ ms after it was terminated/u)
-          // The un-attributable survivor was not killed: it was never proven to be
-          // the runner's own.
-          expect(result.descendants.length).toBeGreaterThan(0)
-          for (const pid of result.descendants) expect(isProcessAlive(pid)).toBe(true)
-        },
-      }
-    )
-  }, 40_000)
+  test.skipIf(!procFilesystem)(
+    'a stalled pipe is bounded when the survivor carries no proof of ownership',
+    async () => {
+      // The descendant is re-parented to init before the runner terminates the
+      // direct child and has dropped the owner token, so the runner can no longer
+      // attribute it to its own tree and must not kill what it cannot prove it owns. The inherited pipe
+      // stays open, so the runner's completion has to be BOUNDED rather than
+      // waited on forever.
+      await executeRunnerInterrupted(
+        { FAKE_BUN_SPAWN_DETACHED_DESCENDANT: 'true', FAKE_DESCENDANT_SCRUBS_OWNER: 'true' },
+        {
+          signal: 'SIGTERM',
+          predicate: ({ program, args }) => program === 'bun' && args.includes('test'),
+          description: 'the owned test execution',
+          // The survivor holds the runner's pipe, so `close` cannot arrive; the
+          // case waits for the runner PROCESS to be gone.
+          waitFor: 'exit',
+          settleMs: 25_000,
+          // The survivor is read while it is still alive; the harness teardown
+          // reaps it afterwards, whether or not these assertions pass.
+          inspect: (result) => {
+            expect(result.status).toBe(143)
+            // The completion was bounded and reported instead of hanging.
+            expect(result.stderr).toMatch(/did not complete within \d+ ms after it was terminated/u)
+            // The un-attributable survivor was not killed: it was never proven to be
+            // the runner's own.
+            expect(result.descendants.length).toBeGreaterThan(0)
+            for (const pid of result.descendants) expect(isProcessAlive(pid)).toBe(true)
+          },
+        }
+      )
+    },
+    40_000
+  )
 
   test.skipIf(process.platform !== 'linux')(
     'an interruption reaps an owned descendant that was orphaned before the signal',
@@ -1465,33 +1625,37 @@ describe('integration runner owned process tree', () => {
     40_000
   )
 
-  test('a wrapper that exits first is bounded and reported even when the descendant proves no ownership', async () => {
-    const unrelated = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
-      stdio: 'ignore',
-    })
-    try {
-      await executeRunnerToExit(
-        {
-          FAKE_BUN_WRAPPER_EXITS_FIRST: 'true',
-          FAKE_DESCENDANT_SCRUBS_OWNER: 'true',
-        },
-        {
-          inspect: (result) => {
-            expect(result.status).not.toBe(0)
-            expect(result.stderr).toMatch(
-              /bun exited but did not complete within \d+ ms; an owned descendant may still hold the inherited pipes/u
-            )
-            // Nothing proves the holder is the runner's, so it is left alone.
-            expect(result.descendants.length).toBeGreaterThan(0)
-            for (const pid of result.descendants) expect(isProcessAlive(pid)).toBe(true)
-            expect(isProcessAlive(unrelated.pid)).toBe(true)
+  test.skipIf(!procFilesystem)(
+    'a wrapper that exits first is bounded and reported even when the descendant proves no ownership',
+    async () => {
+      const unrelated = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+        stdio: 'ignore',
+      })
+      try {
+        await executeRunnerToExit(
+          {
+            FAKE_BUN_WRAPPER_EXITS_FIRST: 'true',
+            FAKE_DESCENDANT_SCRUBS_OWNER: 'true',
           },
-        }
-      )
-    } finally {
-      killQuietly(unrelated.pid)
-    }
-  }, 40_000)
+          {
+            inspect: (result) => {
+              expect(result.status).not.toBe(0)
+              expect(result.stderr).toMatch(
+                /bun exited but did not complete within \d+ ms; an owned descendant may still hold the inherited pipes/u
+              )
+              // Nothing proves the holder is the runner's, so it is left alone.
+              expect(result.descendants.length).toBeGreaterThan(0)
+              for (const pid of result.descendants) expect(isProcessAlive(pid)).toBe(true)
+              expect(isProcessAlive(unrelated.pid)).toBe(true)
+            },
+          }
+        )
+      } finally {
+        killQuietly(unrelated.pid)
+      }
+    },
+    40_000
+  )
 })
 
 describe('integration runner descendants that outlive a closed wrapper', () => {
@@ -1532,6 +1696,8 @@ describe('integration runner descendants that outlive a closed wrapper', () => {
             },
             {
               inspect: (result) => {
+                // Reaping the descendant is a clean outcome, not a failure.
+                expect(result.status).toBe(0)
                 expect(result.descendants.length).toBeGreaterThan(0)
                 for (const pid of result.descendants) expect(isProcessAlive(pid)).toBe(false)
                 expect(isProcessAlive(unrelated.pid)).toBe(true)
@@ -1548,7 +1714,22 @@ describe('integration runner descendants that outlive a closed wrapper', () => {
 })
 
 describe('integration runner lifecycle harness teardown', () => {
-  test.skipIf(process.platform !== 'linux')(
+  const hold = ['-e', 'setInterval(() => {}, 1000)']
+
+  /** The live processes whose environment carries `CP_TEST_PROBE=<probe>`, from the real /proc. */
+  const carryingProbe = (probe) =>
+    readdirSync('/proc')
+      .filter((entry) => /^\d+$/u.test(entry))
+      .map(Number)
+      .filter((pid) => {
+        try {
+          return readFileSync(`/proc/${pid}/environ`, 'latin1').includes(`CP_TEST_PROBE=${probe}`)
+        } catch {
+          return false
+        }
+      })
+
+  test.skipIf(!procFilesystem)(
     'reaps fixture processes and removes the directory when an assertion fails',
     async () => {
       const seen = {}
@@ -1572,68 +1753,155 @@ describe('integration runner lifecycle harness teardown', () => {
     40_000
   )
 
-  test.skipIf(process.platform !== 'linux')(
-    'reaps the doubles a runner left behind when a receipt never arrives',
-    async () => {
-      const probe = `probe-${process.pid}-${Date.now()}`
-      const carriesProbe = () =>
-        readdirSync('/proc')
-          .filter((entry) => /^\d+$/u.test(entry))
-          .map(Number)
-          .filter((pid) => {
-            try {
-              return readFileSync(`/proc/${pid}/environ`, 'latin1').includes(
-                `CP_TEST_PROBE=${probe}`
-              )
-            } catch {
-              return false
+  for (const [name, withProc] of [
+    ['with /proc', true],
+    ['without /proc', false],
+  ]) {
+    test.skipIf(withProc && !procFilesystem)(
+      `reaps the doubles a runner left behind when a receipt never arrives, ${name}`,
+      async () => {
+        const probe = `probe-${process.pid}-${Date.now()}-${withProc}`
+        const interrupted = () =>
+          executeRunnerInterrupted(
+            // The hung compose double is spawned by the runner and never recorded in
+            // the descendant receipt: /proc proves it by its marker, and without
+            // /proc it was retained while it was still part of the runner's tree.
+            { FAKE_DOCKER_HANG_ON: 'up', CP_TEST_PROBE: probe },
+            {
+              signal: 'SIGINT',
+              predicate: ({ program }) => program === 'never-invoked',
+              description: 'a command that is never invoked',
             }
-          })
-      await expect(
-        executeRunnerInterrupted(
-          // The hung compose double is spawned by the runner and never recorded in
-          // the descendant receipt; only the fixture marker proves it is ours.
-          { FAKE_DOCKER_HANG_ON: 'up', CP_TEST_PROBE: probe },
-          {
-            signal: 'SIGINT',
-            predicate: ({ program }) => program === 'never-invoked',
-            description: 'a command that is never invoked',
-          }
+          )
+        await expect(withProc ? interrupted() : withoutProcFilesystem(interrupted)).rejects.toThrow(
+          'Timed out waiting for a command that is never invoked'
         )
-      ).rejects.toThrow('Timed out waiting for a command that is never invoked')
-      expect(carriesProbe()).toEqual([])
-    },
-    40_000
-  )
+        // The check reads the real /proc, whichever path the teardown took.
+        if (existsSync('/proc/self')) expect(carryingProbe(probe)).toEqual([])
+      },
+      40_000
+    )
+  }
 
-  test.skipIf(process.platform !== 'linux')(
+  test.skipIf(!procFilesystem)(
     'signals only processes that carry the fixture marker',
     async () => {
       const { directory, descendants, environment } = createRunnerHarness()
-      const hold = ['-e', 'setInterval(() => {}, 1000)']
       const fixture = spawn(process.execPath, hold, { env: environment, stdio: 'ignore' })
       // A process the fixture's receipt names but that does not carry its marker,
       // as a recycled PID would be.
       const foreign = spawn(process.execPath, hold, { stdio: 'ignore' })
       try {
         writeFileSync(descendants, `${fixture.pid}\n${foreign.pid}\n`)
-        const survivors = await tearDownRunnerHarness({
-          child: undefined,
-          gone: undefined,
-          directory,
-          descendants,
-        })
-        expect(survivors).toEqual([])
+        const problems = await tearDownRunnerHarness({ directory, descendants })
         expect(isProcessAlive(fixture.pid) && fixture.exitCode === null).toBe(false)
         expect(isProcessAlive(foreign.pid)).toBe(true)
-        expect(existsSync(directory)).toBe(false)
+        // The foreign receipt is reported, not ignored, and its receipts are kept.
+        expect(problems.join('\n')).toContain(
+          `receipt PID(s) ${foreign.pid} could not be verified as fixture-owned`
+        )
+        expect(existsSync(descendants)).toBe(true)
       } finally {
         killQuietly(fixture.pid)
         killQuietly(foreign.pid)
+        rmSync(directory, { recursive: true, force: true })
       }
     },
     20_000
   )
+
+  test('without /proc a receipt PID is never signalled, and a retained identity must still match', async () => {
+    await withoutProcFilesystem(async () => {
+      const { directory, descendants, environment } = createRunnerHarness()
+      const retained = spawn(process.execPath, hold, { env: environment, stdio: 'ignore' })
+      const recycled = spawn(process.execPath, hold, { env: environment, stdio: 'ignore' })
+      const receipted = spawn(process.execPath, hold, { env: environment, stdio: 'ignore' })
+      try {
+        const ledger = createFixtureLedger()
+        // `retained` was seen while it was part of the runner's tree; `recycled`
+        // is remembered under a different identity, as a recycled PID would be.
+        ledger.identities.set(retained.pid, processIdentity(retained.pid))
+        expect(ledger.owns(retained.pid)).toBe(true)
+        ledger.identities.set(recycled.pid, `${recycled.pid}@another-process`)
+        writeFileSync(descendants, `${receipted.pid}\n${recycled.pid}\n`)
+        const problems = await tearDownRunnerHarness({ directory, descendants, ledger })
+        await new Promise((resolve) => setTimeout(resolve, 100))
+        expect(isProcessAlive(retained.pid) && retained.exitCode === null).toBe(false)
+        // Neither the unproven receipt nor the identity mismatch was signalled.
+        expect(isProcessAlive(recycled.pid)).toBe(true)
+        expect(isProcessAlive(receipted.pid)).toBe(true)
+        expect(problems.join('\n')).toContain(
+          `receipt PID(s) ${receipted.pid}, ${recycled.pid} could not be verified as fixture-owned`
+        )
+        expect(existsSync(directory)).toBe(true)
+      } finally {
+        for (const child of [retained, recycled, receipted]) killQuietly(child.pid)
+        rmSync(directory, { recursive: true, force: true })
+      }
+    })
+  }, 20_000)
+
+  test('a cleanup problem is appended to the primary failure and never masks it', async () => {
+    await withoutProcFilesystem(async () => {
+      const seen = {}
+      let failure
+      try {
+        await executeRunnerToExit(
+          // Re-parented and token-scrubbed: nothing can prove the holder is the
+          // fixture's without /proc, so the teardown must leave it and say so.
+          { FAKE_BUN_WRAPPER_EXITS_FIRST: 'true', FAKE_DESCENDANT_SCRUBS_OWNER: 'true' },
+          {
+            inspect: (result) => {
+              seen.descendants = result.descendants
+              throw new Error('the primary failure')
+            },
+          }
+        )
+      } catch (error) {
+        failure = error
+      }
+      try {
+        expect(failure).toBeInstanceOf(Error)
+        // The primary failure leads, and the cleanup report follows it.
+        expect(failure.message.startsWith('the primary failure\n')).toBe(true)
+        expect(failure.message).toContain('Harness cleanup problem(s):')
+        expect(failure.message).toMatch(
+          /could not be verified as fixture-owned and were left running/u
+        )
+        // The survivor's receipts are retained for whoever has to clean up.
+        const directory = /kept with its receipts at (\S+)/u.exec(failure.message)?.[1]
+        expect(directory).toBeDefined()
+        expect(existsSync(join(directory, 'descendants.pid'))).toBe(true)
+        seen.directory = directory
+      } finally {
+        for (const pid of seen.descendants ?? []) killQuietly(pid)
+        if (seen.directory) rmSync(seen.directory, { recursive: true, force: true })
+      }
+    })
+  }, 40_000)
+
+  test('a cleanup problem fails a case that otherwise passed', async () => {
+    await withoutProcFilesystem(async () => {
+      let descendantsSeen = []
+      let failure
+      try {
+        await executeRunnerToExit(
+          { FAKE_BUN_WRAPPER_EXITS_FIRST: 'true', FAKE_DESCENDANT_SCRUBS_OWNER: 'true' },
+          { inspect: (result) => (descendantsSeen = result.descendants) }
+        )
+      } catch (error) {
+        failure = error
+      }
+      const directory = /kept with its receipts at (\S+)/u.exec(failure?.message ?? '')?.[1]
+      try {
+        expect(failure?.message).toMatch(/^Harness cleanup problem\(s\):/u)
+        expect(directory).toBeDefined()
+      } finally {
+        for (const pid of descendantsSeen) killQuietly(pid)
+        if (directory) rmSync(directory, { recursive: true, force: true })
+      }
+    })
+  }, 40_000)
 })
 
 describe('integration runner descendant attribution', () => {
@@ -1653,10 +1921,15 @@ describe('integration runner descendant attribution', () => {
     'releaseUnlessOwnedDescendantsRemain',
     'releaseSettledChildren',
     'terminateActiveChildren',
+    'recordUnreapedOwnedPids',
+    'failOnUnreapedOwnedPids',
+    'reapOwnedChildrenAtExit',
   ]
   const runnerConstants = [
     'activeChildren',
     'childStates',
+    'unreapedOwnedPids',
+    'unreapedOwnedPidsReported',
     'CHILD_COMPLETION_TIMEOUT_MS',
     'CHILD_COMMAND_TIMEOUT_MS',
     'OWNED_TREE_EXIT_WAIT_MS',
@@ -1895,23 +2168,25 @@ describe('integration runner descendant attribution', () => {
         201: 'PATH=/bin\0CONTROL_PLANE_RUNNER_OWNER=another-child\0',
       }
       const child = fakeChild(303, released)
+      const processStub = options.unkillable
+        ? {
+            ...killableProc(environments, killed),
+            kill: (pid, signal) => (signal === 0 ? true : killed.push(pid)),
+          }
+        : killableProc(environments, killed)
+      if (options.exitCode !== undefined) processStub.exitCode = options.exitCode
       const loaded = load(
         {
-          process: options.unkillable
-            ? {
-                ...killableProc(environments, killed),
-                kill: (pid, signal) => (signal === 0 ? true : killed.push(pid)),
-              }
-            : killableProc(environments, killed),
+          process: processStub,
           console: { error: (message) => logged.push(message) },
           spawn: () => child,
           spawnSync: () => ({ status: 0, stdout: '' }),
           ...fakeProc(environments),
         },
-        '({ run, activeChildren, terminateActiveChildren })',
+        '({ run, activeChildren, terminateActiveChildren, failOnUnreapedOwnedPids, reapOwnedChildrenAtExit })',
         { CHILD_COMPLETION_TIMEOUT_MS: '60', ...overrides }
       )
-      return { child, loaded, released, killed, logged, environments }
+      return { child, loaded, released, killed, logged, environments, processStub }
     }
 
     test('stays owned after close and is reaped by an interruption', async () => {
@@ -1961,6 +2236,71 @@ describe('integration runner descendant attribution', () => {
       // final cleanup.
       expect(loaded.activeChildren.has(child)).toBe(true)
       expect(logged.join('\n')).toMatch(/still alive: 200/u)
+    })
+
+    test('a survivor found after run() resolved still fails the overall outcome', async () => {
+      const { child, loaded, logged, processStub } = closedWithDescendant(
+        { OWNED_TREE_EXIT_WAIT_MS: '40' },
+        { unkillable: true }
+      )
+      const pending = loaded.run('bun', ['build'], {})
+      child.emit('exit', 0, null)
+      child.emit('close', 0)
+      // The command itself succeeded: nothing in its promise can carry the failure.
+      await expect(pending).resolves.toBe('')
+      await new Promise((resolve) => setTimeout(resolve, 300))
+      expect(processStub.exitCode).toBeUndefined()
+      loaded.failOnUnreapedOwnedPids()
+      expect(processStub.exitCode).toBe(1)
+      expect(
+        logged.filter((line) => /survived the runner's cleanup: 200/u.test(line))
+      ).toHaveLength(1)
+      // The verdict is reported once, however often it is asked for.
+      loaded.failOnUnreapedOwnedPids()
+      expect(logged.filter((line) => /survived the runner's cleanup/u.test(line))).toHaveLength(1)
+    })
+
+    test('process-exit cleanup that leaves a survivor makes the exit status nonzero', async () => {
+      const { child, loaded, logged, processStub } = closedWithDescendant(
+        { CHILD_COMPLETION_TIMEOUT_MS: '60000', OWNED_TREE_EXIT_WAIT_MS: '40' },
+        { unkillable: true }
+      )
+      const pending = loaded.run('bun', ['build'], {})
+      child.emit('exit', 0, null)
+      child.emit('close', 0)
+      await expect(pending).resolves.toBe('')
+      expect(processStub.exitCode).toBeUndefined()
+      loaded.reapOwnedChildrenAtExit()
+      expect(processStub.exitCode).toBe(1)
+      expect(logged.join('\n')).toMatch(/survived the runner's cleanup: 200/u)
+      // The child stays tracked: nothing about it was settled.
+      expect(loaded.activeChildren.has(child)).toBe(true)
+    })
+
+    test('an interruption status that is already nonzero is kept', async () => {
+      const { child, loaded, processStub } = closedWithDescendant(
+        { CHILD_COMPLETION_TIMEOUT_MS: '60000', OWNED_TREE_EXIT_WAIT_MS: '40' },
+        { unkillable: true, exitCode: 130 }
+      )
+      const pending = loaded.run('bun', ['build'], {})
+      child.emit('exit', 0, null)
+      child.emit('close', 0)
+      await pending
+      loaded.reapOwnedChildrenAtExit()
+      expect(processStub.exitCode).toBe(130)
+    })
+
+    test('a descendant that was reaped leaves the exit status alone', async () => {
+      const { child, loaded, processStub, logged } = closedWithDescendant({
+        CHILD_COMPLETION_TIMEOUT_MS: '60000',
+      })
+      const pending = loaded.run('bun', ['build'], {})
+      child.emit('exit', 0, null)
+      child.emit('close', 0)
+      await pending
+      loaded.reapOwnedChildrenAtExit()
+      expect(processStub.exitCode).toBeUndefined()
+      expect(logged).toEqual([])
     })
 
     test('is released at once when nothing carries its token', async () => {
