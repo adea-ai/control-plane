@@ -31,10 +31,10 @@ import { RuntimeCommandArtifactVerifier } from './runtime-artifact-verifier.ts'
  * rather than against a double. The durable repository is the real SQLite one, because the
  * full-envelope command identity it enforces is the property under test.
  *
- * The scenario is the ordinary client behaviour: a repeated semantic request rebuilds the
- * command envelope with new timestamps and a new sequence while keeping the semantic command ID
- * and the idempotency key. The retry must reach the device as ONE effect, and the recorded
- * result must stay recoverable through the reply artifact.
+ * The scenario exercises a valid sealed-command retry past the gateway's old 60-second carrier
+ * TTL: dispatch A, advance the clock 61 seconds, dispatch B (which triggers carrier eviction),
+ * then retry the exact A envelope. The retry must reuse one durable carrier envelope and recover
+ * the result without rerunning either device effect.
  */
 
 const NOW = '2026-10-21T00:00:00.000Z'
@@ -51,7 +51,6 @@ const ids = {
 
 const IDENTITY = 'acp:0123456789abcdef0123456789abcdef0123456789abcdef'
 const PAYLOAD = { version: 1, parameters: { action: 'list' } }
-const PAYLOAD_HASH = `sha256:${createHash('sha256').update(JSON.stringify(PAYLOAD)).digest('hex')}`
 const CREDENTIAL_ID = 'crd_acp_remote_carrier_retry'
 const CREDENTIAL_FENCE = { credentialId: CREDENTIAL_ID, revocationVersion: 1 }
 
@@ -70,9 +69,10 @@ const idFactory = (prefix) => {
 }
 
 describe('the integrated ACP remote retry path', () => {
-  test('a repeated semantic request runs one effect and keeps the recorded result recoverable', async () => {
+  test('an exact sealed-command retry past the carrier TTL keeps one durable carrier and effect', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'acp-remote-carrier-retry-'))
     const provider = new SqlitePersistenceProvider({ path: join(directory, 'gateway.sqlite') })
+    const clock = { now: new Date(NOW) }
     try {
       await provider.migrate()
       // The durable repository fences every ACK and result transition on the node credential
@@ -181,7 +181,7 @@ describe('the integrated ACP remote retry path', () => {
                 nodeId: command.nodeId,
                 workspaceId: command.workspaceId,
                 traceId: command.traceId,
-                sentAt: NOW,
+                sentAt: clock.now.toISOString(),
                 channelGeneration: command.channelGeneration,
                 commandId: command.commandId,
                 payloadHash: command.payloadHash,
@@ -194,7 +194,7 @@ describe('the integrated ACP remote retry path', () => {
             return { inventory: {}, channelGeneration: 1 }
           },
         },
-        now: () => new Date(NOW),
+        now: () => new Date(clock.now),
       })
 
       // The gateway side: the real delivery service over the real durable repository. The
@@ -217,7 +217,7 @@ describe('the integrated ACP remote retry path', () => {
                 nodeId: ids.nodeId,
                 workspaceId: ids.workspaceId,
                 traceId: ids.traceId,
-                sentAt: NOW,
+                sentAt: clock.now.toISOString(),
                 channelGeneration: envelope.channelGeneration,
                 commandId: envelope.commandId,
                 payloadHash: envelope.payloadHash,
@@ -234,12 +234,12 @@ describe('the integrated ACP remote retry path', () => {
                 nodeId: ids.nodeId,
                 workspaceId: ids.workspaceId,
                 traceId: ids.traceId,
-                sentAt: NOW,
+                sentAt: clock.now.toISOString(),
                 channelGeneration: envelope.channelGeneration,
                 commandId: envelope.commandId,
                 payloadHash: envelope.payloadHash,
                 status: 'succeeded',
-                completedAt: NOW,
+                completedAt: clock.now.toISOString(),
                 result: { artifact: result.result.artifact },
               },
               result.result.artifact.artifactId,
@@ -248,7 +248,7 @@ describe('the integrated ACP remote retry path', () => {
           },
         },
         metrics: { observe() {}, increment() {} },
-        now: () => new Date(NOW),
+        now: () => new Date(clock.now),
       })
 
       // The gateway channel the controller's wire rides on. The carriers are captured so the
@@ -271,7 +271,7 @@ describe('the integrated ACP remote retry path', () => {
         },
         artifacts: { get: (key) => artifactStore.get(key) },
         pushedInventory: async () => ({ inventory: {}, channelGeneration: 1 }),
-        now: () => new Date(NOW),
+        now: () => new Date(clock.now),
         sleep: async () => {},
         pollIntervalMs: 1,
         replyTimeoutMs: 5_000,
@@ -285,21 +285,20 @@ describe('the integrated ACP remote retry path', () => {
         attemptId: idFactory('att'),
         executionId: ids.executionId,
         traceId: ids.traceId,
-        now: () => new Date(NOW),
+        now: () => new Date(clock.now),
       })
       const transport = new SecureAcpRemoteTransport({
         route,
         wire,
         controller: { keyId: route.controllerKeyId, signingKey: controllerKeys.privateKey },
         grantState: () => 'granted',
-        now: () => new Date(NOW),
+        now: () => new Date(clock.now),
       })
 
-      // The ordinary client behaviour under test: the same semantic request dispatched again
-      // rebuilds the command envelope with new timestamps and a new sequence, while the
-      // semantic command ID and the idempotency key stay the same.
-      const dispatch = (sequenceNumber) =>
-        transport.dispatch({
+      const buildCommand = (sequenceNumber, overrides = {}) => {
+        const payload = overrides.payload ?? PAYLOAD
+        const issuedAt = new Date(clock.now.getTime() + sequenceNumber * 1_000).toISOString()
+        return {
           type: 'command',
           schemaVersion: 1,
           protocolVersion: GatewayProtocolManifest.current,
@@ -307,13 +306,14 @@ describe('the integrated ACP remote retry path', () => {
           nodeId: ids.nodeId,
           workspaceId: ids.workspaceId,
           traceId: ids.traceId,
-          sentAt: new Date(Date.parse(NOW) + sequenceNumber * 1_000).toISOString(),
+          sentAt: issuedAt,
           channelGeneration: 1,
-          commandId: ids.commandId,
-          idempotencyKey: IDENTITY,
-          payloadHash: PAYLOAD_HASH,
-          issuedAt: new Date(Date.parse(NOW) + sequenceNumber * 1_000).toISOString(),
-          expiresAt: new Date(Date.parse(NOW) + 60_000 + sequenceNumber * 1_000).toISOString(),
+          commandId: overrides.commandId ?? ids.commandId,
+          idempotencyKey: overrides.idempotencyKey ?? IDENTITY,
+          payloadHash: `sha256:${createHash('sha256').update(JSON.stringify(payload)).digest('hex')}`,
+          issuedAt,
+          // The signed inner command remains live beyond the previous 60-second carrier TTL.
+          expiresAt: new Date(Date.parse(issuedAt) + 180_000).toISOString(),
           family: 'runtime',
           operation: 'runtime.session',
           driver: { family: 'acp', version: '1.0.0' },
@@ -321,26 +321,40 @@ describe('the integrated ACP remote retry path', () => {
           executionId: ids.executionId,
           attemptId: ids.attemptId,
           requiredCapabilities: ['session.list'],
-          payload: PAYLOAD,
+          payload,
+        }
+      }
+
+      const commandA = buildCommand(1)
+      const first = await transport.dispatch(commandA)
+      // Advance beyond A's former carrier expiry, then dispatch B. B forces the carrier
+      // eviction pass while A's authenticated inner command remains valid.
+      clock.now = new Date(Date.parse(NOW) + 61_000)
+      const second = await transport.dispatch(
+        buildCommand(2, {
+          commandId: 'cmd_01JBBCDEF0123456789ABCDEFG',
+          idempotencyKey: 'acp:fedcba9876543210fedcba9876543210fedcba9876543210',
+          payload: { version: 1, parameters: { action: 'get' } },
         })
+      )
+      // The exact same inner command must reuse A's carrier through the real SQLite repository.
+      const retryResult = await transport.dispatch(commandA)
 
-      const first = await dispatch(1)
-      const second = await dispatch(2)
-
-      // Both dispatches were answered: the repeated request was accepted by the gateway
-      // instead of being refused as a changed envelope of the first one.
+      // Both unique commands and A's retry are answered; the durable envelope remains identical.
       expect(first.ack.disposition).toBe('accepted')
       expect(second.ack.disposition).toBe('accepted')
-      expect(carriers).toHaveLength(2)
+      expect(retryResult.ack.disposition).toBe('accepted')
+      expect(carriers).toHaveLength(3)
+      expect(carriers[0]).toEqual(carriers[2])
+      expect(Date.parse(carriers[0].expiresAt)).toBe(Date.parse(commandA.expiresAt))
 
-      // The device ran the effect ONCE. The second delivery of the same semantic command was
-      // answered from the device's replay ledger, not by running the effect again.
-      expect(effects).toBe(1)
+      // A and B each run once. A's retry returns the device's recorded result without another effect.
+      expect(effects).toBe(2)
 
-      // The recorded result is recoverable: the reply artifact of the retry's attempt holds
+      // The recorded result is recoverable: A's reply artifact holds
       // the reply the controller opened, and the real verifier accepts it against the durable
       // command record.
-      const retry = carriers[1]
+      const retry = carriers[2]
       const record = await delivery.get(retry.commandId)
       expect(record?.status).toBe('succeeded')
       expect(record?.attemptId).toBe(retry.attemptId)

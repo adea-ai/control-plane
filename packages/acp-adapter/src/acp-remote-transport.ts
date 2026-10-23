@@ -185,7 +185,7 @@ type AcpRemoteDenialReply = z.output<typeof DenialReplySchema>
 
 /** Thrown by a wire only when a command was definitely not delivered; any other wire failure is an unknown outcome. */
 export class AcpRemoteUndeliveredError extends Error {
-  constructor() {
+  constructor(readonly reason: 'device_offline' | 'state_unavailable' = 'device_offline') {
     super('ACP_REMOTE_UNDELIVERED')
     this.name = 'AcpRemoteUndeliveredError'
   }
@@ -419,6 +419,16 @@ export class SecureAcpRemoteTransport implements AcpGatewayTransport {
     // concurrent duplicates converge on ONE carrier.
     const inFlight = this.#sealingCommands.get(identity)
     if (inFlight !== undefined) return await inFlight
+    const now = this.#now().getTime()
+    if (!Number.isFinite(now)) throw remoteDenialError(denyRemote('clock_invalid'))
+    for (const [key, entry] of this.#sealedCommands) {
+      if (Date.parse(entry.header.expiresAt) <= now) this.#sealedCommands.delete(key)
+    }
+    if (this.#sealedCommands.size + this.#sealingCommands.size >= SEALED_COMMAND_CACHE_CAPACITY) {
+      // Do not evict a live seal: it owns the return key and durable carrier identity needed by
+      // retries. Backpressure before sealing keeps both the cache and in-flight work bounded.
+      throw remoteDenialError(denyRemote('state_unavailable'))
+    }
     const sealing = this.#seal(command, plaintext)
     this.#sealingCommands.set(identity, sealing)
     try {
@@ -470,24 +480,12 @@ export class SecureAcpRemoteTransport implements AcpGatewayTransport {
     const record = { returnKey, header, message }
     const identity = sha256Digest(canonicalJson(command))
     this.#sealedCommands.set(identity, record)
-    // Only the commands whose own window has CLOSED are evicted. Comparing against the NEW
-    // command's expiry would drop a still-valid command: dispatching A, then B with a later
-    // expiry, would evict A while A is still live, and the retry of A would be resealed into a
-    // different carrier, which the durable command repository refuses as a different command.
-    //
-    // The eviction is by the CURRENT time, so a live command keeps its return key. Retention is
-    // bounded twice over: by the command window, so a closed command's seal is dropped, and by
-    // the cache capacity, so a burst of live commands cannot grow the cache without bound.
+    // Prune any windows that closed while sealing. Live seals remain cached; capacity was reserved
+    // in #sealedCommand before this asynchronous operation began.
     const now = this.#now().getTime()
     for (const [key, entry] of this.#sealedCommands) {
-      if (key !== identity && Date.parse(entry.header.expiresAt) <= now) {
+      if (key !== identity && Date.parse(entry.header.expiresAt) <= now)
         this.#sealedCommands.delete(key)
-      }
-    }
-    while (this.#sealedCommands.size > SEALED_COMMAND_CACHE_CAPACITY) {
-      const oldest = this.#sealedCommands.keys().next().value
-      if (oldest === undefined) break
-      this.#sealedCommands.delete(oldest)
     }
     return record
   }
@@ -546,7 +544,7 @@ export class SecureAcpRemoteTransport implements AcpGatewayTransport {
       reply = await this.#wire.sendCommand(message)
     } catch (error) {
       if (error instanceof AcpRemoteUndeliveredError) {
-        throw remoteDenialError(denyRemote('device_offline'))
+        throw remoteDenialError(denyRemote(error.reason))
       }
       // The command may have reached the device; the same command identity is safe to retry because
       // the device replay ledger returns the recorded outcome instead of repeating the effect.

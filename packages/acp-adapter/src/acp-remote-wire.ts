@@ -64,10 +64,7 @@ export interface GatewayOwnedAcpRemoteWireOptions {
   readonly traceId: string
   readonly requiredCapabilities?: readonly string[]
   readonly now?: () => Date
-  readonly commandTtlMs?: number
 }
-
-const DEFAULT_COMMAND_TTL_MS = 60_000
 
 /** The most carriers kept for reuse, bounding a burst of live commands. */
 const CARRIER_CACHE_CAPACITY = 1024
@@ -94,10 +91,6 @@ export function createGatewayOwnedAcpRemoteWire(
 ): AcpRemoteWire {
   const route = AcpRemoteDeviceRouteSchema.parse(options.route)
   const now = options.now ?? (() => new Date())
-  const ttlMs = options.commandTtlMs ?? DEFAULT_COMMAND_TTL_MS
-  if (!Number.isSafeInteger(ttlMs) || ttlMs < 1_000 || ttlMs > ACP_REMOTE_MAX_COMMAND_LIFETIME_MS) {
-    throw new Error('ACP_REMOTE_COMMAND_TTL_INVALID')
-  }
   const requiredCapabilities = [
     ...new Set(options.requiredCapabilities ?? DEFAULT_REQUIRED_CAPABILITIES),
   ].toSorted()
@@ -133,7 +126,8 @@ export function createGatewayOwnedAcpRemoteWire(
   const carrierFor = (
     identity: string,
     payload: unknown,
-    generation: number
+    generation: number,
+    innerExpiresAt: string
   ): GatewayCommandEnvelope => {
     // The cache key is the carrier PAYLOAD, so one carrier command is one envelope: a retry
     // reuses the carrier it already built, and a different payload under the same command id
@@ -142,6 +136,20 @@ export function createGatewayOwnedAcpRemoteWire(
     const existing = carriers.get(key)
     if (existing !== undefined) return existing
     const issuedAt = now()
+    const issuedAtMs = issuedAt.getTime()
+    const innerExpiresAtMs = Date.parse(innerExpiresAt)
+    if (!Number.isFinite(innerExpiresAtMs) || innerExpiresAtMs <= issuedAtMs) {
+      throw new AcpRemoteUndeliveredError()
+    }
+    // Expired carriers may be discarded, but a live carrier is the durable gateway identity
+    // for its sealed command and cannot be evicted and rebuilt with a changed envelope.
+    for (const [cached, entry] of carriers) {
+      if (Date.parse(entry.expiresAt) <= issuedAtMs) carriers.delete(cached)
+    }
+    if (carriers.size >= CARRIER_CACHE_CAPACITY) {
+      // Keep the cache bounded without changing the durable identity of any live retry.
+      throw new AcpRemoteUndeliveredError('state_unavailable')
+    }
     const carrier = GatewayCommandEnvelopeSchema.parse({
       type: 'command',
       schemaVersion: 1,
@@ -156,7 +164,10 @@ export function createGatewayOwnedAcpRemoteWire(
       idempotencyKey: gatewayIdempotencyKey(identity),
       payloadHash: digest(payload),
       issuedAt: issuedAt.toISOString(),
-      expiresAt: new Date(issuedAt.getTime() + ttlMs).toISOString(),
+      // The carrier must remain valid for exactly the authenticated command's supported window.
+      // A shorter outer TTL can evict it while the sealed command is still retryable; a longer
+      // one would outlive the inner authorization window.
+      expiresAt: innerExpiresAt,
       family: 'runtime',
       operation: ACP_REMOTE_SEALED_OPERATION,
       driver: { family: 'acp', version: '1.0.0' },
@@ -167,24 +178,6 @@ export function createGatewayOwnedAcpRemoteWire(
       payload,
     })
     carriers.set(key, carrier)
-    // Only the carriers whose window has CLOSED are evicted, measured against the CURRENT time.
-    // Comparing against the NEW carrier's issue time would drop a carrier that is still live,
-    // and the retry of that carrier would be rebuilt with a new sequence and new timestamps --
-    // a changed envelope under the same durable identity, which the repository refuses.
-    //
-    // Retention is bounded by the command window and by the cache capacity, so a burst of live
-    // carriers cannot grow the cache without bound.
-    const at = now().getTime()
-    for (const [cached, entry] of carriers) {
-      if (cached !== key && Date.parse(entry.expiresAt) <= at) {
-        carriers.delete(cached)
-      }
-    }
-    while (carriers.size > CARRIER_CACHE_CAPACITY) {
-      const oldest = carriers.keys().next().value
-      if (oldest === undefined) break
-      carriers.delete(oldest)
-    }
     return carrier
   }
 
@@ -247,7 +240,7 @@ export function createGatewayOwnedAcpRemoteWire(
       //
       // The DELIVERY stays per delivery: the gateway assigns the transport sequence and
       // counts the attempts, and the carrier attempt owns the single reply artifact.
-      const carrier = carrierFor(identity, payload, generation)
+      const carrier = carrierFor(identity, payload, generation, header.expiresAt)
       // The dispatch may have executed before it failed, and a channel that is gone
       // afterwards does not prove the command was never delivered. The original
       // error is preserved, so the caller reads an unknown outcome and retries the

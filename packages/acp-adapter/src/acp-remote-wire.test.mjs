@@ -313,6 +313,71 @@ test('a still-valid command keeps its seal when a later command is dispatched', 
   ).toBe(true)
 })
 
+test('a full live carrier cache backpressures without evicting a retry identity', async () => {
+  const fixture = await countingFixture()
+  const carriers = []
+  let now = new Date(NOW)
+  const wire = wireFor({
+    route: fixture.route,
+    now: () => new Date(now),
+    channel: {
+      currentChannelGeneration: () => 1,
+      pushedInventory: async () => ({ inventory: {}, channelGeneration: 1 }),
+      dispatchSealed: async ({ command }) => {
+        carriers.push(command)
+        throw new Error('INJECTED_UNKNOWN_DELIVERY')
+      },
+    },
+  })
+  const controller = controllerFor({
+    route: fixture.route,
+    wire,
+    signingKey: fixture.keys.controllerSigning,
+    now: () => new Date(now),
+  })
+  const commandIdFor = (index) => {
+    let value = index
+    let suffix = ''
+    for (let position = 0; position < 26; position += 1) {
+      suffix = ID_ALPHABET[value % 32] + suffix
+      value = Math.floor(value / 32)
+    }
+    return `cmd_${suffix}`
+  }
+
+  for (let index = 0; index < 1024; index += 1) {
+    await expect(
+      controller.dispatch(runtimeCommand({ commandId: commandIdFor(index) }))
+    ).rejects.toMatchObject({ code: 'RUNTIME_NODE_RESPONSE_UNKNOWN' })
+  }
+  const firstCarrier = carriers[0]
+  expect(carriers).toHaveLength(1024)
+  await expect(
+    controller.dispatch(runtimeCommand({ commandId: commandIdFor(1024) }))
+  ).rejects.toMatchObject({ code: 'RUNTIME_NODE_STATE_UNAVAILABLE' })
+  expect(carriers).toHaveLength(1024)
+
+  // The first live durable identity remains cached and can still be retried unchanged.
+  await expect(
+    controller.dispatch(runtimeCommand({ commandId: commandIdFor(0) }))
+  ).rejects.toMatchObject({ code: 'RUNTIME_NODE_RESPONSE_UNKNOWN' })
+  expect(carriers).toHaveLength(1025)
+  expect(carriers.at(-1)).toEqual(firstCarrier)
+
+  // Once the admitted windows close, pruning releases capacity for a newly valid command.
+  now = new Date(Date.parse(NOW) + 60_001)
+  const admitted = runtimeCommand({
+    commandId: commandIdFor(1025),
+    issuedAt: now.toISOString(),
+    expiresAt: new Date(now.getTime() + 60_000).toISOString(),
+  })
+  await expect(controller.dispatch(admitted)).rejects.toMatchObject({
+    code: 'RUNTIME_NODE_RESPONSE_UNKNOWN',
+  })
+  expect(carriers).toHaveLength(1026)
+  expect(carriers.at(-1).expiresAt).toBe(admitted.expiresAt)
+})
+
 test('concurrent identical dispatches seal once and carry one carrier', async () => {
   // Two concurrent dispatches of the same command must not both miss the seal cache and seal
   // it twice: two seals of one command are two different carriers, and the durable command
