@@ -30,9 +30,15 @@ The reconciliation retains the published #1048 history and integrates current
 `main` at `ab931d068142a0c5629ed4d6cc2c96a1b377a986`, the #1204 SDK/lifecycle
 source input at `3a8bee3aa630acb7def053e42df6e3ea1a5aa827`, and the policy
 input at `f561ca52c2f6cef6a3c76465d581dc7d567a9a6b`. These identify source
-inputs, not a new published head or validation result. The scope below is
-regenerated from the resolved integration index; the final commit must carry
-this ledger and pass its unchanged scope check before publication is qualified.
+inputs, not a new published head or validation result. The subsequent integration
+adds #1204/current-main input `5ccd978fc9073a205e1f5d152bc5f910ad454e6e`,
+the cancellation-recovery repair at `0d2a76e35f2fbd9aaced0c215be452713748db97`,
+and the merged model-policy main input at
+`4f9967dc50dfb5dc3ffa13a305f4e3623ae20fe1`. The scope below continues to use
+the stable main base above, so it includes the later main/toolchain and
+architecture changes as well as the Pi integration. It is regenerated from the
+resolved integration index; the final commit must carry this ledger and pass
+its unchanged scope check before publication is qualified.
 
 The retained source includes the HTTP child-publication reader, Hosted accepted
 model forwarding, and Node child-delivery/startup/close reconciliation. Their
@@ -45,20 +51,21 @@ current-candidate test pass is claimed here.
 
 The published scope is the diff from the base `ab931d068142a0c5629ed4d6cc2c96a1b377a986`
 to the published head, which is the head that carries this section. The complete changed scope is
-**179 paths: 63 added, 116 modified**; no path was deleted.
+**184 paths: 64 added, 120 modified**; no path was deleted.
 `tests/pi-durable-cp1048-evidence-discipline.test.mjs` checks this list, these counts and this
 area table against the repository, so the published scope cannot drift away from the code
 without that lane failing.
 
 | Area                          | Added | Modified | Total |
 | ----------------------------- | ----- | -------- | ----- |
-| `(repository root)`           | 0     | 1        | 1     |
+| `(repository root)`           | 0     | 4        | 4     |
 | `apps/control-api`            | 16    | 24       | 40    |
 | `apps/hosted-control-plane`   | 2     | 5        | 7     |
 | `apps/workflow-worker`        | 0     | 4        | 4     |
 | `docs`                        | 7     | 3        | 10    |
 | `docs/architecture`           | 0     | 2        | 2     |
 | `docs/evals`                  | 0     | 1        | 1     |
+| `docs/evidence`               | 1     | 0        | 1     |
 | `docs/requirements`           | 0     | 1        | 1     |
 | `packages/acp-adapter`        | 0     | 2        | 2     |
 | `packages/config`             | 0     | 2        | 2     |
@@ -73,11 +80,13 @@ without that lane failing.
 | `packages/runtime-sdk`        | 0     | 1        | 1     |
 | `packages/sqlite-persistence` | 0     | 3        | 3     |
 | `scripts`                     | 0     | 4        | 4     |
-| `tests`                       | 15    | 19       | 34    |
+| `tests`                       | 15    | 20       | 35    |
 
 The complete path list, as published:
 
 ```text
+M  .release-please-manifest.json
+M  CHANGELOG.md
 M  apps/control-api/package.json
 M  apps/control-api/src/app.module.ts
 M  apps/control-api/src/executions/execution-acceptance.service.ts
@@ -133,6 +142,7 @@ M  bun.lock
 M  docs/architecture/control-plane-architecture.md
 M  docs/architecture/control-plane-architecture.v1.json
 M  docs/evals/skill-evals/skill-eval-harness.mts
+A  docs/evidence/cp1233-toolchain-qualification-2026-10-23.md
 M  docs/harnesses.md
 A  docs/pi-durable-cancellation-owner-proposal.md
 A  docs/pi-durable-committed-cancellation-authority.md
@@ -144,6 +154,7 @@ M  docs/pi-durable-report-back.md
 M  docs/pi-durable-runtime.md
 A  docs/profile-recovery-acceptance-map.md
 M  docs/requirements/cp186-195-reconciliation-2026-10-21.md
+M  package.json
 M  packages/acp-adapter/src/acp-remote-crypto.ts
 M  packages/acp-adapter/src/acp-remote-transport.ts
 M  packages/config/src/managed-cloud.test.mjs
@@ -232,6 +243,7 @@ M  tests/integration-runner-lifecycle.test.mjs
 M  tests/integration-shards.test.mjs
 M  tests/j1-unfinished-child-process-restart.test.mjs
 M  tests/j1-unfinished-child-process.fixture.mjs
+M  tests/m11-architecture-audit-regression.test.mjs
 M  tests/m11-architecture-audit.test.mjs
 M  tests/m11-requirements-ledger.test.mjs
 M  tests/m11-standalone-e2e.test.mjs
