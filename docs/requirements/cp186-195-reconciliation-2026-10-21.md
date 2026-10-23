@@ -217,7 +217,7 @@ the complete inventory of such paths, with the full Git blob identity at the
 lane's recorded head and in this tree. It is derived from the recorded heads, not
 inferred from file names or from the earlier summary of this section.
 
-Lanes with such a path: 5 of 7 (W1, W2, W3, W5, W6). W4 and W7 have none.
+Lanes with such a path: 6 of 7 (W1, W2, W3, W5, W6, W7). W4 has none.
 
 | Worker | Path                                                                          | Blob at the lane head                      | Blob in this tree                          |
 | ------ | ----------------------------------------------------------------------------- | ------------------------------------------ | ------------------------------------------ |
@@ -230,6 +230,7 @@ Lanes with such a path: 5 of 7 (W1, W2, W3, W5, W6). W4 and W7 have none.
 | W5     | `docs/adversarial-corpus-v1.md`                                               | `866d865fc4738cfea360ba49813e2274ecd3bff4` | `fc2e8e8ef2e0c2cfd169cd322281b07a09040ee0` |
 | W6     | `docs/evals/skill-evals/blinded-comparison-packet.md`                         | `5c026a799de13883c18607b41ace410607fbfaef` | `cfea41d1675cbd389417717792387b4667e4512d` |
 | W6     | `docs/evals/skill-evals/README.md`                                            | `3be94bdd89aa009d476aafe446da0cc418e691d7` | `920ee64a37d4178ba10e34aee1edbb6f833dd6c0` |
+| W7     | `docs/project-state-digest-compatibility.md`                                  | `5976c3e1e3b79f5886162d2669650c0dcdbfe3eb` | `37133beda81db0116e1c1047a4b59f7675873f44` |
 
 Paths whose content is identical, and so are not mismatches:
 
@@ -239,8 +240,7 @@ Paths whose content is identical, and so are not mismatches:
 Paths that exist at a lane's head and are absent from this tree: W3
 `scripts/m11-architecture-audit-regression.test.mjs`; W4 the
 audit record, the matrix and `scripts/security-trust-boundary-probes.mjs`; W5 the
-evaluation program record and the baseline scorecard; W7 the compatibility record
-and the reopen-race test. These are lane artifacts that are not in this tree.
+evaluation program record and the baseline scorecard. These are lane artifacts that are not in this tree.
 
 W1 and W6 were omitted from the earlier table because their recorded heads could
 not be resolved when it was written. They are now fetched by exact object name

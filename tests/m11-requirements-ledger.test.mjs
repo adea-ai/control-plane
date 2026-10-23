@@ -1,6 +1,14 @@
 import { describe, expect, test } from 'bun:test'
 import { execFileSync } from 'node:child_process'
-import { copyFileSync, cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  copyFileSync,
+  cpSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -2136,6 +2144,120 @@ describe('worker evidence content binding record (#186/#195)', () => {
     expect(stale.provenance).toEqual([
       `reconciliation record W1 a.md lists tree blob ${blob('8')}, this tree carries ${blob('2')}`,
     ])
+  })
+
+  test('binds the current candidate before its staged or unstaged evidence is committed', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'requirements-candidate-binding-'))
+    try {
+      const git = (...args) =>
+        execFileSync(
+          'git',
+          ['-c', 'user.name=fixture', '-c', 'user.email=fixture@example.test', ...args],
+          { cwd: directory, encoding: 'utf8' }
+        ).trim()
+      git('init', '-q')
+      writeFileSync(resolve(directory, 'evidence.md'), 'recorded\n')
+      git('add', '.')
+      git('commit', '-q', '-m', 'recorded lane')
+      const head = git('rev-parse', 'HEAD')
+      const headBlob = git('rev-parse', 'HEAD:evidence.md')
+      const fixture = {
+        workerEvidence: [
+          {
+            id: 'W1',
+            lane: 'fixture',
+            status: 'received',
+            head,
+            issueRefs: [1],
+            evidence: [{ path: 'evidence.md', commit: head }],
+          },
+        ],
+      }
+      writeFileSync(resolve(directory, 'evidence.md'), 'incoming merge evidence\n')
+      git('add', 'evidence.md')
+      const stagedBlob = git('rev-parse', ':evidence.md')
+      const record = recordWith({
+        rows: [`| W1 | \`evidence.md\` | \`${headBlob}\` | \`${stagedBlob}\` |`],
+        lanes: 'Lanes with such a path: 1 of 1 (W1).',
+      })
+      const staged = validateWorkerEvidence(fixture, directory, false)
+      expect(git('rev-parse', 'HEAD')).toBe(head)
+      expect(staged.errors).toEqual([])
+      expect(staged.inventory.entries).toEqual([
+        { worker: 'W1', path: 'evidence.md', headBlob, treeBlob: stagedBlob, state: 'differs' },
+      ])
+      expect(
+        validateWorkerContentBinding(record, staged.inventory, { workerCount: 1 }).errors
+      ).toEqual([])
+
+      // The record and evidence are both working-tree inputs. A later unstaged
+      // edit must be observed too, never hidden by the staged or HEAD version.
+      writeFileSync(resolve(directory, 'evidence.md'), 'unstaged evidence\n')
+      const unstagedBlob = git('hash-object', '--no-filters', 'evidence.md')
+      const unstaged = validateWorkerEvidence(fixture, directory, false)
+      expect(unstaged.inventory.entries[0].treeBlob).toBe(unstagedBlob)
+      expect(
+        validateWorkerContentBinding(record, unstaged.inventory, { workerCount: 1 }).provenance
+      ).toEqual([
+        `reconciliation record W1 evidence.md lists tree blob ${stagedBlob}, this tree carries ${unstagedBlob}`,
+      ])
+      expect(
+        validateWorkerContentBinding(record.replace(headBlob, 'a'.repeat(40)), unstaged.inventory, {
+          workerCount: 1,
+        }).errors
+      ).toContain(
+        `reconciliation record W1 evidence.md lists lane blob ${'a'.repeat(40)}, the recorded head carries ${headBlob}`
+      )
+      const omitted = recordWith({ rows: [], lanes: 'Lanes with such a path: 0 of 1.' })
+      expect(
+        validateWorkerContentBinding(omitted, unstaged.inventory, { workerCount: 1 }).errors
+      ).toContain('reconciliation record omits the differing worker evidence path W1 evidence.md')
+
+      // Restoring the candidate to the recorded bytes makes the old difference
+      // row invalid even though the index still carries the incoming version.
+      writeFileSync(resolve(directory, 'evidence.md'), 'recorded\n')
+      const restored = validateWorkerEvidence(fixture, directory, false)
+      expect(restored.inventory.entries[0].state).toBe('identical')
+      expect(
+        validateWorkerContentBinding(record, restored.inventory, { workerCount: 1 }).errors
+      ).toContain(
+        'reconciliation record lists W1 evidence.md as differing, but its content is not different from the recorded head'
+      )
+
+      rmSync(resolve(directory, 'evidence.md'))
+      expect(validateWorkerEvidence(fixture, directory, false).inventory.entries[0].state).toBe(
+        'absent-in-tree'
+      )
+      writeFileSync(resolve(directory, 'target.md'), 'recorded\n')
+      symlinkSync('target.md', resolve(directory, 'evidence.md'))
+      const linkBlob = execFileSync('git', ['hash-object', '--stdin'], {
+        cwd: directory,
+        encoding: 'utf8',
+        input: 'target.md',
+      }).trim()
+      const linked = validateWorkerEvidence(fixture, directory, false)
+      expect(linked.inventory.entries[0].treeBlob).toBe(linkBlob)
+      expect(linked.inventory.entries[0].state).toBe('differs')
+      for (const path of [
+        '../outside.md',
+        '/__requirements_outside__',
+        'nested/../../outside.md',
+      ]) {
+        const invalid = validateWorkerEvidence(
+          {
+            workerEvidence: [{ ...fixture.workerEvidence[0], evidence: [{ path, commit: head }] }],
+          },
+          directory,
+          false
+        )
+        expect(invalid.errors).toContain(
+          `W1: worker evidence path must be repository-relative: ${path}`
+        )
+        expect(invalid.inventory.entries).toEqual([])
+      }
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
   })
 
   test('builds its inventory from the blobs of the recorded head and the tree', () => {

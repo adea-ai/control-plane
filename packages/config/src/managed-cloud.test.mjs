@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test'
+import { HarnessIdSchema, ModelIdSchema } from '@control-plane/contracts'
 import {
   loadDatabaseCredentials,
   loadManagedCloudConfiguration,
@@ -100,6 +101,120 @@ describe('managed cloud configuration', () => {
         'workflow-worker'
       )
     ).toThrow()
+  })
+
+  test('parses the optional per-model harness map and rejects malformed ones', () => {
+    const remote = { ...cloud, CONTROL_PLANE_CLOUD_RUNTIME: 'remote' }
+    const withMap = loadManagedCloudConfiguration(
+      {
+        ...remote,
+        CONTROL_PLANE_HARNESS_BY_MODEL: '{"deepseek-flash":"deepseek","glm-4":"zcode"}',
+      },
+      'workflow-worker'
+    )
+    expect(withMap.runtime).toEqual({
+      mode: 'remote',
+      harnessByModel: { 'deepseek-flash': 'deepseek', 'glm-4': 'zcode' },
+    })
+
+    // An absent map leaves today's behavior exactly.
+    expect(loadManagedCloudConfiguration(remote, 'workflow-worker').runtime).toEqual({
+      mode: 'remote',
+    })
+
+    // An empty map is a configured map, not an absent one.
+    expect(
+      loadManagedCloudConfiguration(
+        { ...remote, CONTROL_PLANE_HARNESS_BY_MODEL: '{}' },
+        'workflow-worker'
+      ).runtime
+    ).toEqual({ mode: 'remote', harnessByModel: {} })
+
+    for (const invalid of [
+      '{"deepseek flash":"deepseek"}',
+      '{"": "deepseek"}',
+      '{"model":"DeepSeek"}',
+      '{"model":""}',
+      '{"model":42}',
+      '[]',
+      '"deepseek"',
+      'not json',
+      '',
+    ]) {
+      expect(() =>
+        loadManagedCloudConfiguration(
+          { ...remote, CONTROL_PLANE_HARNESS_BY_MODEL: invalid },
+          'workflow-worker'
+        )
+      ).toThrow()
+    }
+  })
+
+  test('the map accepts exactly the ids the canonical schemas accept', () => {
+    const remote = { ...cloud, CONTROL_PLANE_CLOUD_RUNTIME: 'remote' }
+    for (const modelId of ['deepseek-flash', 'glm-4', 'gpt/4o', 'DeepSeek-V3']) {
+      const accepted = ModelIdSchema.safeParse(modelId).success
+      let loaded
+      try {
+        loaded = loadManagedCloudConfiguration(
+          { ...remote, CONTROL_PLANE_HARNESS_BY_MODEL: JSON.stringify({ [modelId]: 'deepseek' }) },
+          'workflow-worker'
+        )
+      } catch {
+        loaded = undefined
+      }
+      expect(loaded?.runtime?.harnessByModel?.[modelId]).toBe(accepted ? 'deepseek' : undefined)
+    }
+    for (const harnessId of ['deepseek', 'zcode', 'DeepSeek', 'z code', '']) {
+      const accepted = HarnessIdSchema.safeParse(harnessId).success
+      let loaded
+      try {
+        loaded = loadManagedCloudConfiguration(
+          {
+            ...remote,
+            CONTROL_PLANE_HARNESS_BY_MODEL: JSON.stringify({ 'deepseek-flash': harnessId }),
+          },
+          'workflow-worker'
+        )
+      } catch {
+        loaded = undefined
+      }
+      expect(loaded?.runtime?.harnessByModel?.['deepseek-flash']).toBe(
+        accepted ? harnessId : undefined
+      )
+    }
+  })
+
+  test('an uppercase ASCII model id is a configured key', () => {
+    const remote = { ...cloud, CONTROL_PLANE_CLOUD_RUNTIME: 'remote' }
+    const loaded = loadManagedCloudConfiguration(
+      { ...remote, CONTROL_PLANE_HARNESS_BY_MODEL: '{"DeepSeek-V3":"deepseek"}' },
+      'workflow-worker'
+    )
+    expect(loaded.runtime.harnessByModel?.['DeepSeek-V3']).toBe('deepseek')
+  })
+
+  test('a model id that names an inherited property is an ordinary configured key', () => {
+    const remote = { ...cloud, CONTROL_PLANE_CLOUD_RUNTIME: 'remote' }
+    const loaded = loadManagedCloudConfiguration(
+      { ...remote, CONTROL_PLANE_HARNESS_BY_MODEL: '{"constructor":"deepseek"}' },
+      'workflow-worker'
+    )
+    const map = loaded.runtime.harnessByModel
+    expect(map['constructor']).toBe('deepseek')
+    // A model id the map does not name resolves to nothing at all.
+    expect(Object.hasOwn(map, 'toString')).toBe(false)
+    expect(map['toString']).toBeUndefined()
+    // A key that is not a model id at all is refused, including the names that
+    // would be dangerous as object keys.
+    for (const key of ['__proto__', 'constructor ', 'deepseek flash', '']) {
+      expect(() =>
+        loadManagedCloudConfiguration(
+          { ...remote, CONTROL_PLANE_HARNESS_BY_MODEL: JSON.stringify({ [key]: 'deepseek' }) },
+          'workflow-worker'
+        )
+      ).toThrow()
+    }
   })
 
   test('publishes a per-service dependency manifest', () => {
