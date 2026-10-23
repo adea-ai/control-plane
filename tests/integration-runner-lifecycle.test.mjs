@@ -140,10 +140,28 @@ function readCommandReceipts(commands) {
 // A disposable directory with the two executable doubles ahead of PATH and a
 // receipt file for every invoked command. DATABASE_/COMPOSE_/INTEGRATION_ state
 // from the host is removed so each harness controls its own classification.
-function createRunnerHarness(overrides = {}) {
+function createRunnerHarness(overrides = {}, { completionTimeoutMs } = {}) {
   const directory = mkdtempSync(join(tmpdir(), 'cp-integration-lifecycle-'))
   const commands = join(directory, 'commands.jsonl')
   const descendants = join(directory, 'descendants.pid')
+  let runnerPath = runner
+  if (completionTimeoutMs !== undefined) {
+    // Only negative fixtures accelerate the real watchdog. Production keeps its
+    // ten-second bound, covered by the default executable case and regression.
+    // Imports still resolve to the real helpers; no production test-mode knob.
+    const declaration = 'const CHILD_COMPLETION_TIMEOUT_MS = 10_000'
+    const source = readFileSync(runner, 'utf8')
+    if (source.split(declaration).length !== 2) throw new Error('Runner completion default drift')
+    const fixtureSource = source
+      .replace(declaration, `const CHILD_COMPLETION_TIMEOUT_MS = ${completionTimeoutMs}`)
+      .replace(
+        /from '(\.\/[^']+)'/gu,
+        (_match, specifier) =>
+          `from '${new URL(specifier, new URL('../scripts/', import.meta.url)).href}'`
+      )
+    runnerPath = join(directory, 'runner.mjs')
+    writeFileSync(runnerPath, fixtureSource)
+  }
   for (const name of ['docker', 'bun']) {
     writeFileSync(join(directory, name), runnerDoubleSource, { mode: 0o700 })
   }
@@ -161,6 +179,7 @@ function createRunnerHarness(overrides = {}) {
     directory,
     commands,
     descendants,
+    runnerPath,
     environment: {
       ...environment,
       PATH: `${directory}${delimiter}${process.env.PATH}`,
@@ -176,6 +195,21 @@ function createRunnerHarness(overrides = {}) {
     },
   }
 }
+
+test('completion fixtures keep the production default and isolate their shorter watchdog', () => {
+  const production = readFileSync(runner, 'utf8')
+  expect(production).toContain('const CHILD_COMPLETION_TIMEOUT_MS = 10_000')
+  const fixture = createRunnerHarness({}, { completionTimeoutMs: 1_000 })
+  try {
+    expect(fixture.runnerPath).not.toBe(runner)
+    expect(readFileSync(fixture.runnerPath ?? runner, 'utf8')).toContain(
+      'const CHILD_COMPLETION_TIMEOUT_MS = 1000'
+    )
+    expect(readFileSync(runner, 'utf8')).toBe(production)
+  } finally {
+    rmSync(fixture.directory, { recursive: true, force: true })
+  }
+})
 
 // The signal and ownership cases exercise the runner's own process ownership,
 // which does not depend on how many shards run, so they run one small explicit
@@ -461,8 +495,8 @@ function reapHarnessChild(child) {
   }
 }
 
-async function waitForReceipt(commands, predicate, description) {
-  const deadline = Date.now() + 10_000
+async function waitForReceipt(commands, predicate, description, timeoutMs = 10_000) {
+  const deadline = Date.now() + timeoutMs
   for (;;) {
     if (readCommandReceipts(commands).some(predicate)) return
     if (Date.now() > deadline) throw new Error(`Timed out waiting for ${description}`)
@@ -535,6 +569,7 @@ function startFixtureHandshake({
   ledger,
   ownership,
   intervalMs = 10,
+  isAlive = isProcessAlive,
 }) {
   const handled = new Set()
   const problems = []
@@ -546,6 +581,7 @@ function startFixtureHandshake({
     ledger.sample(child.pid)
     for (const pid of cohort) {
       handled.add(pid)
+      if (!isAlive(pid)) problems.push(`the fixture holder ${pid} was not alive before release`)
       const recorded = ledger.owns(pid)
       if (ownership === 'unowned' && recorded)
         problems.push(`the fixture holder ${pid} was recorded as owned`)
@@ -667,10 +703,14 @@ async function executeRunnerInterrupted(
     sampleIntervalMs,
     shard = TARGETED_SHARD,
     ownership = 'owned',
+    completionTimeoutMs,
+    receiptReadyPredicate,
+    receiptWaitMs,
   }
 ) {
-  const { directory, commands, descendants, environment } = createRunnerHarness(
-    targetedShardOverrides(overrides, shard)
+  const { directory, commands, descendants, environment, runnerPath } = createRunnerHarness(
+    targetedShardOverrides(overrides, shard),
+    { completionTimeoutMs }
   )
   const ledger = createFixtureLedger({ record: ownership !== 'unowned' })
   let child
@@ -679,7 +719,7 @@ async function executeRunnerInterrupted(
   let handshake
   let failure
   try {
-    child = spawn(process.execPath, [runner], {
+    child = spawn(process.execPath, [runnerPath], {
       cwd: repository,
       env: environment,
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -705,7 +745,16 @@ async function executeRunnerInterrupted(
     const exited = new Promise((resolve) =>
       child.once(waitFor, (status, closeSignal) => resolve({ status, signal: closeSignal }))
     )
-    await waitForReceipt(commands, predicate, description)
+    if (receiptReadyPredicate !== undefined) {
+      // Startup still has its full bound. Only the deliberately missing receipt
+      // wait starts after the real child is running and its identity is owned.
+      await waitForReceipt(commands, receiptReadyPredicate, 'the ready owned fixture')
+      ledger.sample(child.pid)
+      expect(
+        [...ledger.identities.keys()].some((pid) => pid !== child.pid && ledger.owns(pid))
+      ).toBe(true)
+    }
+    await waitForReceipt(commands, predicate, description, receiptWaitMs)
     if (overrides.FAKE_BUN_SPAWN_DESCENDANT === 'true') await waitForDescendant(descendants)
     // A fixture that detaches its holder does so only after this boundary: each
     // holder is recorded as owned, or deliberately not, and only then released.
@@ -813,10 +862,18 @@ function killQuietly(pid) {
  */
 async function executeRunnerToExit(
   overrides,
-  { settleMs = 30_000, inspect, shard = TARGETED_SHARD, ownership = 'owned', sampleIntervalMs } = {}
+  {
+    settleMs = 30_000,
+    inspect,
+    shard = TARGETED_SHARD,
+    ownership = 'owned',
+    sampleIntervalMs,
+    completionTimeoutMs,
+  } = {}
 ) {
-  const { directory, descendants, environment } = createRunnerHarness(
-    targetedShardOverrides(overrides, shard)
+  const { directory, descendants, environment, runnerPath } = createRunnerHarness(
+    targetedShardOverrides(overrides, shard),
+    { completionTimeoutMs }
   )
   const ledger = createFixtureLedger({ record: ownership !== 'unowned' })
   let child
@@ -825,7 +882,7 @@ async function executeRunnerToExit(
   let handshake
   let failure
   try {
-    child = spawn(process.execPath, [runner], {
+    child = spawn(process.execPath, [runnerPath], {
       cwd: repository,
       env: environment,
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -1643,6 +1700,8 @@ describe('integration runner owned process tree', () => {
             description: 'the owned test execution',
             // The default local path: every shard runs concurrently under one runner.
             shard: null,
+            // Keep one real-executable acceptance at the production ten-second default.
+            completionTimeoutMs: undefined,
             inspect: (result) => {
               // The runner settled on the interruption and kept the signal's status.
               expect(result.status).toBe(130)
@@ -1817,6 +1876,7 @@ describe('integration runner owned process tree', () => {
           // case waits for the runner PROCESS to be gone.
           waitFor: 'exit',
           settleMs: 25_000,
+          completionTimeoutMs: 1_000,
           // The survivor is read while it is still alive; the harness teardown
           // reaps it afterwards, whether or not these assertions pass.
           inspect: (result) => {
@@ -1885,6 +1945,8 @@ describe('integration runner owned process tree', () => {
           {
             // The default local path: every shard runs concurrently under one runner.
             shard: null,
+            // Keep one real-executable acceptance at the production ten-second default.
+            completionTimeoutMs: undefined,
             inspect: (result) => {
               expect(result.status).not.toBe(0)
               expect(result.stderr).toMatch(
@@ -1916,6 +1978,7 @@ describe('integration runner owned process tree', () => {
             FAKE_DESCENDANT_SCRUBS_OWNER: 'true',
           },
           {
+            completionTimeoutMs: 1_000,
             inspect: (result) => {
               expect(result.status).not.toBe(0)
               expect(result.stderr).toMatch(
@@ -2015,6 +2078,7 @@ describe('integration runner lifecycle harness teardown', () => {
         executeRunnerToExit(
           { FAKE_BUN_WRAPPER_EXITS_FIRST: 'true', FAKE_DESCENDANT_SCRUBS_OWNER: 'true' },
           {
+            completionTimeoutMs: 1_000,
             inspect: (result) => {
               seen.descendants = result.descendants
               // The scrubbed holder is alive here, which is what makes the failing
@@ -2049,6 +2113,9 @@ describe('integration runner lifecycle harness teardown', () => {
               signal: 'SIGINT',
               predicate: ({ program }) => program === 'never-invoked',
               description: 'a command that is never invoked',
+              receiptReadyPredicate: ({ program, args }) =>
+                program === 'docker' && args.includes('up'),
+              receiptWaitMs: 100,
             }
           )
         await expect(withProc ? interrupted() : withoutProcFilesystem(interrupted)).rejects.toThrow(
@@ -2172,6 +2239,7 @@ describe('integration runner lifecycle harness teardown', () => {
           {
             // Deliberately unowned: the ledger records nothing, however often it samples.
             ownership: 'unowned',
+            completionTimeoutMs: 1_000,
             sampleIntervalMs: 1,
             inspect: (result) => {
               seen.descendants = result.descendants
@@ -2212,6 +2280,7 @@ describe('integration runner lifecycle harness teardown', () => {
           {
             // Deliberately unowned: the ledger records nothing, however often it samples.
             ownership: 'unowned',
+            completionTimeoutMs: 1_000,
             sampleIntervalMs: 1,
             inspect: (result) => (descendantsSeen = result.descendants),
           }
@@ -2290,6 +2359,7 @@ describe('integration runner lifecycle harness teardown', () => {
       ledger,
       ownership: 'owned',
       intervalMs: 60_000,
+      isAlive: (pid) => attached.has(pid),
     })
     try {
       append(1001)
