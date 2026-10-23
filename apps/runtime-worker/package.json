@@ -24,7 +24,7 @@
     "@control-plane/runtime-gateway-protocol": "workspace:*",
     "@control-plane/runtime-sdk": "workspace:*",
     "@control-plane/sqlite-persistence": "workspace:*",
-    "zod": "4.6.5"
+    "zod": "4.6.6"
   },
   "engines": {
     "node": "24.21.0"

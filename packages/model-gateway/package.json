@@ -28,7 +28,7 @@
     "@control-plane/domain": "workspace:*",
     "@control-plane/policy": "workspace:*",
     "@control-plane/usage-ledger": "workspace:*",
-    "zod": "4.6.5"
+    "zod": "4.6.6"
   },
   "devDependencies": {
     "@control-plane/sqlite-persistence": "workspace:*"
