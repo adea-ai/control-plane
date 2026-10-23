@@ -372,6 +372,28 @@ test.each(URI_QUERY_CASES)('%s is redacted whole', (_case, uri, secrets, expecte
   expect(sanitized).toBe(expected)
 })
 
+test('ordinary credential assignments between URI redactions are sanitized', () => {
+  const cases = [
+    [
+      'postgresql://u:pw@host/db?sslmode=require password=PLAIN_SECRET&token=TOKEN_SECRET',
+      'postgresql://<redacted>@host/db?sslmode=require password=<redacted>&token=<redacted>',
+      ['pw', 'PLAIN_SECRET', 'TOKEN_SECRET'],
+    ],
+    [
+      'postgresql://u:pw@host/db?sslmode=require password=PLAIN_SECRET&token=TOKEN_SECRET&password=OTHER_SECRET',
+      'postgresql://<redacted>@host/db?sslmode=require password=<redacted>&token=<redacted>&password=<redacted>',
+      ['pw', 'PLAIN_SECRET', 'TOKEN_SECRET', 'OTHER_SECRET'],
+    ],
+  ]
+  for (const [input, expected, secrets] of cases) {
+    const sanitized = sanitizeProbeOutput(input)
+    for (const secret of secrets) expect(sanitized).not.toContain(secret)
+    expect(sanitized).toBe(expected)
+    const description = describePostgresProbeFailure({ stderr: input })
+    for (const secret of secrets) expect(description).not.toContain(secret)
+  }
+})
+
 // A query that carries no credential is left as it is, whether its key is
 // encoded or not.
 test('a query with no credential is left alone', () => {

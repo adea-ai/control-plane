@@ -316,18 +316,41 @@ function readUriCredential(source, search, start) {
 }
 
 /**
- * The text from `start` to `end` with every span of it replaced by the
- * redaction marker.
+ * Sanitizes ordinary connection-string assignments in a bounded text range.
+ * URI credentials are redacted by their own spans; ordinary assignments can
+ * still appear between those spans in diagnostic text, so those gaps must be
+ * scanned before they are copied into the result.
  */
-function redactSpans(source, start, end, spans) {
-  let text = ''
-  let cursor = start
-  for (const span of spans) {
-    text += source.slice(cursor, span.start)
-    text += '<redacted>'
-    cursor = span.end
+function sanitizeOrdinaryRange(source, start, end) {
+  const pieces = []
+  let index = start
+  while (index < end) {
+    if (KEY_CHARACTER.test(source[index])) {
+      const keyEnd = readKeyEnd(source, index)
+      const key = source.slice(index, keyEnd)
+      let afterKey = keyEnd
+      while (afterKey < end && isWhitespace(source[afterKey])) afterKey += 1
+      if (isCredentialKey(key) && afterKey < end && source[afterKey] === '=') {
+        const valueStart = skipWhitespace(source, afterKey + 1)
+        if (valueStart < end) {
+          let valueEnd = Math.min(readValueEnd(source, valueStart), end)
+          if (valueEnd === end) {
+            const ampersand = source.indexOf('&', valueStart)
+            if (ampersand !== -1 && ampersand < end) valueEnd = ampersand
+          }
+          pieces.push(`${key}${source.slice(keyEnd, afterKey)}=<redacted>`)
+          index = valueEnd
+          continue
+        }
+      }
+      pieces.push(key)
+      index = keyEnd
+      continue
+    }
+    pieces.push(source[index])
+    index += 1
   }
-  return text + source.slice(cursor, end)
+  return pieces.join('')
 }
 
 /**
@@ -370,7 +393,14 @@ export function sanitizeProbeOutput(text, limit = PROBE_EXCERPT_LIMIT) {
     if (scheme !== null) {
       const credential = readUriCredential(source, uriSearch, index + scheme.length + 3)
       if (credential.matched) {
-        pieces.push(redactSpans(source, index, credential.end, credential.spans))
+        let cursor = index
+        for (const span of credential.spans) {
+          pieces.push(sanitizeOrdinaryRange(source, cursor, span.start))
+          pieces.push('<redacted>')
+          pieces.push(source.slice(span.end, span.resume))
+          cursor = span.resume
+        }
+        pieces.push(sanitizeOrdinaryRange(source, cursor, credential.end))
         index = credential.end
         continue
       }
