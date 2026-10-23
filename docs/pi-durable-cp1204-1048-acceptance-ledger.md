@@ -59,7 +59,7 @@ current-candidate test pass is claimed here.
 
 The published scope is the diff from the base `ab931d068142a0c5629ed4d6cc2c96a1b377a986`
 to the published head, which is the head that carries this section. The complete changed scope is
-**216 paths: 78 added, 138 modified**; no path was deleted.
+**232 paths: 79 added, 153 modified**; no path was deleted.
 `tests/pi-durable-cp1048-evidence-discipline.test.mjs` checks this list, these counts and this
 area table against the repository, so the published scope cannot drift away from the code
 without that lane failing.
@@ -67,36 +67,37 @@ without that lane failing.
 | Area                          | Added | Modified | Total |
 | ----------------------------- | ----- | -------- | ----- |
 | `(repository root)`           | 0     | 4        | 4     |
-| `apps/control-api`            | 17    | 24       | 41    |
+| `apps/control-api`            | 17    | 25       | 42    |
 | `apps/hosted-control-plane`   | 2     | 5        | 7     |
 | `apps/workflow-worker`        | 0     | 6        | 6     |
-| `docs`                        | 8     | 3        | 11    |
+| `docs`                        | 8     | 4        | 12    |
 | `docs/architecture`           | 0     | 2        | 2     |
 | `docs/evals`                  | 0     | 1        | 1     |
-| `docs/evidence`               | 3     | 0        | 3     |
+| `docs/evidence`               | 4     | 0        | 4     |
 | `docs/requirements`           | 0     | 1        | 1     |
-| `packages/acp-adapter`        | 0     | 2        | 2     |
+| `packages/acp-adapter`        | 0     | 4        | 4     |
 | `packages/config`             | 0     | 4        | 4     |
 | `packages/contracts`          | 1     | 6        | 7     |
 | `packages/control-sdk`        | 2     | 7        | 9     |
 | `packages/database`           | 1     | 4        | 5     |
 | `packages/domain`             | 0     | 6        | 6     |
-| `packages/orchestration`      | 0     | 2        | 2     |
-| `packages/pi-durable-adapter` | 23    | 18       | 41    |
+| `packages/orchestration`      | 0     | 4        | 4     |
+| `packages/pi-durable-adapter` | 23    | 20       | 43    |
 | `packages/policy`             | 0     | 5        | 5     |
 | `packages/profile-adapters`   | 3     | 6        | 9     |
 | `packages/runtime-sdk`        | 0     | 1        | 1     |
-| `packages/sqlite-persistence` | 0     | 5        | 5     |
-| `packages/tool-execution`     | 0     | 2        | 2     |
+| `packages/sqlite-persistence` | 0     | 7        | 7     |
+| `packages/tool-execution`     | 0     | 4        | 4     |
 | `patches`                     | 2     | 0        | 2     |
-| `scripts`                     | 1     | 4        | 5     |
-| `tests`                       | 15    | 20       | 35    |
+| `scripts`                     | 1     | 6        | 7     |
+| `tests`                       | 15    | 21       | 36    |
 
 The complete path list, as published:
 
 ```text
 M  .release-please-manifest.json
 M  CHANGELOG.md
+M  apps/control-api/CHANGELOG.md
 M  apps/control-api/package.json
 M  apps/control-api/src/app.module.ts
 M  apps/control-api/src/executions/execution-acceptance.service.ts
@@ -156,6 +157,7 @@ M  docs/architecture/control-plane-architecture.md
 M  docs/architecture/control-plane-architecture.v1.json
 M  docs/evals/skill-evals/skill-eval-harness.mts
 A  docs/evidence/cp1233-toolchain-qualification-2026-10-23.md
+A  docs/evidence/m11-integration-runner-interruption-2026-10-15.md
 A  docs/evidence/m11-security-trust-boundary-audit-2026-10-21.md
 A  docs/evidence/m11-security-trust-boundary-matrix-2026-10-21.v1.json
 M  docs/harnesses.md
@@ -170,7 +172,10 @@ M  docs/pi-durable-report-back.md
 M  docs/pi-durable-runtime.md
 A  docs/profile-recovery-acceptance-map.md
 M  docs/requirements/cp186-195-reconciliation-2026-10-21.md
+M  docs/testing.md
 M  package.json
+M  packages/acp-adapter/CHANGELOG.md
+M  packages/acp-adapter/package.json
 M  packages/acp-adapter/src/acp-remote-crypto.ts
 M  packages/acp-adapter/src/acp-remote-transport.ts
 M  packages/config/CHANGELOG.md
@@ -204,8 +209,12 @@ M  packages/domain/src/command-inbox.test.mjs
 M  packages/domain/src/command-inbox.ts
 M  packages/domain/src/execution-lifecycle.test.mjs
 M  packages/domain/src/execution-lifecycle.ts
+M  packages/orchestration/CHANGELOG.md
+M  packages/orchestration/package.json
 M  packages/orchestration/src/delegation.test.mjs
 M  packages/orchestration/src/delegation.ts
+M  packages/pi-durable-adapter/CHANGELOG.md
+M  packages/pi-durable-adapter/package.json
 M  packages/pi-durable-adapter/src/adapter.ts
 A  packages/pi-durable-adapter/src/authority-outcome.ts
 A  packages/pi-durable-adapter/src/cancellation-authority.test-fixture.mjs
@@ -262,20 +271,27 @@ M  packages/profile-adapters/src/wake.ts
 A  packages/profile-adapters/tsconfig.type-tests.json
 A  packages/profile-adapters/type-tests/retained-wake-repository-assignment.ts
 M  packages/runtime-sdk/src/pi-durable-lead.test.mjs
+M  packages/sqlite-persistence/CHANGELOG.md
+M  packages/sqlite-persistence/package.json
 M  packages/sqlite-persistence/src/delegation-repository.ts
 M  packages/sqlite-persistence/src/delegation-terminal-receipt.test.mjs
 M  packages/sqlite-persistence/src/delegation-terminal-receipt.ts
 M  packages/sqlite-persistence/src/durability-repositories.test.mjs
 M  packages/sqlite-persistence/src/durability-repositories.ts
+M  packages/tool-execution/CHANGELOG.md
+M  packages/tool-execution/package.json
 M  packages/tool-execution/src/tool-execution.test.mjs
 M  packages/tool-execution/src/tool-execution.ts
 A  patches/@earendil-works%2Fpi-durable@1.1.0.patch
 A  patches/pi-durable-1.1.0-NOTICE.md
+M  scripts/docker-pull-backoff.mjs
 M  scripts/integration-shards.mjs
+M  scripts/pull-postgres-image.mjs
 M  scripts/requirements-ledger.mjs
 M  scripts/run-bun-test-group.mjs
 M  scripts/run-integration-tests.mjs
 A  scripts/security-trust-boundary-probes.mjs
+M  tests/docker-pull-backoff.test.mjs
 M  tests/fixtures/pi-lead-restart/host.mjs
 A  tests/fixtures/pinned-process.mjs
 A  tests/fixtures/profile-recovery-cleanup.mjs
