@@ -3,6 +3,29 @@ import { createEnrolledSecureAcpRemoteTransport } from './acp-remote-composition
 import { AcpRemoteUndeliveredError } from './acp-remote-transport.ts'
 import { createSecureFixture, runtimeCommand } from './acp-remote-fixtures.mjs'
 
+const FINAL_AUTHORITY_READ = 4
+
+// Parks the authority read made immediately before the send, so the test can change local state
+// while that await is suspended and then let the read succeed.
+function deferFinalAuthorityRead(fixture) {
+  let reads = 0
+  let release
+  const parked = new Promise((resolve) => {
+    release = resolve
+  })
+  let finalReadStarted
+  const started = new Promise((resolve) => {
+    finalReadStarted = resolve
+  })
+  const controller = controllerFor(fixture, async () => {
+    reads += 1
+    if (reads !== FINAL_AUTHORITY_READ) return
+    finalReadStarted()
+    await parked
+  })
+  return { controller, started, release: () => release() }
+}
+
 function controllerFor(fixture, assertCurrent, isCurrent = () => true) {
   return createEnrolledSecureAcpRemoteTransport({
     route: fixture.route,
@@ -133,5 +156,98 @@ describe('secure ACP controller enrollment authority', () => {
     await expect(controller.dispatch(runtimeCommand())).rejects.toThrow(
       'ACP_REMOTE_CONTROLLER_AUTHORITY_DENIED'
     )
+  })
+
+  describe('state that changes while the final authority read is suspended', () => {
+    test('a send proceeds exactly once when nothing changed during the final read', async () => {
+      const fixture = await createSecureFixture()
+      const { controller, started, release } = deferFinalAuthorityRead(fixture)
+
+      const pending = controller.dispatch(runtimeCommand())
+      await started
+      expect(fixture.wire.commandAttempts()).toBe(0)
+      release()
+
+      await expect(pending).resolves.toBeTruthy()
+      expect(fixture.wire.commandAttempts()).toBe(1)
+    })
+
+    test('a local revocation during the final read sends nothing', async () => {
+      const fixture = await createSecureFixture()
+      const { controller, started, release } = deferFinalAuthorityRead(fixture)
+
+      const pending = controller.dispatch(runtimeCommand())
+      const outcome = pending.then(
+        () => ({ settled: 'resolved' }),
+        (error) => ({ settled: 'rejected', error })
+      )
+      await started
+      await controller.revokeCurrent('2026-08-25T12:00:10.000Z')
+      release()
+
+      const result = await outcome
+      expect(result.settled).toBe('rejected')
+      expect(result.error).toMatchObject({ code: 'RUNTIME_NODE_REVOKED' })
+      expect(fixture.wire.commandAttempts()).toBe(0)
+    })
+
+    test('an abort during the final read sends nothing', async () => {
+      const fixture = await createSecureFixture()
+      const { controller, started, release } = deferFinalAuthorityRead(fixture)
+      const abort = new AbortController()
+
+      const pending = controller.dispatch(runtimeCommand(), abort.signal)
+      const outcome = pending.then(
+        () => ({ settled: 'resolved' }),
+        (error) => ({ settled: 'rejected', error })
+      )
+      await started
+      abort.abort()
+      release()
+
+      const result = await outcome
+      expect(result.settled).toBe('rejected')
+      expect(result.error).toMatchObject({ code: 'RUNTIME_GATEWAY_TIMEOUT' })
+      expect(fixture.wire.commandAttempts()).toBe(0)
+    })
+
+    test('command expiry during the final read sends nothing', async () => {
+      const fixture = await createSecureFixture()
+      const { controller, started, release } = deferFinalAuthorityRead(fixture)
+
+      const pending = controller.dispatch(runtimeCommand())
+      const outcome = pending.then(
+        () => ({ settled: 'resolved' }),
+        (error) => ({ settled: 'rejected', error })
+      )
+      await started
+      // The default command window is 60 seconds from NOW; the route stays valid until 13:00.
+      fixture.clock.current = new Date('2026-08-25T12:02:00.000Z')
+      release()
+
+      const result = await outcome
+      expect(result.settled).toBe('rejected')
+      expect(result.error).toMatchObject({ code: 'RUNTIME_GATEWAY_COMMAND_EXPIRED' })
+      expect(fixture.wire.commandAttempts()).toBe(0)
+    })
+
+    test('a wire disconnect during the final read sends nothing', async () => {
+      const fixture = await createSecureFixture()
+      const { controller, started, release } = deferFinalAuthorityRead(fixture)
+
+      const pending = controller.dispatch(runtimeCommand())
+      const outcome = pending.then(
+        () => ({ settled: 'resolved' }),
+        (error) => ({ settled: 'rejected', error })
+      )
+      await started
+      fixture.wire.setOnline(false)
+      release()
+
+      const result = await outcome
+      expect(result.settled).toBe('rejected')
+      expect(result.error).toMatchObject({ code: 'RUNTIME_NODE_OFFLINE' })
+      expect(fixture.wire.commandAttempts()).toBe(0)
+    })
   })
 })

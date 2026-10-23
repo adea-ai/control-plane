@@ -583,7 +583,10 @@ export class SecureAcpRemoteTransport implements AcpGatewayTransport {
     const message = sealedCommand.message
     // Authority can change while keys are generated and the payload is sealed: re-fence
     // immediately before send so no sealed command leaves after revocation, an offline wire, or an
-    // abort, and so an already-expired window is never sealed.
+    // abort, and so an already-expired window is never sealed. The authority read is awaited, so it
+    // runs first: local revocation, expiry, abort or a wire disconnect can land while it is
+    // suspended. The fences below are synchronous and nothing is awaited between them and the send.
+    await this.#assertControllerCurrent()
     this.#assertFenced()
     const resendWindow = evaluateCommandWindow({
       issuedAt: command.issuedAt,
@@ -594,7 +597,6 @@ export class SecureAcpRemoteTransport implements AcpGatewayTransport {
     })
     if (resendWindow.outcome === 'denied') throw remoteDenialError(resendWindow)
     if (signalAborted(signal)) throw timeoutError()
-    await this.#assertControllerCurrent()
 
     let reply: unknown
     try {
