@@ -163,6 +163,19 @@ function createRunnerHarness(overrides = {}) {
   }
 }
 
+// The signal and ownership cases exercise the runner's own process ownership,
+// which does not depend on how many shards run, so they run one small explicit
+// shard by default: a bounded number of doubles, and a tree the ledger can follow.
+// A case that needs the default local path, where every shard runs concurrently,
+// passes `shard: null`; at least one interruption case and one reap case do, and
+// the default-local partition is asserted file by file below.
+const TARGETED_SHARD = '1'
+
+function targetedShardOverrides(overrides, shard) {
+  if (shard === null || Object.hasOwn(overrides, 'INTEGRATION_SHARD')) return overrides
+  return { INTEGRATION_SHARD: shard, ...overrides }
+}
+
 const FIXTURE_MARKER_VARIABLE = 'CP_LIFECYCLE_FIXTURE'
 const TEARDOWN_WAIT_MS = 5_000
 const SAMPLE_INTERVAL_MS = 100
@@ -549,9 +562,12 @@ async function executeRunnerInterrupted(
     waitFor = 'close',
     inspect,
     sampleIntervalMs,
+    shard = TARGETED_SHARD,
   }
 ) {
-  const { directory, commands, descendants, environment } = createRunnerHarness(overrides)
+  const { directory, commands, descendants, environment } = createRunnerHarness(
+    targetedShardOverrides(overrides, shard)
+  )
   const ledger = createFixtureLedger()
   let child
   let gone
@@ -683,8 +699,13 @@ function killQuietly(pid) {
  * failure instead of hanging. `inspect` and the teardown behave as in
  * executeRunnerInterrupted.
  */
-async function executeRunnerToExit(overrides, { settleMs = 30_000, inspect } = {}) {
-  const { directory, descendants, environment } = createRunnerHarness(overrides)
+async function executeRunnerToExit(
+  overrides,
+  { settleMs = 30_000, inspect, shard = TARGETED_SHARD } = {}
+) {
+  const { directory, descendants, environment } = createRunnerHarness(
+    targetedShardOverrides(overrides, shard)
+  )
   const ledger = createFixtureLedger()
   let child
   let gone
@@ -774,6 +795,12 @@ describe('integration runner resource ownership', () => {
           ({ program, args }) => program === 'bun' && args[0] === 'run' && args[1] === 'build'
         )
       ).toHaveLength(1)
+      // The default local path runs the whole inventory: one test command per file
+      // of the partition (currently 55 files across shards 1, 2 and 3), so no file
+      // is skipped or run by two shards. The receipt records the arguments and
+      // not the package directory, so equal argument lists from different
+      // packages stay separate entries and the comparison below is of multisets.
+      expect(localTestCalls).toHaveLength(expectedCalls.length)
       expect(sortCalls(localTestCalls.map(({ args }) => args))).toEqual(sortCalls(expectedCalls))
       expect(localTestCalls.every(({ project }) => project === start.project)).toBe(true)
       expect(
@@ -1494,6 +1521,8 @@ describe('integration runner owned process tree', () => {
             signal: 'SIGINT',
             predicate: ({ program, args }) => program === 'bun' && args.includes('test'),
             description: 'the owned test execution',
+            // The default local path: every shard runs concurrently under one runner.
+            shard: null,
             inspect: (result) => {
               // The runner settled on the interruption and kept the signal's status.
               expect(result.status).toBe(130)
@@ -1734,6 +1763,8 @@ describe('integration runner owned process tree', () => {
         await executeRunnerToExit(
           { FAKE_BUN_WRAPPER_EXITS_FIRST: 'true' },
           {
+            // The default local path: every shard runs concurrently under one runner.
+            shard: null,
             inspect: (result) => {
               expect(result.status).not.toBe(0)
               expect(result.stderr).toMatch(
