@@ -16,6 +16,7 @@ import {
   utf8,
 } from './acp-remote-crypto.ts'
 import { AcpRemoteDeviceRouteSchema } from './acp-remote-fence.ts'
+import { qualifiedNativeRouteFixture } from './native-route-fixtures.ts'
 import {
   ACP_REMOTE_DOMAIN,
   AcpRemoteUndeliveredError,
@@ -344,6 +345,9 @@ export function clientFor(transport, clock) {
     traceId: ids.traceId,
     runtimeOpaqueRef: ids.runtimeOpaqueRef,
     localProjectGrantRef: GRANT_REF,
+    // The route's claims come from deployment evidence, never from the
+    // native driver's own advertisement.
+    nativeRoute: qualifiedNativeRouteFixture(),
     now: () => new Date(clock.current),
     commandId: (identity) => {
       if (!commandIdentities.has(identity)) {
