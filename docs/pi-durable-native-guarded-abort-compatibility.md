@@ -122,21 +122,25 @@ described as mutation-free historical observation.
 
 ## Proposed read-only SDK reader — not implemented
 
-A later public SDK addition could expose
-`openNodeSqliteAbortReceiptReader(existingPath, { mustExist: true }, context)`
-returning only `readAbortReceipt({ conversationId, requestId }, context)` and
-`close()`. The SDK would own its supported receipt format; CP would not inspect
-private document addresses or SQL. The reader must open an existing supported
-store in read-only mode, without a Harness, Session, scheduler, models, registry
-or owner registration. It must not create a root or store, initialize a document,
-run schema migrations, reconcile tasks, checkpoint a WAL or repair corruption.
-Missing, incompatible or corrupt stores fail unavailable rather than looking
-like an absent receipt. Drain remains an existing-owner operation.
+The proposed public SDK contract is a one-shot
+`readNodeSqliteAbortReceipt(existingPath, { conversationId, requestId }, context)`
+returning `Promise<AbortCommitReceipt | undefined>`. It exposes no open/read/close
+handle. The SDK would own its supported receipt format; CP would not inspect
+private document addresses or SQL. Each call must open an existing supported
+store read-only, observe one consistent committed snapshot, and close on success,
+failure or cancellation. It must not create a Harness, Session, scheduler, model,
+registry, owner, root, store or document; run migrations; reconcile tasks; configure
+journal mode; checkpoint a WAL; or repair corruption. The existing Node opener
+configures WAL and its close path checkpoints, so those lifecycle paths cannot be
+reused as evidence of a mutation-free reader. Missing, incompatible or corrupt
+stores fail unavailable rather than looking like an absent receipt. Drain remains
+an existing-owner operation.
 
 Before implementation or qualification, actual SQLite proofs must establish:
 
 - Existing running tasks, queued inputs, documents, receipts and logical database
-  contents remain unchanged through repeated and cancelled reads and closure.
+  contents remain unchanged through repeated successful, failed and cancelled
+  one-shot reads, including their internal closure.
 - No scheduler, abort, provider, model or host-authority callback runs; an absent
   path remains absent, and reading creates no database/schema artifacts.
 - Conversation/request bindings are exact; a committed receipt survives a lost
