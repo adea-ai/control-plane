@@ -105,17 +105,19 @@ bytes cannot disagree.
 
 ## Rollback bounds
 
-- Rolling back the _binary_ is safe. The version column is nullable, and the older reader ignores
-  the column and the extra JSON field, treating a versioned record as untagged. Its digest is the
-  code-point form, which the untagged compatibility path accepts. The PostgreSQL integration suite
-  proves this by reading a versioned row with only the digest column and verifying it with the
-  untagged reader.
+- Rolling back the _binary_ is expected to be compatible, but this is **inferred, not executed**.
+  The version column is nullable, and an older reader that ignores the column and the extra JSON
+  field would treat a versioned record as untagged. Its digest is the code-point form, which the
+  untagged compatibility path accepts. The PostgreSQL integration suite is compatibility evidence
+  only: it reads a versioned row with a digest-only `SELECT` and verifies it with this release's
+  untagged-record helper. **No old-binary rollback was executed**, and no historical reader was run
+  against a migrated database. An actual disposable historical-reader test has not been provided.
 - Rolling back the _migration alone_, with this release still deployed, is **not** safe: this
   release's projection selects `input_digest_version`, so the column has to exist. The migration has
   to be rolled back together with the binary.
-- Rolling back the _binary and the migration together_ is safe, for the same reason as the binary
-  rollback: the rows lose the version metadata, revert to the untagged interpretation, and still
-  verify against the code-point digest they carry.
+- Rolling back the _binary and the migration together_ is expected to be compatible, by the same
+  inference as the binary rollback (also not executed): the rows would lose the version metadata,
+  revert to the untagged interpretation, and still verify against the code-point digest they carry.
 - A rollback never needs to rewrite a retained row, and never needs to recompute a digest.
 
 ## Retained-data limits
@@ -142,6 +144,10 @@ window is where they are observed; this change does not alter any of them.
   duplicated — exactly one revision, one mutation record, and one event exist afterwards — and the
   deterministic compare-and-set loser path resolves the winner's record as an idempotent replay.
   Both outcomes are asserted by the PostgreSQL integration suite.
+- The SQLite tests are not concurrency or cross-process qualification. The SQLite compare-and-set
+  loser test drives a single provider in one process and forces the loss by wrapping
+  `compareAndSet`; it shows the loser resolves the winner's record, not that independent processes
+  interleave correctly. No cross-process SQLite qualification has been run.
 
 ## Out of scope
 

@@ -169,7 +169,8 @@ describe.skipIf(process.env.RUN_DATABASE_INTEGRATION !== 'true')(
           and mutation_id = ${input.mutationId}
       `)
       expect(row.input_digest).toBe(projectStateMutationDigestV2(input))
-      // And the untagged reader accepts that digest, so a binary rollback keeps replaying.
+      // And this release's untagged helper accepts that digest. This is compatibility evidence, not an
+      // old-binary rollback execution.
       expect(projectStateMutationMatchesDigest(input, row.input_digest)).toBe(true)
       expect(projectStateMutationMatchesDigest(input, row.input_digest, 2)).toBe(true)
     })
