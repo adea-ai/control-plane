@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.14.0](https://github.com/adea-ai/control-plane/compare/acp-adapter-v1.13.0...acp-adapter-v1.14.0) (2026-10-23)
+
+
+### Features
+
+* **acp-adapter:** require current controller enrollment authority on secure remote route ([#1282](https://github.com/adea-ai/control-plane/issues/1282)) ([5da0e9f](https://github.com/adea-ai/control-plane/commit/5da0e9f92b82d3df779e94a85006208c8ab4013d))
+
 ## [1.13.0](https://github.com/adea-ai/control-plane/compare/acp-adapter-v1.12.0...acp-adapter-v1.13.0) (2026-10-23)
 
 
