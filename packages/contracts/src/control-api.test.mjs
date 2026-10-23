@@ -314,6 +314,40 @@ describe('Agent HQ Control API contracts', () => {
     }
   })
 
+  test('accepts an optional accepted model on an execution acceptance request', () => {
+    const base = ControlApiFixtures.executionAcceptance.request
+    expect(
+      ExecutionAcceptanceRequestSchema.safeParse({
+        ...base,
+        payload: { ...base.payload, modelId: 'deepseek-flash' },
+      }).success
+    ).toBe(true)
+    expect(
+      ExecutionAcceptanceRequestSchema.safeParse({
+        ...base,
+        payload: { ...base.payload, modelId: 'DeepSeek Flash' },
+      }).success
+    ).toBe(false)
+    expect(
+      ExecutionAcceptanceRequestSchema.safeParse({
+        ...base,
+        payload: { ...base.payload, modelId: '' },
+      }).success
+    ).toBe(false)
+  })
+
+  test('accepts the uppercase ASCII model ids the runtime model id accepts', () => {
+    const base = ControlApiFixtures.executionAcceptance.request
+    for (const modelId of ['DeepSeek-V3', 'GPT-4o', 'GLM-4', 'DEEPSEEK']) {
+      expect(
+        ExecutionAcceptanceRequestSchema.safeParse({
+          ...base,
+          payload: { ...base.payload, modelId },
+        }).success
+      ).toBe(true)
+    }
+  })
+
   test('accepts execution commands with durable replay and lifecycle responses', () => {
     expect(
       ExecutionAcceptanceRequestSchema.parse(ControlApiFixtures.executionAcceptance.request)

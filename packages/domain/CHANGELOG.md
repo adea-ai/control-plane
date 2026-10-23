@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.34.0](https://github.com/adea-ai/control-plane/compare/domain-v1.33.0...domain-v1.34.0) (2026-10-23)
+
+
+### Features
+
+* **runtime:** map a model to its harness in managed cloud routing (CP [#678](https://github.com/adea-ai/control-plane/issues/678)) ([#1210](https://github.com/adea-ai/control-plane/issues/1210)) ([4f9967d](https://github.com/adea-ai/control-plane/commit/4f9967dc50dfb5dc3ffa13a305f4e3623ae20fe1))
+
 ## [1.33.0](https://github.com/adea-ai/control-plane/compare/domain-v1.32.0...domain-v1.33.0) (2026-10-23)
 
 

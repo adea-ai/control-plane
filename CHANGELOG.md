@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.113.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.112.1...workspace-v1.113.0) (2026-10-23)
+
+
+### Features
+
+* **runtime:** map a model to its harness in managed cloud routing (CP [#678](https://github.com/adea-ai/control-plane/issues/678)) ([#1210](https://github.com/adea-ai/control-plane/issues/1210)) ([4f9967d](https://github.com/adea-ai/control-plane/commit/4f9967dc50dfb5dc3ffa13a305f4e3623ae20fe1))
+
+
+### Documentation
+
+* **security:** add CP [#190](https://github.com/adea-ai/control-plane/issues/190) trust boundary audit ([#1220](https://github.com/adea-ai/control-plane/issues/1220)) ([b284006](https://github.com/adea-ai/control-plane/commit/b284006bdcddf24226e29a62d88c1e347d0a956c))
+
 ## [1.112.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.112.0...workspace-v1.112.1) (2026-10-23)
 
 
