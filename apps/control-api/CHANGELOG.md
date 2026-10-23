@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.34.7](https://github.com/adea-ai/control-plane/compare/control-api-v1.34.6...control-api-v1.34.7) (2026-10-23)
+
+
+### Tests
+
+* **control-api:** prove the immutable configuration binding and the approval replay for CP [#932](https://github.com/adea-ai/control-plane/issues/932) ([#1226](https://github.com/adea-ai/control-plane/issues/1226)) ([b513d54](https://github.com/adea-ai/control-plane/commit/b513d547cfa03b30e8ebea29752546dca13144ca))
+
 ## [1.34.6](https://github.com/adea-ai/control-plane/compare/control-api-v1.34.5...control-api-v1.34.6) (2026-10-22)
 
 
