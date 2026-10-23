@@ -10,6 +10,7 @@ import {
   fallbackImages,
   isRegistryRateLimit,
   postgresImageVariable,
+  pullInterruptedMessage,
   runWithPullBackoff,
   runWithPullFallback,
 } from '../scripts/docker-pull-backoff.mjs'
@@ -65,6 +66,81 @@ test('gives up after the bounded backoff and surfaces the last rate-limit result
   assert.equal(result, rateLimited)
   assert.equal(calls.length, defaultPullBackoffMs.length + 1)
   assert.deepEqual(delays, defaultPullBackoffMs)
+})
+
+test('an interrupted backoff launches no further command', async () => {
+  // A signal during the backoff must not start another pull: the next attempt
+  // would be a new command launched after the interruption.
+  const { attempt, calls } = scripted([rateLimited])
+  const { sleep } = recordingSleep()
+  let interrupted = false
+  const result = await runWithPullBackoff(attempt, {
+    // The signal arrives while the runner is waiting out the backoff.
+    sleep: async (milliseconds) => {
+      interrupted = true
+      await sleep(milliseconds)
+    },
+    log: () => {},
+    isInterrupted: () => interrupted,
+  })
+  assert.equal(calls.length, 1)
+  assert.equal(result.stderr, pullInterruptedMessage)
+})
+
+test('an interrupted fallback loop launches no further pull', async () => {
+  const attempts = []
+  const pulls = []
+  const attempt = () => {
+    attempts.push(true)
+    return rateLimited
+  }
+  const pull = (reference) => {
+    pulls.push(reference)
+    return { status: 1, stdout: '', stderr: 'mirror unavailable' }
+  }
+  let interrupted = false
+  const { result } = await runWithPullFallback(
+    attempt,
+    'public.ecr.aws/docker/library/postgres@sha256:aa',
+    {
+      sleep: async () => {},
+      log: () => {},
+      // The signal arrives while the first fallback pull is running.
+      pull: (reference) => {
+        const outcome = pull(reference)
+        interrupted = true
+        return outcome
+      },
+      isInterrupted: () => interrupted,
+    }
+  )
+  // The canonical attempt ran, the first fallback pull ran, and then the
+  // interruption stopped the loop: no second fallback pull was started.
+  assert.equal(attempts.length, 1)
+  assert.equal(pulls.length, 1)
+  assert.equal(result.stderr, pullInterruptedMessage)
+})
+
+test('an interruption ends the backoff wait instead of running it out', async () => {
+  // The wait is consumed in slices, so the runner does not sit out a 15 s
+  // delay after it was told to stop.
+  const { attempt, calls } = scripted([rateLimited])
+  const waited = []
+  let interrupted = false
+  const result = await runWithPullBackoff(attempt, {
+    sleep: async (milliseconds) => {
+      waited.push(milliseconds)
+      interrupted = true
+    },
+    log: () => {},
+    isInterrupted: () => interrupted,
+  })
+  assert.equal(calls.length, 1)
+  assert.equal(result.stderr, pullInterruptedMessage)
+  // The wait was consumed in slices and ended with the interruption, instead of
+  // running out the whole 15 s delay.
+  assert.ok(waited.length < defaultPullBackoffMs[0], 'the wait was not cut short')
+  assert.equal(waited.reduce((sum, slice) => sum + slice, 0) <= defaultPullBackoffMs[0], true)
 })
 
 test('does not retry or delay a non-rate-limit failure', async () => {
@@ -137,7 +213,11 @@ test('integration and PR workflows pull before starting Postgres', async () => {
     'utf8'
   )
   assert.match(runner, /import \{ pullPostgresImage \} from '\.\/pull-postgres-image\.mjs'/)
-  assert.match(runner, /await pullPostgresImage\(\{ environment: runnerEnvironment \}\)/)
+  // The pull runs with the runner's own environment, and it is told about an
+  // interruption, so no pull command is started after the signal.
+  assert.match(runner, /await pullPostgresImage\(\{/)
+  assert.match(runner, /environment: runnerEnvironment/)
+  assert.match(runner, /isInterrupted: \(\) => interruptedSignal !== null/)
   assert.match(runner, /await composeUpPostgres\(\)/)
   assert.match(workflow, /run: bun scripts\/pull-postgres-image\.mjs/)
   assert.match(workflow, /run: docker compose up -d --wait postgres/)
