@@ -17,6 +17,8 @@ import {
 import {
   PiLeadPublicationRequestSchema,
   PiLeadPublicationResponseSchema,
+  PiChildPublicationRequestSchema,
+  PiChildPublicationResponseSchema,
   ModelSelectionFundingRequestSchema,
   ModelSelectionFundingResponseSchema,
   ModelConnectionCreateRequestSchema,
@@ -110,6 +112,13 @@ export const ControlApiOperations = Object.freeze({
     path: '/v1/pi-durable/lead-publication/current',
     requestSchema: PiLeadPublicationRequestSchema as typeof PiLeadPublicationRequestSchema,
     responseSchema: PiLeadPublicationResponseSchema as typeof PiLeadPublicationResponseSchema,
+  },
+  getPiDurableChildPublication: {
+    operation: 'pi-durable.child.publication.current',
+    method: 'POST',
+    path: '/v1/pi-durable/child-publication/current',
+    requestSchema: PiChildPublicationRequestSchema as typeof PiChildPublicationRequestSchema,
+    responseSchema: PiChildPublicationResponseSchema as typeof PiChildPublicationResponseSchema,
   },
   getModelSelectionFunding: {
     operation: 'model-selection.funding.get',

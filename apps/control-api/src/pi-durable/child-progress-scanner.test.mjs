@@ -102,11 +102,25 @@ test('first terminal poll replays actual running evidence, retains result and re
   expect(state.calls.map((value) => value.state)).toEqual(['running', 'completed'])
   expect(state.calls[1]).toMatchObject({
     terminalResultRef: id('art'),
+    conclusion: 'Retained evidence.',
     observedAt: state.status.observedAt,
   })
   expect(state.retained[0]).toEqual(state.status.result)
   expect((await scanner.scan(adapter)).published).toBe(1)
   expect(state.calls.filter((value) => value.state === 'running')).toHaveLength(1)
+})
+
+test.each([
+  { text: 'x'.repeat(4097) },
+  { text: 'Result', privatePayload: 'not attested' },
+  { text: 'A\u202e forged direction' },
+  { summary: 'Untrusted alternate field' },
+])('noncanonical or oversized runtime JSON cannot attest a child conclusion', async (output) => {
+  const { scanner, state, adapter, record } = fixture()
+  record.canonicalState = 'running'
+  state.status.result.output = output
+  expect((await scanner.scan(adapter)).published).toBe(1)
+  expect(state.calls.at(-1)).not.toHaveProperty('conclusion')
 })
 
 test.each(['missing', 'wrong_handle', 'reordered', 'future'])(

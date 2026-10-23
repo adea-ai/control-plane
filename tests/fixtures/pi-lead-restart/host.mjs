@@ -161,7 +161,10 @@ async function runRecovery(directory) {
           const alreadyForwarded = rows.some(
             (entry) => entry.phase === 'forwarded' && entry.inferenceKey === key
           )
-          const decision = beforeDispatch && !alreadyForwarded ? 'safe_to_resume' : 'unresolved'
+          // These advisory process logs do not bind an independently current store
+          // generation or prove that the retained hold never crossed the send boundary.
+          // They cannot mint the runtime's private permission to reuse that hold.
+          const decision = 'unresolved'
           reconcileEvidence = { key, beforeDispatch, alreadyForwarded, decision }
           return decision
         },

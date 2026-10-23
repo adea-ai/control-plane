@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { canonicalJsonStringify } from '@control-plane/contracts'
+import { canonicalJsonStringify, PiChildConclusionSchema } from '@control-plane/contracts'
 import { compareCodePointOrder } from '@control-plane/contracts'
 import { IdentifierSchemas } from '@control-plane/contracts'
 import {
@@ -65,6 +65,7 @@ export const ChildProgressInputSchema = z
     observedAt: TimestampSchema,
     interaction: DelegationInteractionContextSchema.optional(),
     terminalResultRef: IdentifierSchemas.artifactId.optional(),
+    conclusion: PiChildConclusionSchema.optional(),
     failure: z
       .object({
         classification: z.enum([
@@ -94,6 +95,9 @@ export const ChildProgressInputSchema = z
     }
     if (input.state !== 'completed' && input.terminalResultRef) {
       context.addIssue({ code: 'custom', message: 'Only completed child may have a result' })
+    }
+    if (input.state !== 'completed' && input.conclusion !== undefined) {
+      context.addIssue({ code: 'custom', message: 'Only completed child may have a conclusion' })
     }
     if (input.state !== 'failed' && input.failure) {
       context.addIssue({ code: 'custom', message: 'Only failed child may have failure metadata' })
@@ -181,6 +185,7 @@ export const DelegationRecordSchema = z
     deadlineAt: TimestampSchema.optional(),
     updatedAt: TimestampSchema,
     terminalResultRef: IdentifierSchemas.artifactId.optional(),
+    terminalConclusion: PiChildConclusionSchema.optional(),
     failureCode: ReferenceSchema.optional(),
     pendingProgress: ChildProgressInputSchema.optional(),
     interactionPublications: z
@@ -254,6 +259,15 @@ export const DelegationRecordSchema = z
       })
     if (record.terminalResultRef && record.state !== 'completed') {
       context.addIssue({ code: 'custom', message: 'Only completed delegation may have a result' })
+    }
+    if (
+      record.terminalConclusion !== undefined &&
+      (record.state !== 'completed' || !record.terminalResultRef)
+    ) {
+      context.addIssue({
+        code: 'custom',
+        message: 'Only completed delegation may have a conclusion',
+      })
     }
     if (record.failureCode && !['failed', 'manual_intervention'].includes(record.state)) {
       context.addIssue({ code: 'custom', message: 'Failure code requires failed delegation state' })
@@ -369,6 +383,7 @@ export const DelegationEventSchema = z
         runtimeConnectionId: IdentifierSchemas.runtimeConnectionId.optional(),
         childAttemptId: IdentifierSchemas.attemptId.optional(),
         terminalResultRef: IdentifierSchemas.artifactId.optional(),
+        conclusion: PiChildConclusionSchema.optional(),
         failureCode: ReferenceSchema.optional(),
         interaction: DelegationInteractionContextSchema.optional(),
         reason: z.literal('parent_cancelled').optional(),
@@ -388,6 +403,11 @@ export const DelegationEventSchema = z
         message: 'Awaiting-input progress requires its canonical interaction context',
       })
     }
+    if (
+      event.details.conclusion !== undefined &&
+      (event.type !== 'delegation.completed' || !event.details.terminalResultRef)
+    )
+      context.addIssue({ code: 'custom', message: 'Only completion may carry a conclusion' })
   })
 
 export type DelegationErrorCode =
@@ -1029,6 +1049,7 @@ export class DelegationService {
       if (
         record.state === parsed.state &&
         record.terminalResultRef === parsed.terminalResultRef &&
+        record.terminalConclusion === parsed.conclusion &&
         record.failureCode === parsed.failure?.code
       ) {
         const published = await this.#publishTerminal(record)
@@ -1143,6 +1164,7 @@ export class DelegationService {
         ? { childAttemptId: undefined, runtimeConnectionId: undefined, failureCode: undefined }
         : {}),
       ...(parsed.terminalResultRef ? { terminalResultRef: parsed.terminalResultRef } : {}),
+      ...(parsed.conclusion ? { terminalConclusion: parsed.conclusion } : {}),
       ...(parsed.failure && !retrying ? { failureCode: parsed.failure.code } : {}),
       ...(['completed', 'failed', 'cancelled'].includes(state)
         ? {
@@ -1160,6 +1182,7 @@ export class DelegationService {
         replay.state === state &&
         replay.updatedAt === parsed.observedAt &&
         replay.terminalResultRef === parsed.terminalResultRef &&
+        replay.terminalConclusion === parsed.conclusion &&
         replay.failureCode === (parsed.failure && !retrying ? parsed.failure.code : undefined)
       ) {
         const retained =
@@ -1208,6 +1231,7 @@ export class DelegationService {
       ...(parsed.interaction ? { interaction: parsed.interaction } : {}),
       ...(resolution ? { resolution } : {}),
       ...(parsed.terminalResultRef ? { terminalResultRef: parsed.terminalResultRef } : {}),
+      ...(parsed.conclusion ? { conclusion: parsed.conclusion } : {}),
       ...(parsed.failure ? { failureCode: parsed.failure.code } : {}),
     })
     return { record: next, ...(resolution ? { resolution } : {}) }
@@ -1421,6 +1445,7 @@ export class DelegationService {
           ...(record.childAttemptId ? { childAttemptId: record.childAttemptId } : {}),
           ...(publication.resolution ? { resolution: publication.resolution } : {}),
           ...(record.terminalResultRef ? { terminalResultRef: record.terminalResultRef } : {}),
+          ...(record.terminalConclusion ? { conclusion: record.terminalConclusion } : {}),
           ...(record.failureCode ? { failureCode: record.failureCode } : {}),
           ...(publication.reason ? { reason: publication.reason } : {}),
         },

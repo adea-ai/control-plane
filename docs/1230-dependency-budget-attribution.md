@@ -145,12 +145,24 @@ receipt, and no package/API removal is authorized by the arithmetic.
 
 ### Checked output optimization and validation limits
 
+Current integration incorporates main
+`e551add89e2f2c1a3c3c1d824d4d9c5f1f6f295c`, including merged #1204 and release
+1.114.0, without conflicts. Its Bun 1.4.4/ICU 78.1 digest qualification and
+SQLite ordering changes come from main; no duplicate runtime repair is added.
+The new child-publication operation and both strict schemas are retained.
+The same-value type references now cover **55 operations / 110 schema references**.
+A fresh comparison against main's complete unannotated catalog passes strict
+TypeScript equality and bidirectional assignment with `skipLibCheck=false`.
+Actual emitted JavaScript is byte-identical, SHA-256
+`65309d128ac8bc1f1ae864666d98e33ec2a4810175974de54cc6eb1c711d5d7e`.
+The following earlier 54-operation size and test receipts remain historical.
+
 The SDK operation catalog now preserves imported schema type references in its
 emitted declarations. These are 108 `as typeof ImportedSchema` assertions over
 the exact existing values. They preserve all 54 operations in this independent main catalog, including
 its existing lead-publication operation, and change no runtime schema or
-operation definition. The separate unmerged Pi child-publication operation
-is not part of this candidate or this receipt. Strict
+operation definition. At that earlier head, the separate Pi child-publication operation
+was not part of that historical receipt. Strict
 TypeScript type equality and bidirectional assignment checks pass with
 `skipLibCheck=false`; generated JavaScript remains byte-identical (SHA-256
 `8842111d497096f0c02c512eb10daef9127dc4c3a4f8669c88611dadf0a8dfbf`).

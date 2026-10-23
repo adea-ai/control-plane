@@ -273,6 +273,15 @@ function childrenFactory({ denyCurrentScopeRead = true, selfComposed = false } =
         modelAlias: 'reasoning.standard',
       },
       runtime: {
+        // Explicit test wake port required by the production child composition contract.
+        // Captured advisory delivery is not Adea authorization or canonical timeline acceptance.
+        childTimelineDelivery: {
+          principalId: 'svc_adea',
+          notify: async (input) => {
+            state.childTimelineNotifications ??= []
+            state.childTimelineNotifications.push(structuredClone(input))
+          },
+        },
         childProgress: { scan: async () => ({ reconciled: 0, pending: 0 }) },
         consumeParentInbox: async () => {},
         onParentInboxWake: async () => {
