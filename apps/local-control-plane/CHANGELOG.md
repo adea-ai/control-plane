@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.38.0](https://github.com/adea-ai/control-plane/compare/local-control-plane-v1.37.0...local-control-plane-v1.38.0) (2026-10-23)
+
+
+### Features
+
+* **acp-adapter:** qualify native routes and pre-effect controls (CP [#1021](https://github.com/adea-ai/control-plane/issues/1021)) ([#1253](https://github.com/adea-ai/control-plane/issues/1253)) ([d01d337](https://github.com/adea-ai/control-plane/commit/d01d33759540d8835331d7d17035b9d0e89c44e6))
+
 ## [1.37.0](https://github.com/adea-ai/control-plane/compare/local-control-plane-v1.36.5...local-control-plane-v1.37.0) (2026-10-23)
 
 

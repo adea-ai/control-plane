@@ -1,5 +1,40 @@
 # Changelog
 
+## [1.110.4](https://github.com/adea-ai/control-plane/compare/workspace-v1.110.3...workspace-v1.110.4) (2026-10-23)
+
+
+### Tests
+
+* **database:** give workspace-catalog and model-selection integration cases their own database and setup ([#1287](https://github.com/adea-ai/control-plane/issues/1287)) ([1c45801](https://github.com/adea-ai/control-plane/commit/1c45801d83c50ba04debb5d332235c70322763dd))
+
+## [1.110.3](https://github.com/adea-ai/control-plane/compare/workspace-v1.110.2...workspace-v1.110.3) (2026-10-23)
+
+
+### Documentation
+
+* **requirements:** reconcile CP [#186](https://github.com/adea-ai/control-plane/issues/186)/[#195](https://github.com/adea-ai/control-plane/issues/195) evidence ([#1219](https://github.com/adea-ai/control-plane/issues/1219)) ([42320f5](https://github.com/adea-ai/control-plane/commit/42320f59a79ba3df6e8d97b6cbf9009750a52fe8))
+
+## [1.110.2](https://github.com/adea-ai/control-plane/compare/workspace-v1.110.1...workspace-v1.110.2) (2026-10-23)
+
+
+### Bug Fixes
+
+* **ci:** accept the ConfigChanged and SpawnFingerprintChanged cache misses in task-cache-qualification ([#1280](https://github.com/adea-ai/control-plane/issues/1280)) ([6a2bdf5](https://github.com/adea-ai/control-plane/commit/6a2bdf54c3692e63257a12c26b19518c86cd768d))
+
+## [1.110.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.110.0...workspace-v1.110.1) (2026-10-23)
+
+
+### Bug Fixes
+
+* **architecture-audit:** repair reachability drift detection ([#187](https://github.com/adea-ai/control-plane/issues/187)) ([#1215](https://github.com/adea-ai/control-plane/issues/1215)) ([52df1b2](https://github.com/adea-ai/control-plane/commit/52df1b2337892e154225ceaa8b714565beb3510c))
+
+## [1.110.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.109.0...workspace-v1.110.0) (2026-10-23)
+
+
+### Features
+
+* **acp-adapter:** qualify native routes and pre-effect controls (CP [#1021](https://github.com/adea-ai/control-plane/issues/1021)) ([#1253](https://github.com/adea-ai/control-plane/issues/1253)) ([d01d337](https://github.com/adea-ai/control-plane/commit/d01d33759540d8835331d7d17035b9d0e89c44e6))
+
 ## [1.109.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.108.0...workspace-v1.109.0) (2026-10-23)
 
 
