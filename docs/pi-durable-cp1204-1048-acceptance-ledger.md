@@ -59,7 +59,7 @@ current-candidate test pass is claimed here.
 
 The published scope is the diff from the base `ab931d068142a0c5629ed4d6cc2c96a1b377a986`
 to the published head, which is the head that carries this section. The complete changed scope is
-**188 paths: 64 added, 124 modified**; no path was deleted.
+**210 paths: 72 added, 138 modified**; no path was deleted.
 `tests/pi-durable-cp1048-evidence-discipline.test.mjs` checks this list, these counts and this
 area table against the repository, so the published scope cannot drift away from the code
 without that lane failing.
@@ -69,26 +69,26 @@ without that lane failing.
 | `(repository root)`           | 0     | 4        | 4     |
 | `apps/control-api`            | 16    | 24       | 40    |
 | `apps/hosted-control-plane`   | 2     | 5        | 7     |
-| `apps/workflow-worker`        | 0     | 4        | 4     |
+| `apps/workflow-worker`        | 0     | 6        | 6     |
 | `docs`                        | 7     | 3        | 10    |
 | `docs/architecture`           | 0     | 2        | 2     |
 | `docs/evals`                  | 0     | 1        | 1     |
-| `docs/evidence`               | 1     | 0        | 1     |
+| `docs/evidence`               | 3     | 0        | 3     |
 | `docs/requirements`           | 0     | 1        | 1     |
 | `packages/acp-adapter`        | 0     | 2        | 2     |
-| `packages/config`             | 0     | 2        | 2     |
-| `packages/contracts`          | 1     | 4        | 5     |
-| `packages/control-sdk`        | 2     | 5        | 7     |
-| `packages/database`           | 1     | 2        | 3     |
-| `packages/domain`             | 0     | 4        | 4     |
+| `packages/config`             | 0     | 4        | 4     |
+| `packages/contracts`          | 1     | 6        | 7     |
+| `packages/control-sdk`        | 2     | 7        | 9     |
+| `packages/database`           | 1     | 4        | 5     |
+| `packages/domain`             | 0     | 6        | 6     |
 | `packages/orchestration`      | 0     | 2        | 2     |
-| `packages/pi-durable-adapter` | 16    | 18       | 34    |
-| `packages/policy`             | 0     | 3        | 3     |
+| `packages/pi-durable-adapter` | 21    | 18       | 39    |
+| `packages/policy`             | 0     | 5        | 5     |
 | `packages/profile-adapters`   | 3     | 6        | 9     |
 | `packages/runtime-sdk`        | 0     | 1        | 1     |
 | `packages/sqlite-persistence` | 0     | 5        | 5     |
 | `packages/tool-execution`     | 0     | 2        | 2     |
-| `scripts`                     | 0     | 4        | 4     |
+| `scripts`                     | 1     | 4        | 5     |
 | `tests`                       | 15    | 20       | 35    |
 
 The complete path list, as published:
@@ -143,6 +143,8 @@ M  apps/hosted-control-plane/src/index.test.mjs
 M  apps/hosted-control-plane/src/index.ts
 M  apps/hosted-control-plane/src/reconciliation-wiring.test.mjs
 A  apps/hosted-control-plane/src/reconciliation-workflow-submitter.ts
+M  apps/workflow-worker/CHANGELOG.md
+M  apps/workflow-worker/package.json
 M  apps/workflow-worker/src/cloud-composition.ts
 M  apps/workflow-worker/src/index.test.mjs
 M  apps/workflow-worker/src/runtime-attempt-router.test.mjs
@@ -152,6 +154,8 @@ M  docs/architecture/control-plane-architecture.md
 M  docs/architecture/control-plane-architecture.v1.json
 M  docs/evals/skill-evals/skill-eval-harness.mts
 A  docs/evidence/cp1233-toolchain-qualification-2026-10-23.md
+A  docs/evidence/m11-security-trust-boundary-audit-2026-10-21.md
+A  docs/evidence/m11-security-trust-boundary-matrix-2026-10-21.v1.json
 M  docs/harnesses.md
 A  docs/pi-durable-cancellation-owner-proposal.md
 A  docs/pi-durable-committed-cancellation-authority.md
@@ -166,23 +170,33 @@ M  docs/requirements/cp186-195-reconciliation-2026-10-21.md
 M  package.json
 M  packages/acp-adapter/src/acp-remote-crypto.ts
 M  packages/acp-adapter/src/acp-remote-transport.ts
+M  packages/config/CHANGELOG.md
+M  packages/config/package.json
 M  packages/config/src/managed-cloud.test.mjs
 M  packages/config/src/managed-cloud.ts
+M  packages/contracts/CHANGELOG.md
+M  packages/contracts/package.json
 M  packages/contracts/src/control-api.test.mjs
 M  packages/contracts/src/control-api.ts
 M  packages/contracts/src/decision-resolution.ts
 M  packages/contracts/src/index.ts
 A  packages/contracts/src/pi-child-publication.ts
+M  packages/control-sdk/CHANGELOG.md
 M  packages/control-sdk/openapi/control-plane.v3.json
+M  packages/control-sdk/package.json
 M  packages/control-sdk/scripts/openapi.mjs
 M  packages/control-sdk/src/client.ts
 M  packages/control-sdk/src/compatibility.test.mjs
 A  packages/control-sdk/src/openapi-model-id-parity.test.mjs
 M  packages/control-sdk/src/operations.ts
 A  packages/control-sdk/src/pi-child-publication.test.mjs
+M  packages/database/CHANGELOG.md
+M  packages/database/package.json
 A  packages/database/src/execution-repository.test.mjs
 M  packages/database/src/execution-repository.ts
 M  packages/database/src/integration.test.mjs
+M  packages/domain/CHANGELOG.md
+M  packages/domain/package.json
 M  packages/domain/src/command-inbox.test.mjs
 M  packages/domain/src/command-inbox.ts
 M  packages/domain/src/execution-lifecycle.test.mjs
@@ -196,6 +210,8 @@ M  packages/pi-durable-adapter/src/cancellation-generation.test.mjs
 A  packages/pi-durable-adapter/src/cancellation-history.ts
 A  packages/pi-durable-adapter/src/cancellation-owner.test.mjs
 A  packages/pi-durable-adapter/src/cancellation-owner.ts
+A  packages/pi-durable-adapter/src/cancellation-registration.test.mjs
+A  packages/pi-durable-adapter/src/cancellation-registration.ts
 M  packages/pi-durable-adapter/src/canonical-authority.ts
 A  packages/pi-durable-adapter/src/committed-cancellation-authority.test.mjs
 A  packages/pi-durable-adapter/src/competing-recovery-owners.test.mjs
@@ -208,6 +224,7 @@ M  packages/pi-durable-adapter/src/journal.test.mjs
 M  packages/pi-durable-adapter/src/journal.ts
 A  packages/pi-durable-adapter/src/native-cancellation-boundary.test.mjs
 A  packages/pi-durable-adapter/src/native-cancellation-boundary.ts
+A  packages/pi-durable-adapter/src/native-fence-public-api-probe.test.mjs
 A  packages/pi-durable-adapter/src/pi-engine-request-valued.fixture.mjs
 M  packages/pi-durable-adapter/src/pi-engine-tools.loopback.fixture.mjs
 M  packages/pi-durable-adapter/src/pi-engine-tools.test.mjs
@@ -219,10 +236,14 @@ M  packages/pi-durable-adapter/src/recovery-races-owner.child.mjs
 M  packages/pi-durable-adapter/src/recovery-races.fixture.mjs
 M  packages/pi-durable-adapter/src/recovery-races.test.mjs
 A  packages/pi-durable-adapter/src/recovery-races.worker.mjs
+A  packages/pi-durable-adapter/src/restore-generation-authority.test.mjs
+A  packages/pi-durable-adapter/src/restore-generation-authority.ts
 A  packages/pi-durable-adapter/src/resume-permit.ts
 A  packages/pi-durable-adapter/src/upgrade-manifest.ts
 M  packages/pi-durable-adapter/src/usage-authority.test.mjs
 M  packages/pi-durable-adapter/src/usage-authority.ts
+M  packages/policy/CHANGELOG.md
+M  packages/policy/package.json
 M  packages/policy/src/decision-resolution.test.mjs
 M  packages/policy/src/decision-resolution.ts
 M  packages/policy/src/index.ts
@@ -247,6 +268,7 @@ M  scripts/integration-shards.mjs
 M  scripts/requirements-ledger.mjs
 M  scripts/run-bun-test-group.mjs
 M  scripts/run-integration-tests.mjs
+A  scripts/security-trust-boundary-probes.mjs
 M  tests/fixtures/pi-lead-restart/host.mjs
 A  tests/fixtures/pinned-process.mjs
 A  tests/fixtures/profile-recovery-cleanup.mjs

@@ -160,3 +160,26 @@ The fixtures are pure contracts plus a disposable SQLite journal in a temporary
 directory. The writer enumeration reads source text only: it opens no database,
 starts no process and touches no live resource. No fixture supplies production
 authority, no live resource is touched and no effect is performed.
+
+## Dormant registration and generation evidence prototypes
+
+The #1048 continuation adds two source modules without production exports or
+wiring. `cancellation-registration.ts` owns a disposable SQLite registration and
+closure protocol for its **registered prototype universe**. The enumeration above
+now includes that writer under local epoch/identity authority. It does not discover
+unregistered writers, commit canonical invalidation, abort a native task or prove
+all-writer coverage. A matching native fence acknowledgment is evidence only.
+
+`restore-generation-authority.ts` is a strict snapshot reader over an injected
+external-authority port. Its default is unavailable. Controlled tests reject a
+whole rollback with a matching local digest against a newer independent fake
+snapshot; malformed, stale, closing and ambiguous evidence fail closed. The
+reader is classified separately from durable writers. It cannot supply an
+independent production provider, advance generations, fence old writers or turn
+an asynchronous read into atomic admission.
+
+The source inventory retains every previously classified component and adds
+these two: 22 components, of which the two original cancellation contracts bind
+caller-supplied generation and the remaining 20 include writers and readers with
+no qualified independent production authority. The native zero-effect tests and
+full-writer restore-generation acceptance remain open.

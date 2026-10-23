@@ -137,6 +137,7 @@ const generationHolders = new Set([
   `${adapterSource}/native-cancellation-boundary.ts`,
 ])
 const ownEpochOrIdentity = new Set([
+  `${adapterSource}/cancellation-registration.ts`,
   `${adapterSource}/effect-gate.ts`,
   `${adapterSource}/journal.ts`,
   `${adapterSource}/lease.ts`,
@@ -157,6 +158,7 @@ const ownRecordOnly = new Set([
   'packages/pi-cloudflare-host/src/sessions.ts',
 ])
 const readersOrInProcessIdentities = new Set([
+  `${adapterSource}/restore-generation-authority.ts`,
   `${adapterSource}/resume-permit.ts`,
   `${adapterSource}/upgrade-manifest.ts`,
 ])
@@ -627,7 +629,7 @@ test('the writers with no generation authority are named, and the gap stays open
     ...ownRecordOnly,
     ...readersOrInProcessIdentities,
   ].toSorted()
-  expect(writersWithoutGenerationAuthority).toHaveLength(18)
+  expect(writersWithoutGenerationAuthority).toHaveLength(20)
   expect(writersWithoutGenerationAuthority).not.toContain(`${adapterSource}/cancellation-owner.ts`)
   expect(writersWithoutGenerationAuthority).not.toContain(
     `${adapterSource}/native-cancellation-boundary.ts`
@@ -680,6 +682,7 @@ test('every module that writes the durable state is accounted for', () => {
     'packages/pi-durable-adapter/src/adapter.ts',
     'packages/pi-durable-adapter/src/cancellation-history.ts',
     'packages/pi-durable-adapter/src/cancellation-owner.ts',
+    'packages/pi-durable-adapter/src/cancellation-registration.ts',
     'packages/pi-durable-adapter/src/effect-gate.ts',
     'packages/pi-durable-adapter/src/journal.ts',
     'packages/pi-durable-adapter/src/lease.ts',
@@ -691,7 +694,8 @@ test('every module that writes the durable state is accounted for', () => {
   // The writers that carry a restore generation are the two whose target binds
   // it. Every other writer is accounted for under one of the other
   // classifications, and none of them is claimed to refuse a rolled-back
-  // generation.
+  // generation through qualified production authority. The dormant registration
+  // prototype reads injected generation evidence, but provides no such authority.
   expect(generationHolders.size).toBe(2)
   expect(writers.filter((writer) => generationHolders.has(writer)).toSorted()).toEqual([
     `${adapterSource}/cancellation-owner.ts`,

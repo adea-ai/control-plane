@@ -1,14 +1,14 @@
 # Pi cancellation owner proposal
 
-Status: **proposed source design, not implemented or qualified**. The next bounded
+Status: **source design with dormant prototypes, not production implementation or qualification**. The next bounded
 cut is [Minimal next source-design cut](#minimal-next-source-design-cut-proposed-2026-10-23).
 The existing reference contract is in
 [Native commit/fence qualification and dormant boundary](#native-commitfence-qualification-and-dormant-boundary).
 The earlier drain-before-ACK protocol below is preserved as superseded history,
 not the approved ordering. The earlier product-grant ordering proposal is
 rejected: neither `cancelRequestedAt` nor a retained cancellation intent is an
-irrevocable permission to execute after authority is revoked. No coordination
-protocol in this document is implemented or activated.
+irrevocable permission to execute after authority is revoked. No production coordination
+protocol in this document is activated. The dormant prototype scope is described below.
 
 Initial historical baseline: CP `65acc91ddaf7f6161318d3383582d9847f3d3688`, Adea
 `a4a5059b115530b0002ada9400a24770e430294a`. The source-design update below is
@@ -165,6 +165,38 @@ Passing dormant-schema or in-memory tests does not satisfy these native checks.
 Installed paired SDK/product/desktop, PostgreSQL/profile and live acceptance remain
 separate. This proposal changes no tests, dependencies, ports, runtime wiring,
 infrastructure or credentials, and closes no aggregate Pi issue.
+
+## Executable dormant continuation (2026-10-23)
+
+The owned #1048 source now contains `cancellation-registration.ts` and
+`restore-generation-authority.ts`, with direct regression tests. These modules
+are deliberately absent from the public package entry point and runtime
+composition. They do not repair or replace the two existing native zero-effect
+qualification failures.
+
+The registration prototype uses a caller-owned SQLite database. Its local
+transaction closes affected registration scopes before selecting an immutable
+registered-owner cut. Closures accumulate, per-owner fence requests are ordered,
+and matching acknowledgments survive reopen and exact retries. Only explicitly
+registered prototype owners are covered; complete production writer discovery,
+canonical invalidation R and native abort N are not implemented by this module.
+Its result is explicitly evidence with `qualifiedAuthorization: false`.
+
+The restore reader validates exact lineage, generation, revision and open state
+against an injected port. Its default and the coordinator's native boundary
+default remain unavailable. A controlled fake supplies independent evidence in
+tests, including whole rollback with matching local hashes. No real independent
+provider, generation advance, old-writer quiescence proof or atomic commit-time
+authority is supplied. An asynchronous read may become stale immediately.
+
+The public-API transaction probe is test-only and keeps native host-document
+transactions distinct from guarded abort admission. A host document is not a
+restriction respected by ordinary `Conversation.abort`. The pinned SDK still
+needs a supported selective native admission/receipt hook, or a public-facade
+composition proving equivalent behavior without private task mutations.
+Independent generation storage and all-writer integration still require their
+separate reviewed boundary and owners; no production or Adea changes follow
+from these prototypes.
 
 ## Semantics to preserve
 
