@@ -322,37 +322,22 @@ was not executed. No live profile, provider, deployment or production action was
 
 ---
 
-## 8. Proposed CI lane and owner handoff — proposed only, not applied
+## 8. CI lane ownership — applied in the CP #1215 repair
 
-Root asked for the exact proposed lane and owner handoff to be documented rather than runner
-ownership to be changed silently. **No runner file, lane list or CI registration was edited.**
+This section previously proposed lane registration without applying it. The repair applies the
+second option from that proposal: the regression file moved to
+`tests/m11-architecture-audit-regression.test.mjs`, and it is registered in the `smoke` list in
+`scripts/run-bun-test-group.mjs` together with the expected `smoke` list in
+`tests/repository.test.mjs` (the two edits land together or the lane inventory fails closed).
 
-The regression file lives at `scripts/m11-architecture-audit-regression.test.mjs` because it must
-import `scripts/architecture-audit.mjs` directly, and `scripts/workspace-boundaries.mjs` rejects
-an import that leaves a package directory. The repository's lane system does not cover `scripts/`:
+The regression suite now carries its own ownership check: it reads the canonical lane inventory,
+asserts the file is owned by exactly one primary lane (`smoke`), that a lane invocation applies no
+shard or path filter to the smoke list, and that `test:group:smoke`, `test:smoke` and the
+aggregate `test` script reach that lane. Run it with
+`bun test --timeout 30000 tests/m11-architecture-audit-regression.test.mjs` or through
+`bun run test:group:smoke`.
 
-- `scripts/run-bun-test-group.mjs` (`discoverTestInventory`) walks `apps/`, `packages/` and
-  `tests/` only, so a `scripts/**/*.test.mjs` path is not in the lane inventory.
-- `tests/repository.test.mjs` asserts the `e2e` and `smoke` lane lists by exact deep equality, and
-  the inventory fails closed with `missing [...]` for any lane entry outside those roots.
-
-Two options are available to the runner owner; this work does not choose between them and applies
-neither:
-
-1. **Extend the lane roots to `scripts/`.** In `scripts/run-bun-test-group.mjs`, add `scripts` to
-   `testRoots` and to the `sourceRoots` used by `discoverTestFiles('unit')`, so the file joins the
-   `unit` lane by discovery. `tests/repository.test.mjs` needs no change, because the `unit` lane
-   is asserted by inclusion and the inventory and the expected union are both derived from the same
-   discovery.
-2. **Move and register the file in a covered root.** Move the file to `tests/` and add
-   `tests/m11-architecture-audit-regression.test.mjs` to the `smoke` list in
-   `scripts/run-bun-test-group.mjs` **and** to the expected `smoke` list in
-   `tests/repository.test.mjs`; the two edits must land together or the lane inventory fails
-   closed.
-
-Until then the file runs with `cd scripts && bun test --timeout 30000 m11-architecture-audit-regression.test.mjs`.
-Owner: the test-runner / Code Foundry lane owner (W1/W7 custody, per the Fleet 2 ledger exclusion
-"Test runners W1/W7 and global/shared Code Foundry").
+The earlier stand-alone invocation (`cd scripts && bun test ...`) no longer applies.
 
 ---
 

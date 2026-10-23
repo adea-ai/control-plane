@@ -8,12 +8,13 @@ import {
   discoverArchitecture,
   discoverCapabilityBindings,
   discoverControllerRoutes,
+  discoverMigrationInventory,
   discoverPublicOperations,
   discoverVersioningDefaults,
   evidencePathError,
   renderArchitectureReport,
   validateArchitectureAudit,
-} from './architecture-audit.mjs'
+} from '../scripts/architecture-audit.mjs'
 
 /**
  * Regression coverage for the architecture-audit tooling itself.
@@ -23,13 +24,11 @@ import {
  * the drift it is supposed to detect, and that the checks stay deterministic
  * when the audited tree changes.
  *
- * This file sits next to the tool it covers because it imports
- * `scripts/architecture-audit.mjs` directly: `scripts/workspace-boundaries.mjs`
- * rejects an import that leaves a package directory, so the file cannot live
- * under `apps/` or `packages/`, and `tests/` requires lane registration that
- * this work does not own. Run it with
- * `cd scripts && bun test --timeout 30000 m11-architecture-audit-regression.test.mjs`,
- * using the same timeout the repository lanes use.
+ * The file lives in `tests/` and is registered in the canonical `smoke` lane in
+ * `scripts/run-bun-test-group.mjs` (and the matching list in
+ * `tests/repository.test.mjs`), so `bun run test:group:smoke` runs it. It
+ * imports `scripts/architecture-audit.mjs` the same way the audit's own
+ * `tests/m11-architecture-audit.test.mjs` does.
  */
 
 const repositoryRoot = new URL('..', import.meta.url)
@@ -808,40 +807,122 @@ describe('M11.2 architecture audit tooling regressions', () => {
     )
   })
 
-  test('binds the canonical lane discovery result for this regression suite', async () => {
-    // The canonical lane runner is read here, never edited: it belongs to the
-    // shared test-runner owner. Importing it records what the canonical CI
-    // actually discovers, so the gap in section 13 of the evidence packet is a
-    // checked fact rather than a prose claim.
-    const { discoverTestFiles, discoverTestInventory } = await import('./run-bun-test-group.mjs')
-    const self = 'scripts/m11-architecture-audit-regression.test.mjs'
+  describe('migration registry compares tag sets, not only counts', () => {
+    // A synthetic repository root holding only what the migration inventory
+    // reads: the Drizzle SQL files, the journal and the SQLite registry.
+    async function createMigrationFixture({ sql, journal }) {
+      const root = await mkdtemp(join(tmpdir(), 'control-plane-migration-registry-'))
+      const drizzle = join(root, 'packages/database/drizzle')
+      await mkdir(join(drizzle, 'meta'), { recursive: true })
+      for (const name of sql) await writeFile(join(drizzle, `${name}.sql`), '-- synthetic\n')
+      await writeFile(
+        join(drizzle, 'meta/_journal.json'),
+        JSON.stringify({ entries: journal.map((tag) => ({ tag })) })
+      )
+      await mkdir(join(root, 'packages/sqlite-persistence/src'), { recursive: true })
+      await writeFile(
+        join(root, 'packages/sqlite-persistence/src/migrations.ts'),
+        'export const migrations = [{ version: 1, statements: [] }]\n'
+      )
+      return root
+    }
+
+    async function registryErrors(fixture) {
+      const root = await createMigrationFixture(fixture)
+      try {
+        const migrationInventory = await discoverMigrationInventory(root)
+        const discovered = clone(await discoverArchitecture(repositoryRoot))
+        discovered.migrationInventory = migrationInventory
+        const { errors } = await validateArchitectureAudit(audit, { repositoryRoot, discovered })
+        return {
+          migrationInventory,
+          errors: errors.filter((entry) => entry.includes('migration registry')),
+        }
+      } finally {
+        await rm(root, { recursive: true, force: true })
+      }
+    }
+
+    test('accepts a registry whose SQL files and journal tags are the same set', async () => {
+      const { errors } = await registryErrors({
+        sql: ['0000_a', '0001_b'],
+        journal: ['0000_a', '0001_b'],
+      })
+      expect(errors).toEqual([])
+    })
+
+    test('rejects an equal-count registry whose tags differ', async () => {
+      const { migrationInventory, errors } = await registryErrors({
+        sql: ['0000_a', '0001_b'],
+        journal: ['0000_a', '0001_c'],
+      })
+      // The counts agree, so only the tag comparison can see this drift.
+      expect(migrationInventory.postgres.sqlFiles).toBe(migrationInventory.postgres.journalEntries)
+      expect(errors).toHaveLength(2)
+      expect(errors.join('\n')).toContain('without a Drizzle journal entry: 0001_b')
+      expect(errors.join('\n')).toContain('without a SQL file: 0001_c')
+    })
+
+    test('reports a missing, an orphan and a duplicate entry separately', async () => {
+      const { errors } = await registryErrors({
+        sql: ['0000_a', '0001_b', '0002_c'],
+        journal: ['0000_a', '0000_a', '0001_b'],
+      })
+      const text = errors.join('\n')
+      expect(text).toContain('without a Drizzle journal entry: 0002_c')
+      expect(text).toContain('duplicate Drizzle journal tag(s): 0000_a')
+      expect(text).not.toContain('without a SQL file')
+    })
+
+    test('reports a journal entry that carries no tag', async () => {
+      const root = await createMigrationFixture({ sql: ['0000_a'], journal: ['0000_a'] })
+      try {
+        await writeFile(
+          join(root, 'packages/database/drizzle/meta/_journal.json'),
+          JSON.stringify({ entries: [{ idx: 0 }] })
+        )
+        const discovered = clone(await discoverArchitecture(repositoryRoot))
+        discovered.migrationInventory = await discoverMigrationInventory(root)
+        const { errors } = await validateArchitectureAudit(audit, { repositoryRoot, discovered })
+        const text = errors.filter((entry) => entry.includes('migration registry')).join('\n')
+        expect(text).toContain('without a tag')
+        expect(text).toContain('without a Drizzle journal entry: 0000_a')
+      } finally {
+        await rm(root, { recursive: true, force: true })
+      }
+    })
+  })
+
+  test('is owned by exactly one canonical lane that CI executes', async () => {
+    const { discoverTestFiles, discoverTestInventory, selectLaneFiles } =
+      await import('../scripts/run-bun-test-group.mjs')
+    const self = 'tests/m11-architecture-audit-regression.test.mjs'
+    // The inventory fails closed on an unowned, missing or multiply-owned file,
+    // so a successful read is itself the ownership proof for every test file.
+    const inventory = await discoverTestInventory()
+    expect(inventory.filter(({ path }) => path === self)).toEqual([
+      { path: self, primaryLane: 'smoke' },
+    ])
     const inLane = []
     for (const lane of ['unit', 'integration', 'e2e', 'smoke']) {
-      const files = await discoverTestFiles(lane)
-      if (files.includes(self)) inLane.push(lane)
+      if ((await discoverTestFiles(lane)).includes(self)) inLane.push(lane)
     }
-    // The suite lives outside every discovery root, so the canonical lane
-    // inventory cannot see it and the drift check stays silent about it: the
-    // file is reported neither as `unowned` nor as `missing`.
-    let drift = ''
-    try {
-      await discoverTestInventory()
-    } catch (error) {
-      drift = String(error instanceof Error ? error.message : error)
+    expect(inLane).toEqual(['smoke'])
+    // The audit's own suite stays in the same lane next to this one.
+    expect(await discoverTestFiles('smoke')).toContain('tests/m11-architecture-audit.test.mjs')
+    // The lane runner executes the whole smoke list: a lane invocation applies
+    // no shard or path filter to it.
+    const smoke = await discoverTestFiles('smoke')
+    expect(selectLaneFiles('smoke', smoke, {})).toEqual(smoke)
+    // The package scripts CI and contributors run reach that lane unfiltered,
+    // and the aggregate `test` script fans out over every `test:group:*`.
+    const manifest = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'))
+    for (const name of ['test:group:smoke', 'test:smoke']) {
+      expect(manifest.scripts[name]).toMatch(
+        /bun scripts\/run-bun-test-group\.mjs smoke --timeout \d+$/
+      )
+      expect(manifest.scripts[name]).not.toContain('.test.mjs')
     }
-    expect(drift, 'the lane inventory must not name this suite').not.toContain(self)
-    // The architecture audit's own test is registered in the smoke lane, so the
-    // audit itself is covered by the canonical CI.
-    expect(
-      (await discoverTestFiles('smoke')).includes('tests/m11-architecture-audit.test.mjs'),
-      "the architecture audit's own test must stay registered in the smoke lane"
-    ).toBe(true)
-    // Drift signal: this assertion fails as soon as the shared runner
-    // registration is applied, because the direct invocation and the
-    // registration proposal in the evidence packet are then stale.
-    expect(
-      inLane,
-      'this suite joined a canonical lane, so the shared runner registration has been applied: the direct `cd scripts && bun test` invocation and the registration proposal in section 13.3 of the evidence packet are now stale and must be updated'
-    ).toEqual([])
+    expect(manifest.scripts.test).toContain("'test:group:*'")
   })
 })

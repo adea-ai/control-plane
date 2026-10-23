@@ -296,6 +296,30 @@ export async function discoverArchitecture(rootUrl = new URL('..', import.meta.u
 }
 
 /**
+ * Compares the PostgreSQL migration SQL files against the Drizzle journal by
+ * tag. Equal counts do not make a registry consistent: a renamed or replaced
+ * file leaves the counts equal while the two sides name different migrations.
+ *
+ * `missingFromJournal` are SQL files with no journal entry, `orphanJournalTags`
+ * are journal entries with no SQL file, `duplicateJournalTags` are tags the
+ * journal lists more than once, and `untaggedJournalEntries` are the positions
+ * of journal entries that carry no usable tag.
+ */
+export function compareMigrationRegistry(sqlTags, journalTags) {
+  const sql = new Set(sqlTags)
+  const tagged = journalTags.filter((tag) => tag !== null)
+  const journal = new Set(tagged)
+  return {
+    missingFromJournal: [...sql].filter((tag) => !journal.has(tag)).toSorted(),
+    orphanJournalTags: [...journal].filter((tag) => !sql.has(tag)).toSorted(),
+    duplicateJournalTags: [
+      ...new Set(tagged.filter((tag, index) => tagged.indexOf(tag) !== index)),
+    ].toSorted(),
+    untaggedJournalEntries: journalTags.flatMap((tag, index) => (tag === null ? [index] : [])),
+  }
+}
+
+/**
  * Measures the migration registry of both persistence dialects.
  *
  * The canonical audit states migration and schema figures in prose. Measuring
@@ -325,6 +349,12 @@ export async function discoverMigrationInventory(root) {
       lastSqlFile: sqlFiles.at(-1) ?? null,
       journalEntries: journalEntries.length,
       lastJournalTag: journalEntries.at(-1)?.tag ?? null,
+      // The full tag lists, so the registry is compared by identity and not
+      // only by count: two registries of equal size can still disagree.
+      sqlTags: sqlFiles.map((name) => name.slice(0, -'.sql'.length)),
+      journalTags: journalEntries.map((entry) =>
+        typeof entry?.tag === 'string' && entry.tag.length > 0 ? entry.tag : null
+      ),
     },
     sqlite: {
       schemaVersion: sqliteVersions.length === 0 ? null : Math.max(...sqliteVersions),
@@ -841,6 +871,27 @@ function reportContractSurface(errors, warnings, discovered) {
     if (postgres.sqlFiles !== postgres.journalEntries) {
       errors.push(
         `PostgreSQL migration registry drifted: ${postgres.sqlFiles} SQL file(s) against ${postgres.journalEntries} Drizzle journal entr(ies)`
+      )
+    }
+    const registry = compareMigrationRegistry(postgres.sqlTags ?? [], postgres.journalTags ?? [])
+    if (registry.missingFromJournal.length > 0) {
+      errors.push(
+        `PostgreSQL migration registry drifted: SQL file(s) without a Drizzle journal entry: ${registry.missingFromJournal.join(', ')}`
+      )
+    }
+    if (registry.orphanJournalTags.length > 0) {
+      errors.push(
+        `PostgreSQL migration registry drifted: Drizzle journal entr(ies) without a SQL file: ${registry.orphanJournalTags.join(', ')}`
+      )
+    }
+    if (registry.duplicateJournalTags.length > 0) {
+      errors.push(
+        `PostgreSQL migration registry drifted: duplicate Drizzle journal tag(s): ${registry.duplicateJournalTags.join(', ')}`
+      )
+    }
+    if (registry.untaggedJournalEntries.length > 0) {
+      errors.push(
+        `PostgreSQL migration registry drifted: Drizzle journal entr(ies) without a tag at position(s) ${registry.untaggedJournalEntries.join(', ')}`
       )
     }
     if (postgres.sqlFiles > 0 && sqlite.schemaVersion !== null) {

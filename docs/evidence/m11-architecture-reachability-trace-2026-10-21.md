@@ -713,6 +713,14 @@ heads, and the capability matrix in section 2.3 is unchanged.
 
 ## 13. Canonical CI discovery path for this regression suite (reproducible evidence)
 
+> **Status update (CP #1215 repair).** The gap recorded in this section is closed. The suite now lives
+> at `tests/m11-architecture-audit-regression.test.mjs` and is registered in the `smoke` lane of
+> `scripts/run-bun-test-group.mjs` and in the matching list in `tests/repository.test.mjs`. The
+> regression asserts that exactly one canonical lane owns it and that the package scripts reach that
+> lane unfiltered. The facts and commands below are the point-in-time record of the earlier state,
+> when the file sat at `scripts/m11-architecture-audit-regression.test.mjs` outside every discovery
+> root; they are kept as history and are no longer current.
+
 **The canonical CI does not discover or run this regression suite, and the fix is one line in a
 shared runner this branch does not own.** Nothing in this section edits that runner; the
 registration is proposed in 13.3 for root's decision.
