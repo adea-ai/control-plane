@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.110.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.110.0...workspace-v1.110.1) (2026-10-23)
+
+
+### Bug Fixes
+
+* **architecture-audit:** repair reachability drift detection ([#187](https://github.com/adea-ai/control-plane/issues/187)) ([#1215](https://github.com/adea-ai/control-plane/issues/1215)) ([52df1b2](https://github.com/adea-ai/control-plane/commit/52df1b2337892e154225ceaa8b714565beb3510c))
+
 ## [1.110.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.109.0...workspace-v1.110.0) (2026-10-23)
 
 
