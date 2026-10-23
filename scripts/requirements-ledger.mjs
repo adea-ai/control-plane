@@ -140,18 +140,28 @@ const figureInventoryPath = resolve(
   repositoryRoot,
   'docs/requirements/canonical-figure-inventory.v1.json'
 )
-const freshnessPath = resolve(
-  repositoryRoot,
-  'docs/requirements/canonical-source-freshness-2026-10-03.v1.json'
-)
-const lineagePath = resolve(
-  repositoryRoot,
-  'docs/requirements/canonical-source-lineage-2026-10-03.v1.json'
-)
+// The receipts are read by validators that accept a caller-supplied root, so
+// they are recorded repository-relative and resolved against that root. An
+// absolute path here would make resolve(root, path) ignore the root and read the
+// receipts of the checkout that holds this script.
+const freshnessPath = 'docs/requirements/canonical-source-freshness-2026-10-03.v1.json'
+const lineagePath = 'docs/requirements/canonical-source-lineage-2026-10-03.v1.json'
 const reconciliationRecordPath = resolve(
   repositoryRoot,
   'docs/requirements/cp186-195-reconciliation-2026-10-21.md'
 )
+
+// A shallow checkout does not carry the history that ancestry and worker-head
+// provenance are proven against. The caller may state the layout explicitly;
+// otherwise it is read from Git.
+function isShallowRepository(root, declared) {
+  if (typeof declared === 'boolean') return declared
+  const shallow = spawnSync('git', ['rev-parse', '--is-shallow-repository'], {
+    cwd: root,
+    encoding: 'utf8',
+  })
+  return shallow.status === 0 && shallow.stdout.trim() === 'true'
+}
 
 export async function validateRequirementsLedger(ledger, options = {}) {
   const errors = []
@@ -161,6 +171,7 @@ export async function validateRequirementsLedger(ledger, options = {}) {
   const root = typeof rootOption === 'string' ? rootOption : fileURLToPath(rootOption)
   let candidateAvailable = false
   let committedArtifacts = new Set()
+  const shallowRepository = isShallowRepository(root, options.shallowRepository)
   if (ledger.schemaVersion !== 1) errors.push('schemaVersion must equal 1')
   if (!/^[0-9a-f]{40}$/.test(ledger.candidate?.commit ?? '')) {
     errors.push('candidate.commit must be a full Git commit')
@@ -184,16 +195,6 @@ export async function validateRequirementsLedger(ledger, options = {}) {
       )
     )
     if (!candidateAvailable) {
-      const shallowRepository =
-        typeof options.shallowRepository === 'boolean'
-          ? options.shallowRepository
-          : (() => {
-              const shallow = spawnSync('git', ['rev-parse', '--is-shallow-repository'], {
-                cwd: root,
-                encoding: 'utf8',
-              })
-              return shallow.status === 0 && shallow.stdout.trim() === 'true'
-            })()
       if (shallowRepository) {
         warnings.push(
           `candidate commit ${ledger.candidate.commit} is unavailable in this shallow checkout; committed-artifact provenance must be reproduced from a full clone`
@@ -320,11 +321,12 @@ export async function validateRequirementsLedger(ledger, options = {}) {
   errors.push(...validateAtomDispositions(ledger, atomicCrosswalk.register))
   errors.push(...(await validateAtomicCrosswalkCached(ledger, root)))
   errors.push(...validateGapReferences(ledger))
-  const candidateProof = validateCandidateProof(ledger, root)
+  const candidateProof = validateCandidateProof(ledger, root, shallowRepository)
   errors.push(...candidateProof.errors)
   warnings.push(...candidateProof.warnings)
-  const workerEvidence = validateWorkerEvidence(ledger, root)
+  const workerEvidence = validateWorkerEvidence(ledger, root, shallowRepository)
   errors.push(...workerEvidence.errors)
+  warnings.push(...workerEvidence.warnings)
   provenance.push(...workerEvidence.provenance)
   errors.push(...(await validateFigureLineage(ledger, root)))
   provenance.push(...profileJoinProvenance(ledger))
@@ -737,8 +739,8 @@ function isCanonicalControlPlaneIssue(issue) {
   )
 }
 
-export async function renderRequirementsReport(ledger) {
-  const canonical = await collectCanonicalCrosswalk(ledger, repositoryRoot)
+export async function renderRequirementsReport(ledger, root = repositoryRoot) {
+  const canonical = await collectCanonicalCrosswalk(ledger, root)
   if (canonical.errors.length > 0) throw new Error(canonical.errors.join('\n'))
   const crosswalk = canonical.crosswalk
   const linked = crosswalk.atomicSummary
@@ -1129,7 +1131,7 @@ function validateAtomDispositions(ledger, register) {
 // The recorded candidate is a historical baseline. The reconciliation base is the
 // commit the current reconciliation was performed against; a candidate that does
 // not cover it may not be presented as current-candidate proof.
-function validateCandidateProof(ledger, root) {
+function validateCandidateProof(ledger, root, shallowRepository) {
   const errors = []
   const warnings = []
   const reconciliation = ledger.reconciliation
@@ -1150,8 +1152,16 @@ function validateCandidateProof(ledger, root) {
         encoding: 'utf8',
       }
     )
-    if (ancestor.status !== 0)
-      errors.push('reconciliation.reconciliationBase must be an ancestor of the current head')
+    if (ancestor.status !== 0) {
+      // A shallow checkout cannot answer the ancestry question, so the base is
+      // reported as unverified. It is never counted as proven, and a full clone
+      // still fails closed.
+      if (shallowRepository)
+        warnings.push(
+          `reconciliation base ${reconciliation.reconciliationBase} ancestry is unverified in this shallow checkout; reproduce the ancestry check from a full clone`
+        )
+      else errors.push('reconciliation.reconciliationBase must be an ancestor of the current head')
+    }
   }
   const proof = reconciliation.candidateProof
   if (!proof) {
@@ -1236,16 +1246,30 @@ function resolveBlobs(root, pairs) {
 // that already existed here. The blob identity of every recorded evidence path is
 // therefore compared between the recorded head and this tree, and a difference is
 // reported as provenance so it can never be read as coverage.
-function validateWorkerEvidence(ledger, root) {
+//
+// A shallow checkout does not fetch the lanes' own branches. A head that cannot
+// be resolved there is reported as unverified, with its evidence paths, and is
+// skipped by the per-path checks so that nothing is read as verified or as
+// absent. A full clone still fails closed on an unresolvable head.
+export function validateWorkerEvidence(ledger, root, shallowRepository) {
   const errors = []
+  const warnings = []
   const provenance = []
   const workers = ledger.workerEvidence ?? []
   if (!Array.isArray(workers) || workers.length === 0)
     errors.push('workerEvidence must record the contributing lanes')
+  const headAvailable = (head) =>
+    spawnSync('git', ['cat-file', '-e', `${head}^{commit}`], { cwd: root, encoding: 'utf8' })
+      .status === 0
+  const unverifiedHeads = new Set()
   const blobPairs = []
   for (const worker of workers) {
     if (worker.status === 'pending') continue
     if (!/^[0-9a-f]{40}$/.test(worker.head ?? '')) continue
+    if (!headAvailable(worker.head)) {
+      if (shallowRepository) unverifiedHeads.add(worker.id)
+      continue
+    }
     for (const entry of worker.evidence ?? []) {
       if (!entry.path) continue
       blobPairs.push([worker.head, entry.path], ['HEAD', entry.path])
@@ -1273,12 +1297,14 @@ function validateWorkerEvidence(ledger, root) {
       errors.push(`${worker.id}: a received worker must record an exact full Git head`)
       continue
     }
-    const exists = spawnSync('git', ['cat-file', '-e', `${worker.head}^{commit}`], {
-      cwd: root,
-      encoding: 'utf8',
-    })
-    if (exists.status !== 0)
+    const unverified = unverifiedHeads.has(worker.id)
+    if (unverified) {
+      warnings.push(
+        `${worker.id} (${worker.lane}): worker head ${worker.head} is unavailable in this shallow checkout; ${(worker.evidence ?? []).length} recorded evidence paths are unverified and must be reproduced from a full clone`
+      )
+    } else if (!headAvailable(worker.head)) {
       errors.push(`${worker.id}: worker head ${worker.head} is unavailable in the repository`)
+    }
     const diverged = []
     for (const entry of worker.evidence ?? []) {
       if (!entry.path) {
@@ -1290,6 +1316,7 @@ function validateWorkerEvidence(ledger, root) {
           `${worker.id}: worker evidence commit must match the worker head for ${entry.path}`
         )
       }
+      if (unverified) continue
       const headBlob = blobs.get(`${worker.head}:${entry.path}`)
       if (!headBlob) {
         errors.push(
@@ -1319,7 +1346,7 @@ function validateWorkerEvidence(ledger, root) {
       }
     }
   }
-  return { errors, provenance }
+  return { errors, warnings, provenance }
 }
 
 // The profile and requirement rows are joined in two directions: a requirement row

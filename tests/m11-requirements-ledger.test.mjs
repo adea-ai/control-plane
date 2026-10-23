@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test'
-import { copyFileSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { copyFileSync, cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -21,6 +22,7 @@ import {
   validateFormatterVersion,
   validateReconciliationRecord,
   validateRequirementsLedger,
+  validateWorkerEvidence,
 } from '../scripts/requirements-ledger.mjs'
 
 const ledgerUrl = new URL(
@@ -1064,17 +1066,93 @@ describe('M11.1 requirements ledger', () => {
     )
   })
 
-  test('reports only the explicit provenance warning when history is shallow', async () => {
+  test('reports only explicit unverified-provenance warnings when history is shallow', async () => {
     const result = await validateRequirementsLedger(ledger, {
       repositoryRoot: new URL('..', import.meta.url),
+      shallowRepository: true,
     })
 
-    expect(result.warnings.length).toBeLessThanOrEqual(1)
+    // A shallow checkout lacks the candidate, the reconciliation ancestry and the
+    // lanes' own branches. Each absence is reported as unverified provenance and
+    // never as an error or as proof.
+    expect(result.errors).toEqual([])
+    const allowed = [
+      `candidate commit ${ledger.candidate.commit} is unavailable in this shallow checkout; committed-artifact provenance must be reproduced from a full clone`,
+      /^reconciliation base [0-9a-f]{40} ancestry is unverified in this shallow checkout; reproduce the ancestry check from a full clone$/,
+      /^W\d+ \([^)]+\): worker head [0-9a-f]{40} is unavailable in this shallow checkout; \d+ recorded evidence paths are unverified and must be reproduced from a full clone$/,
+    ]
     for (const warning of result.warnings) {
-      expect(warning).toBe(
-        `candidate commit ${ledger.candidate.commit} is unavailable in this shallow checkout; committed-artifact provenance must be reproduced from a full clone`
-      )
+      expect(
+        allowed.some((pattern) =>
+          typeof pattern === 'string' ? pattern === warning : pattern.test(warning)
+        ),
+        warning
+      ).toBe(true)
     }
+  }, 60000)
+
+  test('keeps the reconciliation ancestry unverified in a shallow checkout and fatal in a full clone', async () => {
+    const detached = clone(ledger)
+    detached.reconciliation.reconciliationBase = 'c'.repeat(40)
+    detached.reconciliation.candidateProof.coversReconciliationBase = false
+
+    const shallow = await validateRequirementsLedger(detached, {
+      repositoryRoot,
+      shallowRepository: true,
+    })
+    expect(shallow.errors).not.toContain(
+      'reconciliation.reconciliationBase must be an ancestor of the current head'
+    )
+    expect(shallow.warnings).toContain(
+      `reconciliation base ${'c'.repeat(40)} ancestry is unverified in this shallow checkout; reproduce the ancestry check from a full clone`
+    )
+
+    const full = await validateRequirementsLedger(detached, {
+      repositoryRoot,
+      shallowRepository: false,
+    })
+    expect(full.errors).toContain(
+      'reconciliation.reconciliationBase must be an ancestor of the current head'
+    )
+    expect(full.warnings.filter((warning) => warning.startsWith('reconciliation base'))).toEqual([])
+  }, 60000)
+
+  test('keeps an unresolvable worker head unverified in a shallow checkout and fatal in a full clone', async () => {
+    const unresolved = clone(ledger)
+    const worker = unresolved.workerEvidence.find(({ status }) => status === 'received')
+    worker.head = 'd'.repeat(40)
+    for (const entry of worker.evidence) entry.commit = worker.head
+
+    const shallow = await validateRequirementsLedger(unresolved, {
+      repositoryRoot,
+      shallowRepository: true,
+    })
+    expect(shallow.errors.filter((error) => error.startsWith(`${worker.id}:`))).toEqual([])
+    expect(shallow.warnings).toContain(
+      `${worker.id} (${worker.lane}): worker head ${worker.head} is unavailable in this shallow checkout; ${worker.evidence.length} recorded evidence paths are unverified and must be reproduced from a full clone`
+    )
+    // Unverified evidence is not presented as divergent or as verified content.
+    expect(shallow.provenance.some((finding) => finding.startsWith(`${worker.id} `))).toBe(false)
+
+    // Checks that need no history still apply to an unverified lane.
+    const mismatched = clone(unresolved)
+    mismatched.workerEvidence.find(({ id }) => id === worker.id).evidence[0].commit = 'e'.repeat(40)
+    const mismatchedResult = await validateRequirementsLedger(mismatched, {
+      repositoryRoot,
+      shallowRepository: true,
+    })
+    expect(mismatchedResult.errors).toContain(
+      `${worker.id}: worker evidence commit must match the worker head for ${worker.evidence[0].path}`
+    )
+
+    const full = await validateRequirementsLedger(unresolved, {
+      repositoryRoot,
+      shallowRepository: false,
+    })
+    expect(full.errors).toContain(
+      `${worker.id}: worker head ${worker.head} is unavailable in the repository`
+    )
+    expect(full.warnings.some((warning) => warning.startsWith(`${worker.id} `))).toBe(false)
   }, 60000)
 
   test('distinguishes shallow history from a missing full-clone candidate', async () => {
@@ -1330,7 +1408,10 @@ describe('M11.1 requirements ledger', () => {
     const unknownHead = clone(ledger)
     unknownHead.workerEvidence.find(({ id }) => id === pendingId).status = 'received'
     unknownHead.workerEvidence.find(({ id }) => id === pendingId).head = 'b'.repeat(40)
-    const unknownResult = await validateRequirementsLedger(unknownHead, { repositoryRoot })
+    const unknownResult = await validateRequirementsLedger(unknownHead, {
+      repositoryRoot,
+      shallowRepository: false,
+    })
     expect(unknownResult.errors).toContain(
       `${pendingId}: worker head ${'b'.repeat(40)} is unavailable in the repository`
     )
@@ -1349,7 +1430,10 @@ describe('M11.1 requirements ledger', () => {
     const absent = clone(ledger)
     const worker = absent.workerEvidence.find(({ status }) => status === 'received')
     worker.evidence.push({ path: 'docs/requirements/does-not-exist.md', commit: worker.head })
-    const absentResult = await validateRequirementsLedger(absent, { repositoryRoot })
+    const absentResult = await validateRequirementsLedger(absent, {
+      repositoryRoot,
+      shallowRepository: false,
+    })
     expect(absentResult.errors).toContain(
       `${worker.id}: worker evidence path is absent at head ${worker.head}: docs/requirements/does-not-exist.md`
     )
@@ -1438,24 +1522,54 @@ describe('M11.1 requirements ledger', () => {
     )
   }, 60000)
 
-  test('reports worker evidence whose content differs from this tree', async () => {
-    const { provenance } = await validateRequirementsLedger(ledger, { repositoryRoot })
-    // W2 records the head this lane last published. Its crosswalk and its
-    // reconciliation record were rewritten by later commits, so the paths resolve
-    // to different content here and must be reported.
-    const w2 = provenance.find((finding) => finding.startsWith('W2 '))
-    expect(w2).toBeDefined()
-    expect(w2).toContain('docs/requirements/control-plane-requirements-crosswalk.v1.json')
-    expect(w2).toContain('a matching path is not the reviewed artifact')
-    // The figure inventory is byte-identical at the recorded head and at HEAD, so
-    // a path that resolves to the same blob is not reported.
-    expect(w2).not.toContain('docs/requirements/canonical-figure-inventory.v1.json')
-    // The adversarial corpus is cited as requirement evidence while this tree
-    // carries the earlier corpus, so the shadowing is reported for that lane too.
-    const w5 = provenance.find((finding) => finding.startsWith('W5 '))
-    expect(w5).toBeDefined()
-    expect(w5).toContain('docs/adversarial-corpus-v1.md')
-  }, 60000)
+  test('reports worker evidence whose content differs from this tree', () => {
+    // A fixture repository carries the history the claim depends on, so the check
+    // does not depend on which lane branches a checkout happens to have fetched.
+    const directory = mkdtempSync(join(tmpdir(), 'requirements-worker-'))
+    try {
+      const git = (...args) =>
+        execFileSync(
+          'git',
+          ['-c', 'user.name=fixture', '-c', 'user.email=fixture@example.test', ...args],
+          {
+            cwd: directory,
+            encoding: 'utf8',
+          }
+        ).trim()
+      git('init', '-q')
+      writeFileSync(resolve(directory, 'rewritten.md'), 'recorded content\n')
+      writeFileSync(resolve(directory, 'unchanged.md'), 'same content\n')
+      git('add', '.')
+      git('commit', '-q', '-m', 'recorded worker head')
+      const head = git('rev-parse', 'HEAD')
+      writeFileSync(resolve(directory, 'rewritten.md'), 'later content\n')
+      git('commit', '-q', '-am', 'later rewrite')
+      const fixture = {
+        workerEvidence: [
+          {
+            id: 'W1',
+            lane: 'fixture-lane',
+            status: 'received',
+            head,
+            issueRefs: [1],
+            evidence: [
+              { path: 'rewritten.md', commit: head },
+              { path: 'unchanged.md', commit: head },
+            ],
+          },
+        ],
+      }
+      const { errors, provenance } = validateWorkerEvidence(fixture, directory, false)
+      expect(errors).toEqual([])
+      expect(provenance).toHaveLength(1)
+      expect(provenance[0]).toStartWith('W1 (fixture-lane): 1 of 2 evidence paths')
+      expect(provenance[0]).toContain('rewritten.md')
+      expect(provenance[0]).not.toContain('unchanged.md')
+      expect(provenance[0]).toContain('a matching path is not the reviewed artifact')
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
 
   test('reports the profile join that the requirement rows contradict', async () => {
     const { provenance } = await validateRequirementsLedger(ledger, { repositoryRoot })
@@ -1516,6 +1630,75 @@ describe('M11.1 requirements ledger', () => {
       rmSync(directory, { recursive: true, force: true })
     }
   }, 60000)
+
+  test('never reads the receipts of the checkout that holds the script for another root', async () => {
+    // Two roots carry different receipts. Each validator must answer for the root
+    // it is given, in either call order, and a root without receipts must not
+    // borrow them from the script's own checkout.
+    const alternate = mkdtempSync(join(tmpdir(), 'requirements-two-root-'))
+    const empty = mkdtempSync(join(tmpdir(), 'requirements-no-receipts-'))
+    try {
+      cpSync(
+        resolve(repositoryRoot, 'docs/requirements'),
+        resolve(alternate, 'docs/requirements'),
+        {
+          recursive: true,
+        }
+      )
+      const receiptPath = (root, name) => resolve(root, `docs/requirements/${name}`)
+      const freshnessName = 'canonical-source-freshness-2026-10-03.v1.json'
+      const lineageName = 'canonical-source-lineage-2026-10-03.v1.json'
+      const freshness = JSON.parse(
+        await readFile(receiptPath(repositoryRoot, freshnessName), 'utf8')
+      )
+      const lineage = JSON.parse(await readFile(receiptPath(repositoryRoot, lineageName), 'utf8'))
+      const sentinel = 987654
+      freshness.sources[0].observedCurrentRevision = sentinel
+      lineage.sources[0].currentRevision = sentinel
+      writeFileSync(receiptPath(alternate, freshnessName), JSON.stringify(freshness))
+      writeFileSync(receiptPath(alternate, lineageName), JSON.stringify(lineage))
+      const sourceId = freshness.sources[0].sourceId
+
+      const revisionOf = (inventory) =>
+        inventory.sources.find((source) => source.sourceId === sourceId).currentRevision
+      const crosswalkRevisionOf = (crosswalk) =>
+        crosswalk.sources.find((source) => source.sourceId === sourceId).currentRevision
+
+      const own = (await collectFigureInventory(ledger, repositoryRoot)).inventory
+      const other = (await collectFigureInventory(ledger, alternate)).inventory
+      const ownAgain = (await collectFigureInventory(ledger, repositoryRoot)).inventory
+      expect(revisionOf(other)).toBe(sentinel)
+      expect(revisionOf(own)).not.toBe(sentinel)
+      expect(revisionOf(ownAgain)).toBe(revisionOf(own))
+
+      const ownCrosswalk = (await collectCanonicalCrosswalk(ledger, repositoryRoot)).crosswalk
+      const otherCrosswalk = (await collectCanonicalCrosswalk(ledger, alternate)).crosswalk
+      const ownCrosswalkAgain = (await collectCanonicalCrosswalk(ledger, repositoryRoot)).crosswalk
+      expect(crosswalkRevisionOf(otherCrosswalk)).toBe(sentinel)
+      expect(crosswalkRevisionOf(ownCrosswalk)).not.toBe(sentinel)
+      expect(crosswalkRevisionOf(ownCrosswalkAgain)).toBe(crosswalkRevisionOf(ownCrosswalk))
+
+      const missingInventory = await collectFigureInventory(ledger, empty)
+      expect(missingInventory.errors).toHaveLength(1)
+      expect(missingInventory.errors[0]).toStartWith(
+        'canonical source freshness receipt is unavailable:'
+      )
+      const missingCrosswalk = await collectCanonicalCrosswalk(ledger, empty)
+      expect(
+        missingCrosswalk.errors.some((error) =>
+          error.startsWith('canonical source lineage is unavailable:')
+        )
+      ).toBe(true)
+      expect(
+        missingCrosswalk.errors.some((error) =>
+          error.startsWith('canonical source freshness receipt is unavailable:')
+        )
+      ).toBe(true)
+    } finally {
+      rmSync(alternate, { recursive: true, force: true })
+      rmSync(empty, { recursive: true, force: true })
+    }
+  }, 120000)
 })
 
 describe('CP #195 reconciliation record provenance (#186/#195)', () => {

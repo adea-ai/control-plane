@@ -1115,7 +1115,7 @@
         "issue": 190,
         "severity": "high",
         "owner": "artifact-integration",
-        "disposition": "In-repo, environment-isolated key prefixes are validated at configuration load and applied to every object address across staging/production per the Railway manifest, and the ObjectStore bucket holds only Control Plane artifacts (no Agent HQ authority delegation path exists). Remaining: live deployment evidence that staging and production use distinct credentials and that a staging-credential read against production keys is denied, plus lifecycle-control evidence on the deployed buckets — these require the deployed pair and cannot be produced in-repo."
+        "disposition": "In-repo, environment-isolated key prefixes are validated at configuration load and applied to every object address across sandbox/production per the Railway manifest, and the ObjectStore bucket holds only Control Plane artifacts (no Agent HQ authority delegation path exists). Remaining: live deployment evidence that sandbox and production use distinct credentials and that a sandbox-credential read against production keys is denied, plus lifecycle-control evidence on the deployed buckets — these require the deployed pair and cannot be produced in-repo."
       },
       "supersession": null
     },
@@ -1424,7 +1424,7 @@
         "issue": 194,
         "severity": "high",
         "owner": "artifact-integration",
-        "disposition": "Adjudicated 2026-09-20 against main: no cloud Artifact promotion flow exists in the candidate (packages/object-store has no promotion path; tests/container-promotion.test.mjs covers container images, not Artifacts; tests/m9-cloud-certification.test.mjs 'proves terminal Neon state, retained R2 integrity, and idempotent API replay' exercises certification fixtures through injected fakes, and scripts/certify-m9-cloud.mjs is operator-run, not a CI lane). Local/Self-hosted references remain authoritative by construction. Promotion failure/cancel semantics arrive with the M12 promotion consumer surface. Owner artifact-integration; M12-gated, not silently dropped."
+        "disposition": "Adjudicated 2026-09-20 against main: no cloud Artifact promotion flow exists in the candidate (packages/object-store has no promotion path; tests/container-promotion.test.mjs covers container images, not Artifacts; tests/m9-cloud-certification.test.mjs 'proves terminal PostgreSQL state, retained R2 integrity, and idempotent API replay' exercises certification fixtures through injected fakes, and scripts/certify-m9-cloud.mjs is operator-run, not a CI lane). Local/Self-hosted references remain authoritative by construction. Promotion failure/cancel semantics arrive with the M12 promotion consumer surface. Owner artifact-integration; M12-gated, not silently dropped."
       },
       "supersession": null
     },
@@ -1520,7 +1520,7 @@
         "issue": 190,
         "severity": "high",
         "owner": "artifact-integration",
-        "disposition": "The in-repo half is complete and tested: validated per-environment R2 key prefixes are applied to every physical object address while callers see unprefixed keys, wired through the managed-cloud configuration and the Railway manifest (staging prefixed, production unprefixed). Remaining operator verification: live distinct credentials per environment and a cross-environment read-denial check on the deployed staging/production pair."
+        "disposition": "The in-repo half is complete and tested: validated per-environment R2 key prefixes are applied to every physical object address while callers see unprefixed keys, wired through the managed-cloud configuration and the Railway manifest (sandbox prefixed, production unprefixed). Remaining operator verification: live distinct credentials per environment and a cross-environment read-denial check on the deployed sandbox/production pair."
       },
       "supersession": null
     },
@@ -8873,7 +8873,7 @@
     {
       "id": "M9-ISSUE-73",
       "issue": 73,
-      "title": "M9.6: Activate Railway staging and certify the managed-cloud deployment",
+      "title": "M9.6: Activate Railway sandbox and certify the managed-cloud deployment",
       "milestone": "M9",
       "classification": "verified",
       "owner": "managed-cloud",
@@ -9369,7 +9369,7 @@
     {
       "id": "M9-ISSUE-217",
       "issue": 217,
-      "title": "M9.9: Wire Railway, Neon, R2, secrets, networking, and health contracts",
+      "title": "M9.9: Wire Railway, PostgreSQL, R2, secrets, networking, and health contracts",
       "milestone": "M9",
       "classification": "verified",
       "owner": "managed-cloud-composition",
@@ -9530,7 +9530,7 @@
     {
       "id": "M9-ISSUE-260",
       "issue": 260,
-      "title": "M9: compose Neon-backed Cloud control-api startup",
+      "title": "M9: compose PostgreSQL-backed Cloud control-api startup",
       "milestone": "M9",
       "classification": "verified",
       "owner": "managed-cloud-composition",
@@ -9576,7 +9576,7 @@
     {
       "id": "M9-ISSUE-266",
       "issue": 266,
-      "title": "M9.14: Finalize cost-minimized Railway staging and production standby",
+      "title": "M9.14: Finalize cost-minimized Railway sandbox and production standby",
       "milestone": "M9",
       "classification": "verified",
       "owner": "cloud-operations",
@@ -9600,12 +9600,12 @@
   "deploymentProfiles": [
     {
       "id": "cloud",
-      "composition": "Railway + Neon PostgreSQL + Cloudflare R2 + Restate + remote RuntimeTransport",
+      "composition": "Railway + PostgreSQL PostgreSQL + Cloudflare R2 + Restate + remote RuntimeTransport",
       "classification": "partially_verified",
       "owner": "managed-cloud",
       "observedAt": "2026-09-07",
       "commit": "a76f27453e558525a05089e3c88085153a63a528",
-      "result": "Merged M11 candidate passed bounded deterministic Railway staging acceptance, terminal Neon state, R2 integrity, and replay after Restate rediscovery; managed Pi, production, current-candidate capacity, and timed disaster recovery were not certified.",
+      "result": "Merged M11 candidate passed bounded deterministic Railway sandbox acceptance, terminal PostgreSQL state, R2 integrity, and replay after Restate rediscovery; managed Pi, production, current-candidate capacity, and timed disaster recovery were not certified.",
       "evidence": [
         "docs/evidence/m11-cloud-certification-2026-09-07.md",
         "docs/evidence/m9-cloud-certification-2026-08-28.md"
@@ -9615,7 +9615,7 @@
         "issue": 194,
         "severity": "high",
         "owner": "managed-cloud",
-        "disposition": "Extend bounded staging evidence to the full frozen M11 runtime and recovery matrix; certify production readiness, capacity, and timed recovery."
+        "disposition": "Extend bounded sandbox evidence to the full frozen M11 runtime and recovery matrix; certify production readiness, capacity, and timed recovery."
       }
     },
     {
