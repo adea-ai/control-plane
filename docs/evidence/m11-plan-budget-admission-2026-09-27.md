@@ -57,7 +57,7 @@ weakened. A diagnostic rerun retained that second failure before correction.
 No deployed Hosted/Cloud runtime, funding/charge provenance, per-attempt capacity
 reservation, terminal settlement, extension policy, usage-retention/aggregate
 fences, restore/capacity certification or independent human acceptance is proven
-by this checkpoint. No staging/production deployment, issue closure or merge.
+by this checkpoint. No sandbox/production deployment, issue closure or merge.
 
 ## Prior native checkpoint (historical)
 
@@ -110,7 +110,7 @@ token reservation, all terminal outcomes with explicit funding/cost provenance,
 retention/aggregate replay fences, capacity and all supported live profiles remain
 required. Missing usage/cost must not be settled as zero.
 
-No staging or production deployment, issue closure or merge occurred. Owned local
+No production deployment, issue closure or merge occurred. Owned local
 PostgreSQL stayed stopped. The bounded worker and all recorded test runners must
 be settled before handoff; unfinished worktrees and the local database volume are
 preserved for the continuing milestone.

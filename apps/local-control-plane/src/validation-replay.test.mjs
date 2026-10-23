@@ -255,16 +255,40 @@ test('local composition replays validation after a SQLite reopen without compila
       undefined,
       { required: true }
     )
+    // A replay re-evaluates the CURRENT authorization: the catalog approval
+    // gate applies to a replay as it does to the first pass, so a version that
+    // is no longer approved is not resolved again. The durable evidence the
+    // plan pins is still never re-read — it was resolved once and is
+    // immutable — and the replay still reads no clock.
     const unexpected = async () => {
       throw new Error('REPLAY_RECOMPILED')
     }
+    const approvalReads = []
     Object.assign(reopened.executionValidationService.options, {
       now: () => {
         throw new Error('REPLAY_READ_CLOCK')
       },
       projectStates: { getAtRevision: unexpected },
       contextPackages: { get: unexpected },
-      approvalGate: { approvals: { list: unexpected }, policy: { required: true } },
+      approvalGate: {
+        approvals: {
+          list: async (versionKind, versionId) => {
+            approvalReads.push(`${versionKind}:${versionId}`)
+            return [
+              {
+                versionKind,
+                versionId,
+                revision: publishedProfile.revision,
+                contentDigest: publishedProfile.contentDigest,
+                decision: 'approved',
+                actorPrincipalRef: 'principal://operator/replay-test',
+                decidedAt: now,
+              },
+            ]
+          },
+        },
+        policy: { required: true },
+      },
     })
     const replay = await reopened.executionValidationService.validate(
       { ...request, issuedAt: '2026-09-08T12:00:00.000Z' },
@@ -272,6 +296,9 @@ test('local composition replays validation after a SQLite reopen without compila
     )
     expect(replay.data.executionPlan).toEqual(results[0].data.executionPlan)
     expect(await reopened.executionPlans.get(replay.data.executionPlan)).toBeDefined()
+    // The replay re-checked the current catalog authorization for the profile
+    // version it consumes, and read nothing else.
+    expect(approvalReads).toEqual([`agent_profile:${profileVersionId}`])
     const inlineReplay = await reopened.executionValidationService.validate(
       inline,
       request.caller.servicePrincipalId

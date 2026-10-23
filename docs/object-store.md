@@ -69,4 +69,4 @@ Tests cover injected provider outcomes, actual installed-SDK HTTP header
 serialization/signing, and filesystem publication. They are not live R2
 certification, scoped credential acceptance, or full profile certification.
 
-Package tests use an injected S3 client boundary and do not require cloud credentials. M9.6 additionally requires a synthetic write/read/head/delete round trip through `R2ObjectStore` from Railway staging using a bucket-scoped least-privilege credential.
+Package tests use an injected S3 client boundary and do not require cloud credentials. M9.6 additionally requires a synthetic write/read/head/delete round trip through `R2ObjectStore` from Railway sandbox using a bucket-scoped least-privilege credential.

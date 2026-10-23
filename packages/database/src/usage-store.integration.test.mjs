@@ -365,7 +365,7 @@ describe.skipIf(!enabled)('PostgreSQL durable usage store', () => {
         await reconnected.close()
       }
       // The lifecycle and a fresh-client replay completed in 51s on the real
-      // Neon probe. This compound fixture has a bounded 60s body; individual
+      // PostgreSQL probe. This compound fixture has a bounded 60s body; individual
       // lock/operation bounds and the other case deadlines remain unchanged.
     },
     integrationTestTimeout(60_000)

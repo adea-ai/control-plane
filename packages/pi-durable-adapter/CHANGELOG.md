@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.5](https://github.com/adea-ai/control-plane/compare/pi-durable-adapter-v0.10.4...pi-durable-adapter-v0.10.5) (2026-10-22)
+
+
+### Bug Fixes
+
+* **pi-durable:** fence cancellation retries and uncertain effects ([#935](https://github.com/adea-ai/control-plane/issues/935)) ([#1246](https://github.com/adea-ai/control-plane/issues/1246)) ([62d530f](https://github.com/adea-ai/control-plane/commit/62d530f5a4c012e978f38e6880181b8f5fbfebe5))
+
 ## [0.10.4](https://github.com/adea-ai/control-plane/compare/pi-durable-adapter-v0.10.3...pi-durable-adapter-v0.10.4) (2026-10-19)
 
 

@@ -200,7 +200,7 @@ export const M17_UNAVAILABLE_COSTS = [
       'Requires a running Restate server; no server is started by this read-only run. The Local profile uses embedded SQLite and has no Restate layer to measure.',
   },
   {
-    cost: 'Managed-cloud operational cost (Railway, Neon, R2, Restate)',
+    cost: 'Managed-cloud operational cost (Railway, PostgreSQL, R2, Restate)',
     status: 'unavailable',
     reason: 'Requires live cloud accounts and billing data; no credentials are used or requested.',
   },

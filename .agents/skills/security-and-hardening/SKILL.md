@@ -1,9 +1,12 @@
 ---
 name: security-and-hardening
 metadata:
-  version: "1.0.1"
+  version: "1.1.0"
   owner: "Control Plane maintainers"
-description: Hardens code against vulnerabilities. Use when handling user input, authentication, data storage, or external integrations. Use when building any feature that accepts untrusted data, manages user sessions, or interacts with third-party services. Use when personal data or privacy compliance (GDPR, CCPA) is involved.
+  provenance:
+    origin: repository-owned
+    integration_version: "1.1.0"
+description: "Use when the code handles untrusted input, authentication, data storage, external integrations, or personal data. Not for pure configuration, documentation, or static content with no security surface. Threat-models first, then hardens against OWASP patterns, SSRF, supply chain, privacy, and the LLM attack surface."
 ---
 
 # Security and Hardening
@@ -511,3 +514,12 @@ After implementing security-relevant code:
 - **Failure/skip reporting:** every finding cites its attack surface and applied mitigation; a skipped optional scan is reported as skipped, never counted as a passing security audit.
 - **Cleanup:** no secrets, PII, or test credentials left in code, fixtures, logs, or git history; a committed secret triggers rotation, not just deletion.
 - **Completion-claim guard:** the skill must not mark hardening complete while any finding is unmitigated and unowned — report residual risk explicitly.
+- **Stop conditions:** Stop and request approval before an "Ask First" item, before weakening an existing control, and before any change to credentials, roles, or external access.
+
+### Boundary contract
+
+- **Secrets:** Never read, print, log, or commit real secrets; use synthetic canaries, and treat a committed secret as a rotation event rather than a deletion.
+- **Dirty worktree:** Hardening edits stay inside the reviewed scope and never reset, stash, or overwrite unrelated working-tree changes.
+- **Migration:** A schema or migration change that weakens a security control requires explicit approval and its own regression test.
+- **Generated files:** Do not hand-patch generated clients or schemas; apply the control to the generator or the committed source instead.
+- **Provider:** No provider credential changes and no provider activation; provider trust findings are reported with their activation prerequisite.

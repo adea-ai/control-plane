@@ -1,13 +1,13 @@
-# M9 managed-cloud staging certification — 2026-08-28
+# M9 managed-cloud sandbox certification — 2026-08-28
 
 ## Scope and result
 
-The Railway `staging` environment passed a bounded live certification of the managed-cloud profile:
-Railway compute, Neon PostgreSQL, Cloudflare R2, and Restate. This evidence applies to staging only.
+The Railway `sandbox` environment passed a bounded live certification of the managed-cloud profile:
+Railway compute, Railway PostgreSQL, Cloudflare R2, and Restate. This evidence applies to sandbox only.
 It does not certify production, Agent HQ integration, or the later Local and Hosted profiles.
 
 The live candidate accepted authenticated execution requests, persisted authoritative command,
-execution, attempt, and plan state in Neon, completed the durable lifecycle through Restate, retained
+execution, attempt, and plan state in PostgreSQL, completed the durable lifecycle through Restate, retained
 and integrity-checked results through the R2 `ObjectStore`, and returned the original execution and
 artifact on replay. The same behavior passed after service and Restate restarts and in a five-request
 concurrent sample.
@@ -15,12 +15,12 @@ concurrent sample.
 ## Candidate identity and topology
 
 - Railway project: `18c6a1fd-6b4b-421e-9ec9-fd1550ce9a3f`.
-- Railway environment: `staging` (`3beb119e-1b23-4fa6-9af3-2c6b9976708f`).
-- Deployed application source: Git `staging` at
+- Railway environment: `sandbox` (`3beb119e-1b23-4fa6-9af3-2c6b9976708f`).
+- Deployed application source: Git `sandbox` at
   `3acb0db9fb4c9d2ad067429161ea9b75864ffe91`.
-- Certification harness branch: `codex/m9-railway-staging-certification`; harness and infrastructure
+- Certification harness branch: `codex/m9-railway-sandbox-certification`; harness and infrastructure
   corrections are reviewed in PR #270.
-- Public Control API: `https://control-planecontrol-api-staging.up.railway.app`.
+- Public Control API: `https://control-planecontrol-api-sandbox.up.railway.app`.
 - `control-api` service/deployment:
   `9167a33b-af0f-4780-8614-a5a161697c9c` / `d84b486f-0495-488b-b42d-87365d216e18`.
 - `workflow-worker` service/deployment:
@@ -39,7 +39,7 @@ concurrent sample.
 
 The obsolete Railway service resources for tool-gateway, runtime-gateway, and runtime-worker were
 removed from the project after explicit operator approval. Their source code remains available; they
-are not part of the accepted managed-cloud staging topology.
+are not part of the accepted managed-cloud sandbox topology.
 
 ## Build, configuration, and health
 
@@ -58,19 +58,19 @@ Two deliberately retained failed-deployment records demonstrate the safe forward
 configuration was absent or malformed; Railway kept the previous healthy revisions serving. The
 configuration was corrected and new healthy revisions were deployed without database rollback.
 
-## Neon evidence
+## PostgreSQL evidence
 
-The live harness read terminal execution state from the staging database using the same runtime
+The live harness read terminal execution state from the sandbox database using the same runtime
 repository as the services. A separate read-only privilege audit reported:
 
-- current role `control_plane_app`, database `neondb`;
+- current role `control_plane_app`, database `railway`;
 - no superuser, role-creation, database-creation, replication, or row-security-bypass authority;
 - `USAGE` but no `CREATE` on `public`;
-- no `USAGE` or `CREATE` on `neon_auth` and zero table grants there;
+- no `USAGE` or `CREATE` on `postgres_auth` and zero table grants there;
 - 29 Control Plane base tables in `public`.
 
 The audit ran in a read-only transaction and rolled back. This confirms that application code neither
-requires nor has runtime access to the unrelated `neon_auth` schema.
+requires nor has runtime access to the unrelated `postgres_auth` schema.
 
 ## R2 evidence
 
@@ -107,7 +107,7 @@ seconds (median 13 seconds). Execution IDs were:
 - `exe_338F7A22S5BSBM85ZDA2285B0D`
 - `exe_66EG0W02PP73HRY70TWA5QR17W`
 
-This sample demonstrates bounded staging concurrency and restart recovery. It is not a claim of
+This sample demonstrates bounded sandbox concurrency and restart recovery. It is not a claim of
 production-scale capacity or a measured 60-minute RTO exercise. No committed logical work or
 artifact was lost in the exercised restart scenarios.
 
@@ -125,11 +125,11 @@ artifact was lost in the exercised restart scenarios.
   p50 telemetry overhead was 0.104 ms against the 2 ms threshold.
 
 The isolation, canary, and load suites above are repository synthetic/local gates. The authentication,
-restart, execution, R2, Neon, concurrency, health, and resource observations are live staging evidence.
+restart, execution, R2, PostgreSQL, concurrency, health, and resource observations are live sandbox evidence.
 
 ## Resource and cost observations
 
-Railway staging metrics collected during deployment, restarts, and certification showed:
+Railway sandbox metrics collected during deployment, restarts, and certification showed:
 
 | Service         | Average CPU (vCPU) | Peak CPU | Average memory (GB) | Peak memory (GB) |        RX / TX (GB) |
 | --------------- | -----------------: | -------: | ------------------: | ---------------: | ------------------: |
@@ -139,15 +139,15 @@ Railway staging metrics collected during deployment, restarts, and certification
 
 Project usage for the partial 2026-08-28 billing period was `$0.02617`. Railway's project cost view
 aggregates same-named services across environments, so `$0.01703` for control-api and `$0.00655` for
-workflow-worker are not staging-only values; Restate was `$0.00258`. A short-window projection from
-the staging metrics and published resource rates is approximately `$8.37/month` plus egress, including
+workflow-worker are not sandbox-only values; Restate was `$0.00258`. A short-window projection from
+the sandbox metrics and published resource rates is approximately `$8.37/month` plus egress, including
 the 500 MB Restate volume. This is an indicative active-window projection, not a reliable monthly
 forecast. Railway recommends at least one week of usage before relying on a monthly estimate.
 
 ## Remaining boundaries
 
 - Production remains outside this certification and must be promoted only through the reviewed
-  `staging` to `main` release flow.
+  `sandbox` to `main` release flow.
 - The short observation window does not replace a week-long idle/active cost baseline or a timed
   disaster-recovery exercise. Those values should be refreshed after sustained operation.
 - M10 must preserve the accepted execution, persistence, durability, storage-integrity, security,

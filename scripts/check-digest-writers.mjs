@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { readdir, readFile } from 'node:fs/promises'
+import { readdir, readFile, stat } from 'node:fs/promises'
 import { dirname, extname, join, relative, resolve, sep } from 'node:path'
 import process from 'node:process'
 import { Parser } from 'acorn'
@@ -7,6 +7,7 @@ import ts from 'typescript6'
 
 const repositoryRoot = new URL('..', import.meta.url)
 const scanRoots = ['packages', 'apps', 'scripts']
+const requiredScanRoots = new Set(['packages', 'apps'])
 const scanExtensions = new Set(['.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs'])
 const ignoredDirectories = new Set(['node_modules', 'dist', 'coverage', '.turbo'])
 const exceptionsPath = new URL('./digest-writer-exceptions.json', import.meta.url)
@@ -1274,31 +1275,82 @@ export function findUnapprovedDigestWriterFlows(flows, exceptions) {
   )
 }
 
-async function* walk(directory) {
+function pathError(message, cause) {
+  return new Error(message, { cause })
+}
+
+async function* walk(directory, fileSystem) {
   let entries
   try {
-    entries = await readdir(directory, { withFileTypes: true })
-  } catch {
-    return
+    entries = await fileSystem.readdir(directory, { withFileTypes: true })
+  } catch (cause) {
+    throw pathError(`could not read digest writer source directory ${directory}`, cause)
   }
   for (const entry of entries) {
     const path = join(directory, entry.name)
     if (entry.isDirectory()) {
-      if (!ignoredDirectories.has(entry.name)) yield* walk(path)
+      if (!ignoredDirectories.has(entry.name)) yield* walk(path, fileSystem)
     } else if (scanExtensions.has(extname(entry.name)) && !entry.name.includes('.test.')) {
       yield path
     }
   }
 }
 
-export async function collectDigestWriterFlows(root = repositoryRoot.pathname) {
+export async function collectDigestWriterFlows(
+  root = repositoryRoot.pathname,
+  fileSystem = { readdir, readFile, stat }
+) {
+  if (typeof root !== 'string' || root.trim().length === 0) {
+    throw new Error('digest writer scan root must be a non-empty path')
+  }
   const absoluteRoot = resolve(root)
+  let rootStat
+  try {
+    rootStat = await fileSystem.stat(absoluteRoot)
+  } catch (cause) {
+    throw pathError(`could not inspect digest writer scan root ${absoluteRoot}`, cause)
+  }
+  if (!rootStat.isDirectory()) {
+    throw new Error(`digest writer scan root must be a directory: ${absoluteRoot}`)
+  }
+  let rootEntries
+  try {
+    rootEntries = await fileSystem.readdir(absoluteRoot, { withFileTypes: true })
+  } catch (cause) {
+    throw pathError(`could not read digest writer scan root ${absoluteRoot}`, cause)
+  }
+  const topLevelEntries = new Set(rootEntries.map((entry) => entry.name))
+
   const sources = new Map()
   let productionSourceCount = 0
   for (const scanRoot of scanRoots) {
-    for await (const path of walk(join(absoluteRoot, scanRoot))) {
+    const directory = join(absoluteRoot, scanRoot)
+    if (!topLevelEntries.has(scanRoot)) {
+      if (requiredScanRoots.has(scanRoot)) {
+        throw new Error(`required scan root ${directory} is missing`)
+      }
+      continue
+    }
+
+    let directoryStat
+    try {
+      directoryStat = await fileSystem.stat(directory)
+    } catch (cause) {
+      throw pathError(`could not inspect digest writer scan root ${directory}`, cause)
+    }
+    if (!directoryStat.isDirectory()) {
+      throw new Error(`digest writer scan root must be a directory: ${directory}`)
+    }
+
+    for await (const path of walk(directory, fileSystem)) {
       const relativePath = normalizePath(relative(absoluteRoot, path))
-      sources.set(relativePath, await readFile(path, 'utf8'))
+      let source
+      try {
+        source = await fileSystem.readFile(path, 'utf8')
+      } catch (cause) {
+        throw pathError(`could not read digest writer source file ${path}`, cause)
+      }
+      sources.set(relativePath, source)
       if (scanRoot === 'packages' || scanRoot === 'apps') productionSourceCount += 1
     }
   }

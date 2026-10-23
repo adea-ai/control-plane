@@ -6,7 +6,7 @@
     "service": "restate",
     "version": "1.7.7",
     "image": "docker.restate.dev/restatedev/restate:1.7.7@sha256:dd1695b61c9de877d24bf9afe8a0ac5fb0f66d175c1bc397975d2252bd784eb2",
-    "nodeName": "control-plane-staging-1",
+    "nodeName": "control-plane-production-1",
     "dataMount": "/restate-data",
     "healthPath": "/health",
     "privatePorts": {
@@ -16,8 +16,8 @@
     },
     "public": false,
     "environment": {
-      "RESTATE_CLUSTER_NAME": "control-plane-staging",
-      "RESTATE_NODE_NAME": "control-plane-staging-1",
+      "RESTATE_CLUSTER_NAME": "control-plane-production",
+      "RESTATE_NODE_NAME": "control-plane-production-1",
       "RESTATE_AUTO_PROVISION": "true",
       "RESTATE_ROCKSDB_TOTAL_MEMORY_SIZE": "384 MiB",
       "RESTATE_WORKER__INVOKER__REQUEST_IDENTITY_PRIVATE_KEY_PEM_FILE": "/restate-data/request-identity-private.pem"

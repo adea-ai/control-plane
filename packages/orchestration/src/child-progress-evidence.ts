@@ -1567,3 +1567,94 @@ export function delegationEventToEvidenceEvent(input: {
     ...(input.metrics ? { metrics: input.metrics } : {}),
   })
 }
+
+/**
+ * The live read a reference authority makes for every call.
+ *
+ * The reader answers the CURRENT authorization state of one opaque reference. It
+ * never returns the referenced payload: an authority can only pass a verdict on.
+ */
+export interface ChildProgressReferenceReader {
+  readCurrent(
+    reference: ChildProgressEvidenceReference
+  ): Promise<
+    | { readonly status: 'authorized' }
+    | { readonly status: 'revoked' }
+    | { readonly status: 'not_authorized' }
+    | { readonly status: 'missing' }
+  >
+}
+
+/**
+ * The canonical reference of one evidence reference.
+ *
+ * The identifier has to satisfy the repository's own reference constraints, so a
+ * reference that is oversized or malformed never becomes a live read. The canonical
+ * reference is rebuilt from the kind and the identifier alone: a reference that
+ * carries extra payload never reaches the reader with it.
+ */
+function canonicalReference(reference: unknown): ChildProgressEvidenceReference | undefined {
+  if (typeof reference !== 'object' || reference === null) return undefined
+  const candidate = reference as { kind?: unknown; artifactId?: unknown; interactionId?: unknown }
+  if (candidate.kind === 'terminal_result') {
+    const artifactId = ReferenceSchema.safeParse(candidate.artifactId)
+    if (!artifactId.success) return undefined
+    return { kind: 'terminal_result', artifactId: artifactId.data }
+  }
+  if (candidate.kind === 'interaction') {
+    const interactionId = ReferenceSchema.safeParse(candidate.interactionId)
+    if (!interactionId.success) return undefined
+    return { kind: 'interaction', interactionId: interactionId.data }
+  }
+  return undefined
+}
+
+/** The verdict of a reference, always through the published schema. */
+function referenceVerdict(value: unknown): ChildProgressReferenceVerdict {
+  return ChildProgressReferenceVerdictSchema.parse(value)
+}
+
+/**
+ * The lazy, current-authorization reference authority.
+ *
+ * A packet keeps its references opaque, so every read of one asks for the
+ * current authorization state again: a verdict is never cached, because a
+ * cached verdict is a capture-time snapshot and would answer for a state that
+ * has since been revoked. A reader that fails, or that answers something the
+ * verdict schema does not accept, fails closed: the reference is unavailable,
+ * never authorized.
+ */
+export class ChildProgressReferenceAuthorization implements ChildProgressReferenceAuthority {
+  constructor(readonly reader: ChildProgressReferenceReader) {}
+
+  async authorize(
+    reference: ChildProgressEvidenceReference
+  ): Promise<ChildProgressReferenceVerdict> {
+    // A reference that names nothing within the repository's own constraints cannot be
+    // authorized, and asking the reader would turn a malformed request into a live read.
+    const canonical = canonicalReference(reference)
+    if (canonical === undefined) {
+      return referenceVerdict({ status: 'forbidden', reason: 'not_authorized' })
+    }
+    let answer: Awaited<ReturnType<ChildProgressReferenceReader['readCurrent']>>
+    try {
+      answer = await this.reader.readCurrent(canonical)
+    } catch {
+      // A failed read is not an authorization. The reference cannot be resolved.
+      return referenceVerdict({ status: 'unavailable', reason: 'missing' })
+    }
+    switch (answer?.status) {
+      case 'authorized':
+        return referenceVerdict({ status: 'authorized' })
+      case 'revoked':
+        return referenceVerdict({ status: 'forbidden', reason: 'revoked' })
+      case 'not_authorized':
+        return referenceVerdict({ status: 'forbidden', reason: 'not_authorized' })
+      case 'missing':
+        return referenceVerdict({ status: 'unavailable', reason: 'missing' })
+      default:
+        // An answer the schema does not accept is not an authorization.
+        return referenceVerdict({ status: 'unavailable', reason: 'missing' })
+    }
+  }
+}
