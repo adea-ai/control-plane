@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process'
-import { readdir, readFile } from 'node:fs/promises'
+import { readdir, readFile, stat } from 'node:fs/promises'
 import process from 'node:process'
 import { fileURLToPath } from 'node:url'
 import { JSONC } from 'bun'
@@ -53,6 +53,74 @@ async function totalDistBytes() {
     }
   }
   return total * 1024
+}
+
+/** Failure attribution only; the gate continues to use its unchanged du sum. */
+async function distOutputDiagnostics() {
+  const roots = []
+  const largestFiles = []
+  async function inspect(directory, row) {
+    row.directories++
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+      const file = new URL(`${entry.name}${entry.isDirectory() ? '/' : ''}`, directory)
+      if (entry.isDirectory()) await inspect(file, row)
+      else if (entry.isFile()) {
+        const metadata = await stat(file)
+        row.files++
+        row.logicalBytes += metadata.size
+        const relativePath = fileURLToPath(file).slice(repositoryRoot.length)
+        largestFiles.push({
+          path: relativePath,
+          logicalBytes: metadata.size,
+          allocatedBytes: metadata.blocks * 512,
+        })
+      }
+    }
+  }
+  for (const group of ['packages', 'apps']) {
+    const parent = new URL(`../${group}/`, import.meta.url)
+    let entries
+    try {
+      entries = await readdir(parent, { withFileTypes: true })
+    } catch (error) {
+      if (error.code === 'ENOENT') continue
+      throw error
+    }
+    for (const entry of entries) {
+      const directory = new URL(`${entry.name}/dist/`, parent)
+      const result = spawnSync('du', ['-sk', fileURLToPath(directory)], {
+        cwd: repositoryRoot,
+        encoding: 'utf8',
+      })
+      if (result.status !== 0) continue
+      const row = {
+        path: `${group}/${entry.name}/dist`,
+        allocatedBytes: Number.parseInt(result.stdout.split('\t')[0], 10) * 1024,
+        logicalBytes: 0,
+        files: 0,
+        directories: 0,
+      }
+      await inspect(directory, row)
+      roots.push(row)
+    }
+  }
+  return {
+    platform: process.platform,
+    architecture: process.arch,
+    measurement: 'du -sk for every packages/*/dist and apps/*/dist',
+    roots: roots.toSorted(
+      (left, right) =>
+        right.allocatedBytes - left.allocatedBytes ||
+        (left.path < right.path ? -1 : left.path > right.path ? 1 : 0)
+    ),
+    largestFiles: largestFiles
+      .toSorted(
+        (left, right) =>
+          right.logicalBytes - left.logicalBytes ||
+          (left.path < right.path ? -1 : left.path > right.path ? 1 : 0)
+      )
+      .slice(0, 20),
+  }
 }
 
 export function checkDistBudget(budgets, totalBytes) {
@@ -545,7 +613,18 @@ if (import.meta.main) {
       report(checkLaneBudget(budgets, group, seconds))
     }
   } else if (command === 'dist') {
-    report(checkDistBudget(budgets, await totalDistBytes()))
+    const measuredBytes = await totalDistBytes()
+    const check = checkDistBudget(budgets, measuredBytes)
+    if (check.ok) report(check)
+    else {
+      let diagnostics
+      try {
+        diagnostics = await distOutputDiagnostics()
+      } catch (error) {
+        diagnostics = { unavailable: error.message }
+      }
+      report({ ...check, measuredBytes, diagnostics })
+    }
   } else if (command === 'deps') {
     // The listing seam: when ADEA_DEPS_LISTING_FILE names a file, that
     // listing is measured instead of the lockfile's dependency tree, and the
