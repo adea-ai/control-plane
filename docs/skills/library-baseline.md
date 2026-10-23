@@ -45,7 +45,7 @@ regenerate it with `bun docs/evals/skill-evals/run-skill-evals.mts
 | -------------------------------------------------------- | ------------------------------------------------ | ---------- | -------------------------- |
 | Retained skills                                          | 9                                                | 9          | 0                          |
 | Retained skills exercised by at least one scenario       | 5                                                | 9          | +4                         |
-| Routing surface (bytes an agent reads to select a skill) | 2 167                                            | 2 707      | +540                       |
+| Routing surface (bytes an agent reads to select a skill) | 2 626                                            | 2 707      | +81                        |
 | Entrypoints (all `SKILL.md`)                             | 133 904                                          | 143 179    | +9 275                     |
 | Bundled skill files (all bytes)                          | 252 692                                          | 261 967    | +9 275                     |
 | Cold scenarios run                                       | 14                                               | 14         | 0                          |
@@ -55,6 +55,13 @@ regenerate it with `bun docs/evals/skill-evals/run-skill-evals.mts
 | Tool calls (instrumented `inspect`)                      | 27                                               | 27         | 0                          |
 | Executor errors                                          | 0                                                | 0          | 0                          |
 | Observed harness duration per scenario                   | 0.1–17.5 ms (local runtime, first-run JIT noise) | 0.1–1.2 ms | not comparable across runs |
+
+Routing bytes come from the YAML `description` values, with whitespace
+normalized before counting UTF-8 bytes. This includes literal and folded block
+scalars. The earlier 2 167-byte baseline treated the `|` block-style marker in
+the pinned `turborepo` description as its one-byte value; the regenerated
+artifact parses that source with Bun's YAML parser and records the full
+description. Skill source bytes and scenario results did not change.
 
 Nine scenarios changed: SK-04 (secrets), SK-05 (dirty worktree), SK-06
 (migration and generated files), SK-07 (provider), SK-10 (stop conditions),

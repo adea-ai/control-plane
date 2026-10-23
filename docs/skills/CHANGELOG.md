@@ -4,6 +4,21 @@ Record changes that alter Skill routing, behavior, or supporting validation.
 Each entry should name the affected Skills, old/new versions, the decision
 changed, validation performed, and any evidence or compatibility limits.
 
+## Unreleased — 2026-10-23
+
+- Corrected the routing-byte measurement in the cold-task evidence. The pinned
+  `turborepo` baseline uses a YAML literal block scalar (`description: |`);
+  the previous line-based reader counted the style marker as one byte.
+  The harness now parses the actual YAML frontmatter value, and the evidence
+  was regenerated from pinned baseline
+  `27f17bd55e0266439b5b3089163195c9e7a669be` plus the current candidate source.
+  Routing surface is 2 626 → 2 707 bytes (+81), not 2 167 → 2 707 (+540).
+  This is a measurement correction: the skill source and modeled scenario verdicts,
+  and open blinded-human gate are unchanged. Persistence-only tests use an
+  explicitly synthetic checkout-head baseline so they remain hermetic in
+  shallow CI checkouts; historical-baseline qualification still uses the
+  pinned commit when available.
+
 ## Unreleased — 2026-10-21
 
 - Addressed the independent read-only advisory (F2W8) against this branch. The
@@ -128,8 +143,10 @@ changed, validation performed, and any evidence or compatibility limits.
   hard-coded reports. Measured against the pinned baseline
   `27f17bd55e0266439b5b3089163195c9e7a669be`: 4 of 10 scenarios passed at the
   baseline and 9 of 10 pass on the candidate; the negative control `SK-03`
-  still fails as it must. Routing surface 2 167 → 2 707 bytes, entrypoints
-  133 904 → 143 123 bytes, 0 executor errors in both. The observed durations
+  still fails as it must. The original routing-surface report was 2 167 →
+  2 707 bytes; it undercounted the pinned `turborepo` block description and is
+  corrected in the 2026-10-23 entry above. Entrypoints were 133 904 → 143 123
+  bytes, with 0 executor errors in both. The observed durations
   are local harness timings, not provider latency, token, or cost.
 - The blinded independent comparison is prepared and unexecuted:
   `docs/evals/skill-evals/blinded-comparison-packet.md` and

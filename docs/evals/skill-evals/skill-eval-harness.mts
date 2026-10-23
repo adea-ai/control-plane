@@ -71,34 +71,50 @@ export type LibrarySnapshot = {
 }
 
 const FRONTMATTER = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/u
-const VERSION = /^\s*version:\s*"?([^"\n]+)"?\s*$/mu
-const OWNER = /^\s*owner:\s*"?([^"\n]+)"?\s*$/mu
-const DESCRIPTION = /^\s*description:\s*"?([\s\S]*?)"?\s*$/mu
+
+type BunYamlRuntime = {
+  YAML: {
+    parse: (source: string) => unknown
+  }
+}
 
 function sha256(content: string) {
   return `sha256:${createHash('sha256').update(content, 'utf8').digest('hex')}`
 }
 
-function frontmatterField(text: string, pattern: RegExp): string | null {
+function frontmatterFields(text: string): Record<string, unknown> | null {
   const match = FRONTMATTER.exec(text)
   const body = match?.[1]
   if (body === undefined) return null
-  const value = pattern.exec(body)?.[1]
-  return value === undefined ? null : value.trim()
+  const bun = (globalThis as typeof globalThis & { Bun: BunYamlRuntime }).Bun
+  const parsed = bun.YAML.parse(body)
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return null
+  return parsed as Record<string, unknown>
+}
+
+function frontmatterField(text: string, name: string): string | null {
+  const fields = frontmatterFields(text)
+  const metadata = fields?.metadata
+  const metadataFields =
+    typeof metadata === 'object' && metadata !== null && !Array.isArray(metadata)
+      ? (metadata as Record<string, unknown>)
+      : null
+  const value = fields?.[name] ?? metadataFields?.[name]
+  return typeof value === 'string' ? value.trim() : null
 }
 
 /** The routing surface an agent reads to select one skill. */
 export function routingBytes(text: string): number {
-  const description = frontmatterField(text, DESCRIPTION) ?? ''
+  const description = frontmatterField(text, 'description') ?? ''
   return Buffer.byteLength(description.replace(/\s+/gu, ' ').trim(), 'utf8')
 }
 
 export function skillVersion(text: string): string | null {
-  return frontmatterField(text, VERSION)
+  return frontmatterField(text, 'version')
 }
 
 export function skillOwner(text: string): string | null {
-  return frontmatterField(text, OWNER)
+  return frontmatterField(text, 'owner')
 }
 
 function runCommand(

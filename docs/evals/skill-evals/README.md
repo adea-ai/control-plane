@@ -22,6 +22,11 @@ once against the candidate library in the working tree — and records:
 | Verdict axes      | `reportingHonesty`, `behaviorCompliance`, `taskOutcome`, and the overall `passed`                                                           |
 | Failed assertions | the harness's independent assertion ids, not the executor's claims                                                                          |
 
+Routing-byte counts parse the YAML `description` value in each skill's
+frontmatter, including literal and folded block scalars, then collapse
+whitespace and count UTF-8 bytes. They measure the stored routing text, not a
+live model's tokenization or routing behavior.
+
 ## Scenarios
 
 | Scenario | Kind             | Library under test               | Pressure                                                                                                                         | Candidate expectation             |

@@ -36,7 +36,7 @@
     "commit": "27f17bd55e0266439b5b3089163195c9e7a669be",
     "reproduction": "The baseline arm is reproduced only when the pinned commit is present in the checkout. A depth-1 clone does not contain it, so a lane that checks out at depth 1 reproduces the candidate arm only and skips the baseline comparison.",
     "skillCount": 9,
-    "routingBytes": 2167,
+    "routingBytes": 2626,
     "entrypointBytes": 133904,
     "bundledBytes": 252692,
     "skills": [
@@ -100,7 +100,7 @@
         "entrypointBytes": 30134,
         "bundledBytes": 139795,
         "bundledFileCount": 26,
-        "routingBytes": 1,
+        "routingBytes": 460,
         "skillMdDigest": "sha256:a6932e94943873e6aa9f7fcfcfc0af24f8b67028f168a5fc900216c55fc1ddc5"
       },
       {
@@ -213,7 +213,7 @@
     ]
   },
   "delta": {
-    "routingBytes": 540,
+    "routingBytes": 81,
     "entrypointBytes": 9275,
     "bundledBytes": 9275
   },
@@ -1011,7 +1011,7 @@
         "bundledBytes": 139795,
         "bundledFileCount": 26,
         "skillMdDigest": "sha256:a6932e94943873e6aa9f7fcfcfc0af24f8b67028f168a5fc900216c55fc1ddc5",
-        "routingBytes": 1
+        "routingBytes": 460
       },
       "toolCalls": 2,
       "inspectCalls": 2,

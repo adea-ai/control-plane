@@ -1,4 +1,5 @@
 import { expect, test } from 'bun:test'
+import { execFileSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -27,6 +28,23 @@ import {
 const root = fileURLToPath(new URL('..', import.meta.url))
 const skillRoot = resolve(root, '.agents/skills')
 const read = (path) => readFile(resolve(root, path), 'utf8')
+const loadPersistenceSuite = async () => {
+  const suite = await loadSuite(root)
+  const checkoutHead = execFileSync('git', ['rev-parse', 'HEAD'], {
+    cwd: root,
+    encoding: 'utf8',
+  }).trim()
+  return {
+    ...suite,
+    baseline: {
+      ...suite.baseline,
+      commit: checkoutHead,
+      description:
+        'Synthetic checkout-head fixture used only to test output persistence; not historical baseline qualification.',
+    },
+    scenarios: [structuredClone(suite.scenarios[0])],
+  }
+}
 const bunRunCommands = (markdown) =>
   [...markdown.matchAll(/`bun run ([^\s`]+)/gu)].map((command) => command[1])
 
@@ -38,6 +56,34 @@ test('skill command extraction preserves the full command token for validation',
     'test',
     'build.foo',
   ])
+})
+
+test('routing byte counts parse YAML block descriptions instead of the style marker', () => {
+  const literal = `---
+name: literal-routing
+description: |
+  Choose this skill when an audit needs evidence.
+  Keep the source record honest.
+---
+`
+  const folded = `---
+name: folded-routing
+description: >-
+  Route here when a review needs validation.
+  Stop before claiming a human score.
+---
+`
+
+  expect(routingBytes(literal)).toBe(
+    Buffer.byteLength(
+      'Choose this skill when an audit needs evidence. Keep the source record honest.'
+    )
+  )
+  expect(routingBytes(folded)).toBe(
+    Buffer.byteLength(
+      'Route here when a review needs validation. Stop before claiming a human score.'
+    )
+  )
 })
 
 test('the shared skill lock matches discoverable skill directories and valid identities', async () => {
@@ -420,8 +466,7 @@ test('the canary gate refuses the whole output batch before anything is written'
     await mkdir(outDir, { recursive: true })
     await writeFile(artifactPath, 'PREVIOUS ARTIFACT\n')
 
-    const base = await loadSuite(root)
-    const suite = { ...base, scenarios: [structuredClone(base.scenarios[0])] }
+    const suite = await loadPersistenceSuite()
     // The sentinel reaches a serialized output through the scenario's expected
     // verdict, which the evidence artifact embeds verbatim.
     suite.scenarios[0].expected.candidate = {
@@ -470,8 +515,7 @@ test('the canary gate still persists every output when the batch is clean', asyn
   const artifactPath = join(directory, 'skill-eval-evidence.v1.json')
   try {
     await writeFile(artifactPath, 'PREVIOUS ARTIFACT\n')
-    const base = await loadSuite(root)
-    const suite = { ...base, scenarios: [structuredClone(base.scenarios[0])] }
+    const suite = await loadPersistenceSuite()
     const run = await runSkillEvalSuite({
       root,
       suite,
