@@ -141,10 +141,10 @@ probe(
       local.includes('readonly remoteControl?: RemoteControlHostAdapter<unknown>') &&
       hosted.includes('readonly remoteControl?: RemoteControlHostAdapter<unknown>')
     const relay = await readSource('packages/remote-control-relay/src/relay.ts')
-    const onlyFakeClient = relay.includes('export class FakeOpaqueRelay')
+    const fakeClientPresent = relay.includes('export class FakeOpaqueRelay')
     return {
       reproduced: result.outcome === 'accepted' && effects.length === 1,
-      detail: `outcome=${result.outcome}, applied effects=${effects.join(',') || 'none'}; the processor adds no provenance check of its own. Reachability: the relay adapter is opt-in in both compositions = ${optIn}; the only relay client in the repository is the test fake = ${onlyFakeClient}. No deployed attacker-controlled ingress is claimed.`,
+      detail: `outcome=${result.outcome}, applied effects=${effects.join(',') || 'none'}; the processor adds no provenance check of its own. Reachability: the relay adapter is opt-in in both compositions = ${optIn}; the test fake FakeOpaqueRelay is present in the relay package = ${fakeClientPresent}, which does not by itself show it is the only client implementation. No deployed attacker-controlled ingress is claimed.`,
     }
   }
 )
@@ -761,7 +761,9 @@ probe(
     ]
     const skippedDirectories = new Set(['node_modules', 'dist', 'coverage', '.turbo'])
     const sourcePattern = /\.(?:ts|tsx|mts|cts|mjs|cjs|js)$/
+    const clientNames = ['OutboundOpaqueRelayClient', 'FakeOpaqueRelay']
     const hits = []
+    const clientReferences = []
     let scanned = 0
     async function scan(directory) {
       const entries = await readdir(new URL(`../${directory}/`, import.meta.url), {
@@ -782,6 +784,9 @@ probe(
         for (const marker of markers) {
           if (text.includes(marker)) hits.push(`${path}: ${marker}`)
         }
+        for (const name of clientNames) {
+          if (text.includes(name)) clientReferences.push(`${path}: ${name}`)
+        }
       }
     }
     await scan('apps')
@@ -791,7 +796,7 @@ probe(
     }
     const relay = await readSource('packages/remote-control-relay/src/relay.ts')
     const adapter = await readSource('packages/remote-control-relay/src/adapter.ts')
-    const onlyFake = relay.includes('export class FakeOpaqueRelay')
+    const fakePresent = relay.includes('export class FakeOpaqueRelay')
     const injectedEffect = adapter.includes(
       'readonly metadataCommands?: RelayMetadataCommandProcessor<unknown>'
     )
@@ -799,8 +804,13 @@ probe(
       'readonly accept: (command: RelayMetadataCommand) => Promise<Result>'
     )
     return {
-      reproduced: hits.length === 0 && onlyFake && injectedEffect && injectedAccept,
-      detail: `source files scanned under apps/ and packages/ (excluding packages/remote-control-relay, tests and declarations) = ${scanned}; constructions of the relay adapter or metadata processor, or calls to the execution metadata-processor factory, found there = ${hits.length}; the only relay client implementation is the test fake = ${onlyFake}; the metadata processor is injected = ${injectedEffect}; the metadata effect callback is injected = ${injectedAccept}. No shipped approve, deny or cancel effect was found, so no deployed unauthenticated approval path is claimed. The scan does not cover code outside apps/ and packages/, generated code or run-time loading.`,
+      reproduced:
+        hits.length === 0 &&
+        clientReferences.length === 0 &&
+        fakePresent &&
+        injectedEffect &&
+        injectedAccept,
+      detail: `source files scanned under apps/ and packages/ (excluding packages/remote-control-relay, tests and declarations) = ${scanned}; constructions of the relay adapter or metadata processor, or calls to the execution metadata-processor factory, found there = ${hits.length}; the test fake FakeOpaqueRelay is present in the relay package = ${fakePresent}; scanned files outside the relay package that name OutboundOpaqueRelayClient or FakeOpaqueRelay = ${clientReferences.length}; the metadata processor is injected = ${injectedEffect}; the metadata effect callback is injected = ${injectedAccept}. No shipped approve, deny or cancel effect was found, so no deployed unauthenticated approval path is claimed. The client checks are textual: they show that the fake is present and that no scanned file names the client interface or the fake, and they cannot prove that no other, structurally conforming client exists. The scan does not cover code outside apps/ and packages/, generated code or run-time loading.`,
     }
   }
 )

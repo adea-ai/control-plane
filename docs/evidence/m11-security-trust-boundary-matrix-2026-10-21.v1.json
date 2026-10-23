@@ -423,7 +423,7 @@
       "id": "CP190-F01",
       "title": "The relay host processor applies no authentication of its own to metadata-only commands",
       "severity": "medium",
-      "releaseImpact": "Does not block the current release. The Control Plane ships the transport and validation layer only: no file scanned by CP190-P21 (apps/ and packages/, excluding the relay package, tests and declarations) builds the relay host adapter or the metadata processor, the only relay client implementation is a test fake, and the approve, deny, cancel, resume and status effects are injected callbacks with no shipped implementation. What remains is that the processor offers no defence in depth of its own, so a claim that the Control Plane verifies the metadata transport cannot be made.",
+      "releaseImpact": "Does not block the current release. The Control Plane ships the transport and validation layer only: no file scanned by CP190-P21 (apps/ and packages/, excluding the relay package, tests and declarations) builds the relay host adapter or the metadata processor, the test fake FakeOpaqueRelay is present and no scanned file outside the relay package names the client interface or the fake (a textual check, not proof that no other client exists), and the approve, deny, cancel, resume and status effects are injected callbacks with no shipped implementation. What remains is that the processor offers no defence in depth of its own, so a claim that the Control Plane verifies the metadata transport cannot be made.",
       "obligations": ["STA-L46-09", "STA-L66-01", "STA-L68-02", "STA-L52-04"],
       "entrypoints": [
         "packages/remote-control-relay/src/relay.ts:379-424",
@@ -435,7 +435,7 @@
       "regression": "The processor must not be able to accept a metadata command that its caller has not authenticated, and a composition must refuse to start a relay adapter whose client does not assert authentication. Regression test: a metadata command with no authenticated-transport provenance is rejected by the processor, and the composition fails closed when the supplied client declares no authentication.",
       "reachability": "configured-only",
       "reachabilityClass": "Reachable only after an operator configures the optional component; the component ships disabled or is not composed by default.",
-      "reachabilityNote": "Traced end to end: the only consumer of a metadata command is RemoteControlHostAdapter.#pollOnce (packages/remote-control-relay/src/adapter.ts:154-173), which is itself an injected option of the Local and Hosted compositions (apps/local-control-plane/src/composition.ts:249-250,508-512; apps/hosted-control-plane/src/composition.ts:220-223,371-375) and is reported as 'disabled' when absent (:152, :164). No file scanned by CP190-P21 (apps/ and packages/, excluding the relay package, tests and declarations) constructs RelayMetadataCommandProcessor or RemoteControlHostAdapter, and the only OutboundOpaqueRelayClient implementation is the test fake FakeOpaqueRelay (packages/remote-control-relay/src/relay.ts:45). The metadata effect callback is injected (packages/remote-control-relay/src/relay.ts:376-379), so the Control Plane ships no approve, deny or cancel effect at all: those names are schema operations, not shipped behaviour. An integrator must supply the relay client, the effect and the adapter. **No deployed attacker-controlled ingress exists and no deployed unauthenticated approval path is claimed.** The residual is that the processor adds no provenance check of its own and relies on its caller having authenticated the transport, which docs/remote-control-relay.md assigns to the concrete relay client.",
+      "reachabilityNote": "Traced end to end: the only consumer of a metadata command is RemoteControlHostAdapter.#pollOnce (packages/remote-control-relay/src/adapter.ts:154-173), which is itself an injected option of the Local and Hosted compositions (apps/local-control-plane/src/composition.ts:249-250,508-512; apps/hosted-control-plane/src/composition.ts:220-223,371-375) and is reported as 'disabled' when absent (:152, :164). No file scanned by CP190-P21 (apps/ and packages/, excluding the relay package, tests and declarations) constructs RelayMetadataCommandProcessor or RemoteControlHostAdapter, and the test fake FakeOpaqueRelay is present (packages/remote-control-relay/src/relay.ts:45) while no scanned file outside the relay package names OutboundOpaqueRelayClient or FakeOpaqueRelay. That is a textual check: it does not prove that no other, structurally conforming client exists. The metadata effect callback is injected (packages/remote-control-relay/src/relay.ts:376-379), so the Control Plane ships no approve, deny or cancel effect at all: those names are schema operations, not shipped behaviour. An integrator must supply the relay client, the effect and the adapter. **No deployed attacker-controlled ingress exists and no deployed unauthenticated approval path is claimed.** The residual is that the processor adds no provenance check of its own and relies on its caller having authenticated the transport, which docs/remote-control-relay.md assigns to the concrete relay client.",
       "counterevidence": "docs/remote-control-relay.md states that metadata-only operations use a separate strict, authenticated command schema and that authentication of that metadata transport remains the responsibility of the concrete relay client. The obligation is documented and delegated, so this is a contract and defence-in-depth gap rather than a deployed unauthenticated-approval path."
     },
     {
@@ -988,7 +988,7 @@
           "docs/remote-control-relay.md (metadata transport authentication is the concrete relay client's responsibility)",
           "apps/local-control-plane/src/composition.ts:249-250,508-512 (opt-in adapter)",
           "apps/hosted-control-plane/src/composition.ts:220-223,371-375 (opt-in adapter)",
-          "packages/remote-control-relay/src/relay.ts:45 (only relay client implementation is a test fake)"
+          "packages/remote-control-relay/src/relay.ts:45 (the test fake FakeOpaqueRelay is present; not proof that it is the only client)"
         ]
       },
       {
@@ -1052,7 +1052,7 @@
       "CP190-P09 and CP190-P10 now read packages/managed-pi-adapter/src/index.ts and fail loudly when the file is missing or empty, so a nonexistent path can never be reported as a missing grant check.",
       "CP190-P13 now records both the mitigating parent-directory control and the non-owner-only sidecar mode, and classifies the result as defense in depth.",
       "CP190-P02, CP190-P03 and CP190-P04 now state the reachability bound and the documented delegation, and no longer imply a deployed unauthenticated approval path or a universal duplicate-effect path.",
-      "CP190-P21 classifies the relay path: it scans apps/ and packages/ recursively (outside the relay package, tests and declarations), finds no construction of the relay host adapter or the metadata processor and no call to createRelayExecutionMetadataCommandProcessor, and shows that the only relay client is a test fake and that the metadata effect is injected, so the finding is a contract and defence-in-depth gap rather than a deployed approval path.",
+      "CP190-P21 classifies the relay path: it scans apps/ and packages/ recursively (outside the relay package, tests and declarations), finds no construction of the relay host adapter or the metadata processor and no call to createRelayExecutionMetadataCommandProcessor, and shows that the test fake FakeOpaqueRelay is present, that no scanned file outside the relay package names the client interface or the fake (a textual check, not proof that no other client exists) and that the metadata effect is injected, so the finding is a contract and defence-in-depth gap rather than a deployed approval path.",
       "CP190-P22 classifies the relay idempotency: it proves that the acceptance request carries the caller's idempotency key while submit_input carries none, so the durable guarantee is the CommandInbox's, not the receipt's.",
       "CP190-P23 classifies the vault egress gap: it proves that the composed model-selection path normalizes the leased result and rejects a non-plain carrier, so only the uncomposed raw-result callers can reach the screen with an exotic container.",
       "CP190-P24 classifies the direct-local path: it proves that the managed-Pi driver checks no grant and that the composed spawn policy leaves the working directory unconstrained, so the bound is operator configuration.",
@@ -1102,6 +1102,19 @@
           "CP190-P21: the scan was top-level apps/*/src/*.ts only; it now covers apps/ and packages/ recursively (excluding the relay package, tests and declarations) and the statements that relied on it name what was scanned."
         ],
         "findingsRestated": ["CP190-F16", "CP190-F28", "CP190-F03", "CP190-F01"],
+        "findingsAdded": [],
+        "probesAdded": [],
+        "severityChanges": []
+      },
+      {
+        "round": 4,
+        "reviewedBy": "root, full review of exact head c21628c6d888a9ae82bde9e10debeb9ffeddf322; repaired by the CP #1220 evidence owner on 2026-10-23",
+        "method": "The P21 client check was re-read against what it can show.",
+        "changes": [
+          "CP190-P21: the onlyFake check only tested that the FakeOpaqueRelay class is present, so it showed presence and not that it is the only client implementation. It is renamed fakePresent, the probe also counts scanned files outside the relay package that name OutboundOpaqueRelayClient or FakeOpaqueRelay, and the output and every dependent statement say that the check is textual and cannot exclude a structurally conforming client.",
+          "CP190-P02: the same presence-only check (onlyFakeClient) is renamed and its output no longer says the fake is the only relay client."
+        ],
+        "findingsRestated": ["CP190-F01"],
         "findingsAdded": [],
         "probesAdded": [],
         "severityChanges": []

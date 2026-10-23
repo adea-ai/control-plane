@@ -433,9 +433,12 @@ injected option of both compositions
 `RelayMetadataCommandProcessor` or `RemoteControlHostAdapter`** (a recursive scan of `apps/`
 and `packages/`, excluding the relay package itself, tests and declarations; the relay
 package's own `createRelayExecutionMetadataCommandProcessor` factory is the only non-test
-construction and nothing scanned calls it), and the only
-`OutboundOpaqueRelayClient` implementation is the test fake `FakeOpaqueRelay`
-(`packages/remote-control-relay/src/relay.ts:45`). Because the effect is an injected
+construction and nothing scanned calls it), and the test fake `FakeOpaqueRelay` is present
+(`packages/remote-control-relay/src/relay.ts:45`) while no scanned file outside the relay
+package names `OutboundOpaqueRelayClient` or `FakeOpaqueRelay`. That is a textual
+check: it shows the fake is present and that no scanned file names the client interface
+or the fake, and it does not prove that no other, structurally conforming client
+exists. Because the effect is an injected
 callback, **the Control Plane ships no approve, deny or cancel effect at all** —
 those are schema operation names, not shipped behaviour. An integrator must supply
 the relay client, the effect and the adapter. **No deployed attacker-controlled
