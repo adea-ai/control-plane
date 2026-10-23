@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { CredentialApiFixtures } from '@control-plane/contracts'
 import {
   CredentialVault,
-  NeonEncryptedSecretProvider,
+  PostgresEncryptedSecretProvider,
   VaultToolCredentialBroker,
 } from '@control-plane/credential-vault'
 import {
@@ -85,7 +85,7 @@ describe('credential Control API', () => {
     persistence = new SqlitePersistenceProvider({ path: join(directory, 'state.sqlite') })
     await persistence.migrate()
     secretStore = new Map()
-    const provider = new NeonEncryptedSecretProvider({
+    const provider = new PostgresEncryptedSecretProvider({
       store: {
         async put(input) {
           secretStore.set(`${input.locator}:${input.version}`, input)

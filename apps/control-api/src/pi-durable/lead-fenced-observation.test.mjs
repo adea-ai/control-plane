@@ -2,6 +2,8 @@ import { test, expect } from 'bun:test'
 import { createHash } from 'node:crypto'
 import { DatabaseSync } from 'node:sqlite'
 import { canonicalJsonStringify } from '@control-plane/contracts'
+import { PiDurableLeadCancelResponseSchema } from '@control-plane/runtime-sdk'
+import { PreChangeStatusResponseSchema } from './lead-pre-change-client.fixture.mjs'
 import {
   DurablePiDurableLeadService,
   SqlitePiDurableLeadReceiptStore,
@@ -98,6 +100,8 @@ async function harness({
   fencedFor = (operation) => fenced(operation),
   statusHandle = handle,
   onEffect = async () => {},
+  observedGeneration,
+  retainedTaskId,
 } = {}) {
   const receipts = new SqlitePiDurableLeadReceiptStore(new DatabaseSync(':memory:'))
   await receipts.insert(receiptBase)
@@ -109,6 +113,7 @@ async function harness({
     cancel: 0,
     cancelOptions: undefined,
     assertCurrent: 0,
+    childStops: [],
   }
   const adapter = {
     start: async () => {
@@ -118,7 +123,12 @@ async function harness({
     status: async () => {
       calls.status += 1
       await onEffect('status', receipts)
-      return { handle: statusHandle, state: 'running', observedAt: at }
+      return {
+        handle: statusHandle,
+        state: 'running',
+        observedAt: at,
+        ...(observedGeneration ? { observedGeneration } : {}),
+      }
     },
     progress: async function* () {
       calls.progress += 1
@@ -128,13 +138,23 @@ async function harness({
       calls.cancel += 1
       calls.cancelOptions = options
       await onEffect('cancel', receipts)
-      return { handle, state: 'cancelling', observedAt: at }
+      return {
+        handle,
+        state: 'cancelling',
+        observedAt: at,
+        ...(observedGeneration ? { observedGeneration } : {}),
+      }
     },
   }
   let initialFence
   let bindingReads = 0
   const retained = {
-    request: { executionId, attemptId, executionPlan: { correlation: {} } },
+    // This task correlation belongs to the server-held retained request, not the caller.
+    request: {
+      executionId,
+      attemptId,
+      executionPlan: { correlation: retainedTaskId ? { taskId: retainedTaskId } : {} },
+    },
     admission: {},
     handle,
   }
@@ -180,6 +200,12 @@ async function harness({
     authority,
     receipts,
     adapter,
+    delegationService: {
+      cancelChildren: async (input) => {
+        calls.childStops.push(input)
+        return { cancelled: [], state: 'cancelled' }
+      },
+    },
     now: () => at,
     fence: {
       findRetainedAdmission: async () => retained,
@@ -196,7 +222,7 @@ const withBinding = (operation) => fenced(operation, { admissionBinding: true })
 
 const envelope = (operation, payload) => ({
   caller: { servicePrincipalId: 'svc_adea' },
-  contractVersion: { major: 1, minor: 0 },
+  contractVersion: { major: 3, minor: 1 },
   requestId: id('req'),
   workspaceId,
   correlation: { traceId: id('trc') },
@@ -209,7 +235,7 @@ const envelope = (operation, payload) => ({
 })
 const readRequest = (operation, parameters) => ({
   caller: { servicePrincipalId: 'svc_adea' },
-  contractVersion: { major: 1, minor: 0 },
+  contractVersion: { major: 3, minor: 1 },
   requestId: id('req'),
   workspaceId,
   correlation: { traceId: id('trc') },
@@ -420,3 +446,93 @@ test('a runtime handle that differs from the retained receipt handle fails close
   )
   expect(calls.status).toBe(1)
 })
+
+test('a generation observed for another attempt is refused on the fenced paths', async () => {
+  // The retained fence proves the receipt, never the runtime's report. A
+  // generation observed for another attempt is a late old-attempt event: it
+  // is refused instead of being published against the wrong attempt.
+  const lateGeneration = {
+    schemaVersion: 'runtime-observed-generation/v1',
+    attemptId: 'att_01KABCDEF0123456789ABCDEFG',
+    turnKey: 'pi-turn:att_01KABCDEF0123456789ABCDEFG:initial',
+    inferenceId: 'pi-generation:late',
+    inferenceKey: 'pi-turn:att_01KABCDEF0123456789ABCDEFG:initial:pi-generation:late',
+  }
+  for (const operation of ['status', 'cancel']) {
+    const { service, calls } = await harness({
+      fencedFor: withBinding,
+      observedGeneration: lateGeneration,
+    })
+    const request = operation === 'status' ? statusRequest() : cancelRequest()
+    await expect(service[operation](request, caller)).rejects.toThrow(
+      operation === 'cancel' ? 'PI_LEAD_CANCELLATION_OUTCOME_UNKNOWN' : 'PI_LEAD_AUTHORITY_CONFLICT'
+    )
+    expect(calls[operation]).toBe(1)
+    expect(calls.childStops).toEqual([])
+    expect(calls.start).toBe(0)
+  }
+})
+
+test('a generation observed for the retained attempt is published on the fenced path', async () => {
+  const ownGeneration = {
+    schemaVersion: 'runtime-observed-generation/v1',
+    attemptId,
+    turnKey: `pi-turn:${attemptId}:initial`,
+    inferenceId: 'pi-generation:1',
+    inferenceKey: `pi-turn:${attemptId}:initial:pi-generation:1`,
+  }
+  const { service } = await harness({ fencedFor: withBinding, observedGeneration: ownGeneration })
+  const result = await service.status(statusRequest(), caller)
+  expect(result.data.status.observedGeneration).toEqual(ownGeneration)
+})
+
+for (const minor of [0, 1]) {
+  test(`fenced cancel publishes only negotiated generation fields to contract 3.${minor}`, async () => {
+    const ownGeneration = {
+      schemaVersion: 'runtime-observed-generation/v1',
+      attemptId,
+      turnKey: `pi-turn:${attemptId}:initial`,
+      inferenceId: 'pi-generation:1',
+      inferenceKey: `pi-turn:${attemptId}:initial:pi-generation:1`,
+    }
+    const taskId = '00000000-0000-4000-8000-0000000000f1'
+    const { service, calls } = await harness({
+      fencedFor: withBinding,
+      observedGeneration: ownGeneration,
+      retainedTaskId: taskId,
+    })
+    const result = await service.cancel(
+      { ...cancelRequest(), contractVersion: { major: 3, minor } },
+      caller
+    )
+    expect(result.data.state).toBe('cancelling')
+    expect(result.data.observedTarget).toMatchObject({
+      sessionId: handle.externalSessionId,
+      taskId,
+    })
+    expect(() => PiDurableLeadCancelResponseSchema.parse(result)).not.toThrow()
+    if (minor === 1) {
+      expect(result.data.observedTarget.generation).toEqual(ownGeneration)
+      expect(result.data.status.observedGeneration).toEqual(ownGeneration)
+    } else {
+      expect(result.data.observedTarget).not.toHaveProperty('generation')
+      expect(result.data.status).not.toHaveProperty('observedGeneration')
+      // Pre-3.1 status and cancel share these exact receipt/state/status body fields.
+      // Its strict installed-client schema must parse the actual cancel response.
+      expect(() => PreChangeStatusResponseSchema.parse(result)).not.toThrow()
+      for (const data of [
+        {
+          ...result.data,
+          observedTarget: { ...result.data.observedTarget, generation: ownGeneration },
+        },
+        { ...result.data, status: { ...result.data.status, observedGeneration: ownGeneration } },
+      ]) {
+        expect(() => PreChangeStatusResponseSchema.parse({ ...result, data })).toThrow()
+      }
+    }
+    expect(calls.cancel).toBe(1)
+    expect(calls.childStops).toEqual([])
+    expect(calls.start).toBe(0)
+    expect(calls.assertCurrent).toBe(0)
+  })
+}

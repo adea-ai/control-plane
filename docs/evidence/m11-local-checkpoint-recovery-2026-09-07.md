@@ -10,7 +10,7 @@ object storage, and repository checkpoint create/verify/restore functions.
 
 The graph and runtime are deterministic fixtures. This is not live managed Pi, supported ACP
 launcher, packaged desktop, sleep/wake, fresh-VPS, or cloud recovery certification. Local loopback
-Restate accepts unsigned requests in this harness; staging request-signature evidence is separate.
+Restate accepts unsigned requests in this harness; sandbox request-signature evidence is separate.
 
 ## Exercised recovery boundary
 

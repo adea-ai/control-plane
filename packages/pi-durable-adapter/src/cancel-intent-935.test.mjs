@@ -7,6 +7,14 @@ import { fixture } from './adapter.fixture.mjs'
 
 const at = '2026-10-08T00:00:00.000Z'
 
+function deferred() {
+  let resolve
+  const promise = new Promise((yes) => {
+    resolve = yes
+  })
+  return { promise, resolve }
+}
+
 /**
  * Issue-level prep for control-plane#935 (M13.02): durable cancel intent,
  * generation-bound retry, exact approval-before-effect, retained effect
@@ -94,6 +102,75 @@ test('935: status receipt carries execution identity; target binding is specifie
     expect(status).not.toHaveProperty('target')
     expect(status).not.toHaveProperty('handoffTarget')
   } finally {
+    await adapter.close()
+    rmSync(directory, { force: true, recursive: true })
+  }
+})
+
+test('935: the status reports the generation this attempt observed, and never a claimed one', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'pi-935-observed-generation-'))
+  const inferenceId = 'pi-generation:935'
+  const allowInference = deferred()
+  const inferenceAuthorized = deferred()
+  const releaseInference = deferred()
+  const { options, request } = fixture(directory, {
+    engineFactory: async (engineOptions) => ({
+      run: async () => {
+        // The engine starts only when the test says so: the observation is
+        // read before and after it, deterministically.
+        await allowInference.promise
+        await engineOptions.authorizeInference({
+          sessionId: 'ses_01JABCDEF0123456789ABCDEFG',
+          inferenceId,
+          provider: 'test',
+          modelId: 'mock',
+        })
+        inferenceAuthorized.resolve()
+        await releaseInference.promise
+        return {
+          text: 'observed generation',
+          submissionId: 'observed-generation',
+          usage: { inputTokens: 0, outputTokens: 0, durationMs: 0 },
+          inferences: [
+            {
+              inferenceId,
+              usage: {
+                inputTokens: 1,
+                outputTokens: 1,
+                durationMs: 1,
+                cachedInputTokens: 0,
+                reasoningTokens: 0,
+              },
+            },
+          ],
+        }
+      },
+      close: async () => {},
+      cancel: async () => {
+        releaseInference.resolve()
+      },
+    }),
+  })
+  const adapter = new PiDurableRuntimeAdapter(options)
+  try {
+    const handle = await adapter.start(request)
+    // Before a generation is observed there is nothing to report: the
+    // observation is never a placeholder.
+    expect((await adapter.status(handle)).observedGeneration).toBeUndefined()
+    allowInference.resolve()
+    await inferenceAuthorized.promise
+    const observed = (await adapter.status(handle)).observedGeneration
+    const turnKey = `pi-turn:${request.attemptId}:initial`
+    // The observation is the runtime's own identity for this attempt.
+    expect(observed).toEqual({
+      schemaVersion: 'runtime-observed-generation/v1',
+      attemptId: request.attemptId,
+      turnKey,
+      inferenceId,
+      inferenceKey: `${turnKey}:${inferenceId}`,
+    })
+  } finally {
+    releaseInference.resolve()
     await adapter.close()
     rmSync(directory, { force: true, recursive: true })
   }

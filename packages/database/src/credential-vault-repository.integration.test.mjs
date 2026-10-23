@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import process from 'node:process'
 import { loadDatabaseCredentials } from '@control-plane/config'
-import { CredentialVault, NeonEncryptedSecretProvider } from '@control-plane/credential-vault'
+import { CredentialVault, PostgresEncryptedSecretProvider } from '@control-plane/credential-vault'
 import { assertCredentialVaultRepositoryConformance } from '@control-plane/credential-vault/conformance'
 import { sql } from 'drizzle-orm'
 import { PostgresEncryptedSecretStore } from './credential-secret-store.ts'
@@ -52,7 +52,7 @@ describe.skipIf(process.env.RUN_DATABASE_INTEGRATION !== 'true')(
       let now = '2026-10-06T10:00:00.000Z'
       const open = () =>
         new CredentialVault({
-          provider: new NeonEncryptedSecretProvider({
+          provider: new PostgresEncryptedSecretProvider({
             store: new PostgresEncryptedSecretStore(isolated.application),
             encryptionKey: 'b'.repeat(64),
             keyReference: 'control-plane-secret-encryption-key/v1',
@@ -138,7 +138,7 @@ describe.skipIf(process.env.RUN_DATABASE_INTEGRATION !== 'true')(
     test('concurrent creates for one connector bind exactly one credential', async () => {
       const repository = new PostgresCredentialVaultRepository(isolated.application)
       const vault = new CredentialVault({
-        provider: new NeonEncryptedSecretProvider({
+        provider: new PostgresEncryptedSecretProvider({
           store: new PostgresEncryptedSecretStore(isolated.application),
           encryptionKey: 'b'.repeat(64),
           keyReference: 'control-plane-secret-encryption-key/v1',

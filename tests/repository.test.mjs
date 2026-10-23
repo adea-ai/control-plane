@@ -13,7 +13,7 @@ import {
   writeFile,
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, relative } from 'node:path'
 import { fileURLToPath, URL } from 'node:url'
 import { test } from 'bun:test'
 import { Glob } from 'bun'
@@ -27,6 +27,9 @@ import {
   discoverTestInventory,
   normalizedBunTestArguments,
 } from '../scripts/run-bun-test-group.mjs'
+import { buildTasks } from '../scripts/orch-graph.mjs'
+import { expectedId } from '../scripts/orch-toolchain.mjs'
+import { workspaces } from '../scripts/workspace-boundaries.mjs'
 import { INTEGRATION_SHARDS } from '../scripts/integration-shards.mjs'
 
 // The fleet upgrade rewrites the runtime pin on every release; tests assert
@@ -67,7 +70,7 @@ test('pins the required Node and Bun toolchain', async () => {
   const manifest = await readJson('package.json')
   const testTsconfig = await readJson('tsconfig.json')
 
-  assert.equal(manifest.packageManager, 'bun@1.4.3')
+  assert.equal(manifest.packageManager, 'bun@1.4.4')
   assert.equal(manifest.engines.node, '24.21.0')
   assert.equal(manifest.engines.bun, '>=1.4.0 <2')
   assert.match(
@@ -76,11 +79,91 @@ test('pins the required Node and Bun toolchain', async () => {
   )
   assert.equal(
     (await readFile(new URL('../.bun-version', import.meta.url), 'utf8')).trim(),
-    '1.4.3'
+    '1.4.4'
   )
   assert.equal(testTsconfig.extends, './tsconfig.base.json')
   assert.equal(testTsconfig.compilerOptions.experimentalDecorators, true)
   assert.equal(testTsconfig.compilerOptions.emitDecoratorMetadata, true)
+})
+
+test('the declared toolchain agrees with the files continuous integration installs from', async () => {
+  const manifest = await readJson('package.json')
+  const mise = await readFile(new URL('../.mise.toml', import.meta.url), 'utf8')
+  const bunVersion = (await readFile(new URL('../.bun-version', import.meta.url), 'utf8')).trim()
+  const nodeVersion = (await readFile(new URL('../.node-version', import.meta.url), 'utf8')).trim()
+
+  // One toolchain, named by every surface that carries it: the mise tool, the file the
+  // continuous integration installs the runtime from, and the engine a consumer resolves
+  // against. The node engine is one exact version rather than a range, because the range
+  // a consumer resolves against is not the version the lanes run.
+  const miseTool = (tool) => new RegExp(`^${tool} = "([^"]+)"$`, 'm').exec(mise)?.[1]
+  assert.equal(miseTool('node'), nodeVersion)
+  assert.equal(miseTool('bun'), bunVersion)
+  assert.equal(nodeVersion, manifest.engines.node)
+  assert.equal(bunVersion, manifest.packageManager.replace(/^bun@/, ''))
+  assert.match(manifest.engines.node, /^\d+\.\d+\.\d+$/)
+
+  // The declared bun engine admits the pinned runtime, so the floor a consumer resolves
+  // against does not exclude the version the repository runs. The comparison decides on the
+  // first component that differs, so a same-major comparison is decided by the minor or
+  // the patch component and not by the major one alone.
+  const compare = (left, right) => {
+    for (let index = 0; index < 3; index += 1) {
+      if (left[index] !== right[index]) return left[index] - right[index]
+    }
+    return 0
+  }
+  const admits = (range, candidate) => {
+    const match = /^>=(\d+)(?:\.(\d+))?(?:\.(\d+))?\s+<(\d+)(?:\.(\d+))?(?:\.(\d+))?$/.exec(range)
+    if (!match) return undefined
+    const lower = [Number(match[1]), Number(match[2] ?? 0), Number(match[3] ?? 0)]
+    const upper = [Number(match[4]), Number(match[5] ?? 0), Number(match[6] ?? 0)]
+    return compare(candidate, lower) >= 0 && compare(candidate, upper) < 0
+  }
+
+  // The boundaries that a comparison reading only the major component decides wrongly:
+  // a version below the same-major lower bound is refused, and a version inside the
+  // same-major range is admitted.
+  assert.equal(
+    admits('>=1.4.0 <1.5.0', [1, 3, 0]),
+    false,
+    'a version below the lower bound is refused'
+  )
+  assert.equal(admits('>=1.4.0 <1.5.0', [1, 4, 0]), true, 'the lower bound itself is admitted')
+  assert.equal(admits('>=1.4.0 <1.5.0', [1, 4, 3]), true, 'a version inside the range is admitted')
+  assert.equal(admits('>=1.4.0 <1.5.0', [1, 5, 0]), false, 'the upper bound is refused')
+  assert.equal(
+    admits('>=1.4.0 <1.5.0', [1, 5, 1]),
+    false,
+    'a version above the upper bound is refused'
+  )
+  assert.equal(
+    admits('>=1.4.0 <2', [1, 3, 0]),
+    false,
+    'a version below the declared lower bound is refused'
+  )
+  assert.equal(admits('>=1.4.0 <2', [1, 4, 3]), true, 'the pinned runtime is admitted')
+
+  const pinned = bunVersion.split('.').map(Number)
+  assert.ok(
+    admits(manifest.engines.bun, pinned),
+    `engines.bun ${manifest.engines.bun} must admit the pinned bun ${bunVersion}`
+  )
+
+  // The versions pinned here are the versions the lanes install, so the contract is the
+  // one continuous integration enforces rather than a declaration nothing reads.
+  const installing = { bun: [], node: [] }
+  for (const file of readdirSync(new URL('../.github/workflows/', import.meta.url))) {
+    if (!file.endsWith('.yml')) continue
+    const workflow = await readFile(
+      new URL(`../.github/workflows/${file}`, import.meta.url),
+      'utf8'
+    )
+    if (/node-version-file:\s*\.node-version/.test(workflow)) installing.node.push(file)
+    if (/bun-version-file:\s*\.bun-version/.test(workflow)) installing.bun.push(file)
+  }
+  assert.ok(installing.node.length > 0, 'a workflow must install node from .node-version')
+  assert.ok(installing.bun.length > 0, 'a workflow must install bun from .bun-version')
 })
 
 test('defines root quality and build commands', async () => {
@@ -232,10 +315,11 @@ test('discovers disjoint Bun test groups for Code Foundry', async () => {
     'packages/database/src/integration.test.mjs',
     'packages/database/src/legacy-drain-fence-repository.integration.test.mjs',
     'packages/database/src/memory-provenance-retention.integration.test.mjs',
+    'packages/database/src/migrator-ddl-probe.integration.test.mjs',
     'packages/database/src/model-selection-repository.integration.test.mjs',
-    'packages/database/src/neon-ddl-probe.integration.test.mjs',
     'packages/database/src/operations-measurements.integration.test.mjs',
     'packages/database/src/pool-teardown.integration.test.mjs',
+    'packages/database/src/project-state-digest-postgres.integration.test.mjs',
     'packages/database/src/project-state-initialization.integration.test.mjs',
     'packages/database/src/retention-ancestry.integration.test.mjs',
     'packages/database/src/retention-claim-budget.integration.test.mjs',
@@ -248,6 +332,7 @@ test('discovers disjoint Bun test groups for Code Foundry', async () => {
     'packages/database/src/runtime-node-credential-binding.integration.test.mjs',
     'packages/database/src/runtime-node-credential-restricted.integration.test.mjs',
     'packages/database/src/runtime-node-identity-repository.integration.test.mjs',
+    'packages/database/src/scoped-migrations.integration.test.mjs',
     'packages/database/src/tool-repositories.integration.test.mjs',
     'packages/database/src/usage-store.integration.test.mjs',
     'packages/database/src/workspace-catalog.integration.test.mjs',
@@ -335,6 +420,7 @@ test('discovers disjoint Bun test groups for Code Foundry', async () => {
     'tests/infrastructure.test.mjs',
     'tests/integration-shards.test.mjs',
     'tests/integration-runner-lifecycle.test.mjs',
+    'tests/postgres-probe-diagnostics.test.mjs',
     'tests/hosted-compose-lifecycle.test.mjs',
     'tests/hosted-graph-qualification.test.mjs',
     'tests/langgraph-retirement-inventory.test.mjs',
@@ -342,6 +428,7 @@ test('discovers disjoint Bun test groups for Code Foundry', async () => {
     'tests/m11-admission-rollout-admin.test.mjs',
     'tests/m11-acp-installation.test.mjs',
     'tests/m11-architecture-audit.test.mjs',
+    'tests/m11-architecture-audit-regression.test.mjs',
     'tests/m11-context-command-contract.test.mjs',
     'tests/m11-graph-composition.test.mjs',
     'tests/m11-managed-graph-runtime.test.mjs',
@@ -355,7 +442,6 @@ test('discovers disjoint Bun test groups for Code Foundry', async () => {
     'tests/cp1-embedded-durable-execution.test.mjs',
     'tests/m11-security-probes.test.mjs',
     'tests/m11-sqlite-benchmark.test.mjs',
-    'tests/neon-workflow.test.mjs',
     'tests/pi-durable-cp1048-evidence-discipline.test.mjs',
     'tests/profile-recovery-crash-restore.test.mjs',
     'tests/profile-recovery-fenced-rollback.test.mjs',
@@ -369,6 +455,7 @@ test('discovers disjoint Bun test groups for Code Foundry', async () => {
     'tests/m11-retention-restore-reapply.test.mjs',
     'tests/profile-recovery-cleanup.test.mjs',
     'tests/railway-production-plan.test.mjs',
+    'tests/release-pr-readiness.test.mjs',
     'tests/replacement-compatibility.test.mjs',
     'tests/repository.test.mjs',
     'tests/task-cache-qualification.test.mjs',
@@ -844,7 +931,7 @@ test('provides a documented isolated integration-test runner', async () => {
   assert.match(runner, /process\.stdout\.write\(chunk\)/)
   assert.match(runner, /process\.stderr\.write\(chunk\)/)
   assert.match(runner, /await runIntegrationFileStreaming/)
-  assert.doesNotMatch(runner, /isRetryableNeonConnectionFailure/)
+  assert.doesNotMatch(runner, /isRetryablePostgreSQLConnectionFailure/)
   assert.doesNotMatch(runner, /retrying it once/)
   assert.match(runner, /INTEGRATION_TEST_TIMEOUT_MS: remoteDatabase \? '120000' : undefined/)
   assert.match(database.scripts['test:integration'], /--timeout 30000/)
@@ -861,120 +948,6 @@ test('provides a documented isolated integration-test runner', async () => {
   assert.match(documentation, /80%/)
   assert.match(documentation, /LCOV/)
   assert.match(documentation, /parallel/i)
-})
-
-test('Neon provider proof is bounded and cleanup precedes its budget check', async () => {
-  const workflow = await readFile(
-    new URL('../.github/workflows/neon_workflow.yml', import.meta.url),
-    'utf8'
-  )
-  const proof = workflow
-    .split('- name: Verify Neon provider compatibility')[1]
-    ?.split('- name: Find exact preview branch for cleanup')[0]
-  const providerProof = await readFile(
-    new URL('../packages/database/scripts/verify-neon-provider-compatibility.mjs', import.meta.url),
-    'utf8'
-  )
-  assert.ok(proof, 'The bounded Neon compatibility proof is required')
-  assert.match(proof, /timeout-minutes: 2/)
-  assert.match(proof, /timeout --signal=TERM --kill-after=5s 90s bun --cwd=packages\/database/)
-  assert.match(providerProof, /verifyNeonMigratorDdl\(sql\)/)
-  assert.equal((proof.match(/verify-neon-provider-compatibility\.mjs/g) ?? []).length, 1)
-  assert.doesNotMatch(workflow, /run-integration-tests\.mjs|db:migrate|bun run build/)
-  assert.match(workflow, /timeout-minutes: 15/)
-  assert.doesNotMatch(workflow, /timeout-minutes: (?:12|16|20)/)
-  assert.ok(
-    workflow.indexOf('- name: Install dependencies') <
-      workflow.indexOf('- name: Create Neon branch'),
-    'Install before creating an owned branch so setup failures need no remote cleanup'
-  )
-  const create = workflow.split('- name: Create Neon branch')[1]?.split('\n      - name:')[0]
-  const cleanup = workflow
-    .split('- name: Find exact preview branch for cleanup')[1]
-    ?.split('\n      - name: Delete Neon branch')[0]
-  const remove = workflow.split('- name: Delete Neon branch')[1]?.split('\n      - name:')[0]
-  assert.match(create, /timeout-minutes: 2/)
-  assert.match(cleanup, /timeout-minutes: 2/)
-  assert.match(remove, /timeout-minutes: 1/)
-  assert.ok(
-    workflow.indexOf('- name: Verify Neon branch absence') <
-      workflow.indexOf('- name: Enforce five-minute Neon verification budget'),
-    'The elapsed-time check must run after deletion and absence verification'
-  )
-  assert.match(workflow, /if: always\(\) && steps\.preview_branch\.outputs\.name != ''/)
-})
-
-test('isolates credentialed Neon validation from pull-request source', async () => {
-  const neonWorkflow = await readFile(
-    new URL('../.github/workflows/neon_workflow.yml', import.meta.url),
-    'utf8'
-  )
-  const pullRequestWorkflow = await readFile(
-    new URL('../.github/workflows/postgres-pull-request.yml', import.meta.url),
-    'utf8'
-  )
-  const validationWorkflow = await readFile(
-    new URL('../.github/workflows/validation.yml', import.meta.url),
-    'utf8'
-  )
-  const validationJob = validationWorkflow
-    .split('  validation_runtime:\n')[1]
-    ?.split('\n  postgres_qualification:')[0]
-
-  const events = neonWorkflow.match(/^on:\n([\s\S]*?)\npermissions:/m)?.[1]?.trimEnd()
-  assert.match(
-    events,
-    /^  push:\n    branches:\n      - main\n[\s\S]*  repository_dispatch:\n    types: \[neon-preview-cleanup\]$/
-  )
-  assert.doesNotMatch(events, /\n  workflow_dispatch:/)
-  assert.doesNotMatch(events, /pull_request/)
-  const verificationJob = neonWorkflow
-    .split('  verify_neon_preview:')[1]
-    ?.split('  cleanup_completed_preview:')[0]
-  assert.match(verificationJob, /github\.event_name == 'push' && !cancelled\(\)/)
-  const cleanupJob = neonWorkflow.split('  cleanup_completed_preview:')[1]
-  assert.match(
-    cleanupJob,
-    /if: github\.event_name == 'repository_dispatch' && github\.ref == 'refs\/heads\/main'/
-  )
-  assert.doesNotMatch(cleanupJob, /create-branch-action|bun install|bun run build|db:migrate/)
-  assert.match(neonWorkflow, /name: Verify Neon provider compatibility/)
-  assert.match(neonWorkflow, /control_plane_app/)
-  assert.match(neonWorkflow, /control_plane_migrator/)
-  assert.doesNotMatch(
-    neonWorkflow,
-    /NEON_CI_ADMIN_PASSWORD|DATABASE_ADMIN_PASSWORD|control_plane_admin/
-  )
-  assert.match(neonWorkflow, /verify-neon-provider-compatibility\.mjs/)
-  assert.match(neonWorkflow, /90s bun --cwd=packages\/database/)
-  assert.match(neonWorkflow, /elapsed > 300/)
-  assert.match(neonWorkflow, /preview\/main-/)
-  assert.match(neonWorkflow, /expires_at: \$\{\{ env\.EXPIRES_AT \}\}/)
-  assert.doesNotMatch(pullRequestWorkflow, /\$\{\{[^}]*\bsecrets\b|^\s*secrets\s*:/m)
-  assert.match(pullRequestWorkflow, /^on:\n  workflow_call: \{\}$/m)
-  assert.doesNotMatch(pullRequestWorkflow, /^  pull_request:/m)
-  assert.match(pullRequestWorkflow, /RUN_M10_POSTGRES_CONFORMANCE/)
-  assert.match(pullRequestWorkflow, /bun test tests\/cp1-embedded-durable-execution\.test\.mjs/)
-  assert.match(pullRequestWorkflow, /bash scripts\/run-hosted-graph-qualification\.sh/)
-  assert.doesNotMatch(pullRequestWorkflow, /bun run test:integration/)
-  assert.match(validationWorkflow, /uses: \.\/\.github\/workflows\/postgres-pull-request\.yml/)
-  assert.match(validationWorkflow, /name: Validation \/ Gate/)
-  const gate = validationWorkflow.split('  validation:\n')[1]
-  assert.match(gate, /needs: \[mode, validation_runtime, postgres_qualification\]/)
-  assert.match(gate, /MODE_RESULT: \$\{\{ needs\.mode\.result \}\}/)
-  assert.match(gate, /VALIDATION_RESULT: \$\{\{ needs\.validation_runtime\.result \}\}/)
-  assert.match(gate, /POSTGRES_RESULT: \$\{\{ needs\.postgres_qualification\.result \}\}/)
-  assert.match(gate, /\$POSTGRES_RESULT" != success/)
-  assert.match(gate, /\$VALIDATION_RESULT" != success/)
-  assert.match(gate, /\$MODE_RESULT" != success/)
-  assert.ok(validationJob)
-  assert.match(validationJob, /uses: 0xPlayerOne\/code-foundry/)
-  // The reusable-workflow call forwards exactly two sanctioned secrets
-  // (TURBO_TOKEN, NEXTAUTH_SECRET); any other secrets reference is a leak.
-  const secretRefs = validationJob.match(/\$\{\{[^}]*\bsecrets\b[^}]*\}\}/g) ?? []
-  for (const ref of secretRefs) {
-    assert.match(ref, /secrets\.(TURBO_TOKEN|NEXTAUTH_SECRET)\b/)
-  }
 })
 
 test('the canonical validation job keeps the doctor contract and fails closed', async () => {
@@ -1236,4 +1209,426 @@ test('uses Renovate with grouped draft batches and sync-managed holds', async ()
     renovate.packageRules.every((rule) => !('automerge' in rule)),
     'dependency PRs must never automerge'
   )
+})
+
+// The workspaces that carry no TypeScript project, and so are not checked by the
+// pinned checker. Every entry has to say why, and the guard verifies each reason
+// against the workspace itself, so a project cannot be taken out of the check by
+// listing it here. The list is empty: every workspace in this repository holds
+// TypeScript sources and a tsconfig project.
+const nonTypeScriptWorkspaces = new Map()
+
+// The invocation a checked project's typecheck script must be: the pinned Bun
+// checker over that project's own tsconfig project, and nothing else. The `bun` in
+// it is the pinned binary because every check task waits for the toolchain identity
+// task, which verifies the node and bun bytes the tasks actually run. The form is
+// exact so that a script which reaches the checker by another route, or reaches it
+// over another project, is reported rather than accepted.
+const pinnedCheckerInvocation = 'bun check -p tsconfig.json'
+
+/** The TypeScript sources a workspace holds, relative to the workspace. */
+const typeScriptSources = (directory) => {
+  const source = join(directory, 'src')
+  if (!existsSync(source)) return []
+  return readdirSync(source, { withFileTypes: true, recursive: true })
+    .filter((item) => item.isFile() && item.name.endsWith('.ts'))
+    .map((item) => relative(directory, join(item.parentPath, item.name)))
+}
+
+/**
+ * The declaration a workspace publishes for its consumers: the `types` entry, the
+ * `exports["."].types` entry, or the `.d.ts` beside its `main`. This is the file a
+ * consumer's checker resolves, so it is the file the build has to produce.
+ */
+const publishedDeclaration = (manifest) => {
+  const exported = manifest.exports?.['.']
+  if (typeof manifest.types === 'string') return manifest.types
+  if (typeof exported?.types === 'string') return exported.types
+  if (typeof manifest.main === 'string' && manifest.main.endsWith('.js')) {
+    return `${manifest.main.slice(0, -3)}.d.ts`
+  }
+  return undefined
+}
+
+/**
+ * The workspaces that are excluded from the check, and why that exclusion is not
+ * honest. A workspace may only be excluded while it really carries no TypeScript
+ * project, so the exclusion list cannot be used to hide one.
+ */
+const exclusionViolations = (workspacePackages, exclusions) => {
+  const violations = []
+  const byName = new Map(workspacePackages.map((entry) => [entry.manifest.name, entry]))
+  for (const [name, reason] of exclusions) {
+    const entry = byName.get(name)
+    if (!entry) {
+      violations.push(`${name} is excluded from the type checker but is not a workspace`)
+      continue
+    }
+    if (typeof reason !== 'string' || reason.trim() === '') {
+      violations.push(`${name} is excluded from the type checker without a reason`)
+    }
+    if (existsSync(join(entry.dir, 'tsconfig.json'))) {
+      violations.push(`${name} is excluded from the type checker but holds a tsconfig project`)
+    }
+    if (typeScriptSources(entry.dir).length > 0) {
+      violations.push(`${name} is excluded from the type checker but holds TypeScript sources`)
+    }
+  }
+  return violations
+}
+
+/**
+ * The contract every checked project must satisfy: the project declares a
+ * typecheck script, that script really invokes the pinned checker, and the check
+ * graph runs it, under the pinned toolchain, after the builds its workspace
+ * dependencies need.
+ *
+ * The expected projects are enumerated from the workspace layout and the explicit
+ * exclusion list, never from the manifests' own scripts, so a project whose script
+ * was removed or renamed is still expected and this reports it.
+ */
+const checkerContractViolations = (root, workspacePackages, tasks, exclusions) => {
+  const violations = []
+  const byName = new Map(workspacePackages.map((entry) => [entry.manifest.name, entry]))
+  for (const entry of workspacePackages) {
+    const name = entry.manifest.name
+    const short = name.replace('@control-plane/', '')
+    if (exclusions.has(name)) continue
+    const script = entry.manifest.scripts?.typecheck
+    if (typeof script !== 'string') {
+      violations.push(`${short} must declare a typecheck script`)
+    } else if (script.trim() !== pinnedCheckerInvocation) {
+      violations.push(
+        `${short}'s typecheck script must invoke the pinned checker as "${pinnedCheckerInvocation}", not "${script}"`
+      )
+    }
+    const task = tasks[`orch:${short}:typecheck`]
+    if (!task) {
+      violations.push(`${short} must have a typecheck task in the check graph`)
+      continue
+    }
+    const directory = relative(root, entry.dir).replaceAll('\\', '/')
+    if (!task.command.endsWith(`bun run --cwd ${directory} typecheck`)) {
+      violations.push(`${short}'s typecheck task must run that project's own typecheck script`)
+    }
+    if (!task.dependsOn.includes('orch:toolchain')) {
+      violations.push(`${short}'s check must wait for the pinned toolchain identity`)
+    }
+    const dependencies = Object.keys({
+      ...entry.manifest.dependencies,
+      ...entry.manifest.devDependencies,
+      ...entry.manifest.peerDependencies,
+      ...entry.manifest.optionalDependencies,
+    }).filter((dependency) => byName.has(dependency))
+    for (const dependency of dependencies) {
+      const dependencyShort = byName.get(dependency).manifest.name.replace('@control-plane/', '')
+      if (!task.dependsOn.includes(`orch:${dependencyShort}:build`)) {
+        violations.push(
+          `${short}'s check must wait for ${dependencyShort}'s build, so its generated declarations exist`
+        )
+      }
+    }
+  }
+  return violations
+}
+
+test('the Bun type checker covers every TypeScript project, and it is not vacuous', async () => {
+  const root = fileURLToPath(new URL('..', import.meta.url))
+  const workspacePackages = workspaces(root)
+  const tasks = buildTasks(root, expectedId(root))
+
+  // The expected checked projects are enumerated from the workspace layout and
+  // the explicit exclusion list, not from the manifests' own typecheck scripts, so
+  // a project that loses or renames its script is still expected to be checked.
+  assert.deepEqual(
+    exclusionViolations(workspacePackages, nonTypeScriptWorkspaces),
+    [],
+    'every workspace excluded from the type checker must really hold no TypeScript project'
+  )
+  const violations = checkerContractViolations(
+    root,
+    workspacePackages,
+    tasks,
+    nonTypeScriptWorkspaces
+  )
+  assert.deepEqual(violations, [], violations.join('; '))
+
+  for (const entry of workspacePackages) {
+    if (nonTypeScriptWorkspaces.has(entry.manifest.name)) continue
+    const short = entry.manifest.name.replace('@control-plane/', '')
+    // The project must be a TypeScript project in fact, or it has to be declared
+    // as an exclusion with its reason.
+    assert.ok(
+      existsSync(join(entry.dir, 'tsconfig.json')),
+      `${short} must hold a tsconfig project, or be declared an exclusion with its reason`
+    )
+    const sources = typeScriptSources(entry.dir)
+    assert.ok(sources.length > 0, `${short} must hold TypeScript sources`)
+    // The project must inherit the shared base, whose file set each package names
+    // in its own include. The repository's root project names no files, so a
+    // package that inherited it would pull its whole directory into the check
+    // instead of the sources its include names.
+    const project = await readJson(join(relative(root, entry.dir), 'tsconfig.json'))
+    assert.match(
+      String(project.extends ?? ''),
+      /tsconfig\.base\.json$/,
+      `${short} must extend the shared base, not a project that names no files`
+    )
+    // The project must not be vacuous either: the files its include names have to be
+    // the package's own sources, or the checker would have nothing to read and would
+    // report success for a package it never looked at.
+    const include = Array.isArray(project.include) ? project.include : []
+    assert.ok(
+      sources.some((source) => include.some((pattern) => new Glob(pattern).match(source))),
+      `${short}'s checked project must name at least one of its own sources`
+    )
+  }
+
+  // The infrastructure project is checked by the root manifest rather than by a
+  // workspace, so its invocation is asserted here.
+  const rootManifest = await readJson('package.json')
+  assert.equal(
+    rootManifest.scripts['infra:typecheck'],
+    'bun check -p tsconfig.infra.json',
+    'the infrastructure project must be checked by the pinned checker'
+  )
+
+  // The aggregate the repository's own type check runs must build first, so the
+  // declarations exist, and must include the openapi check.
+  assert.deepEqual([...tasks['orch:check'].dependsOn].toSorted(), [
+    'orch:build',
+    'orch:openapi:check',
+    'orch:typecheck',
+  ])
+
+  // The checker must not be vacuous: an intentional type error in an isolated
+  // disposable project, checked under this repository's own base configuration, has
+  // to fail the command, and a clean project has to pass it, so the failure below
+  // means something. The disposable project lives outside the repository and is
+  // removed afterwards, so no file in the tree is ever written.
+  const disposable = await mkdtemp(join(tmpdir(), 'control-plane-typecheck-probe-'))
+  const probeFile = join(disposable, 'probe.ts')
+  const probeProject = join(disposable, 'tsconfig.json')
+  try {
+    await writeFile(join(disposable, 'package.json'), JSON.stringify({ type: 'module' }))
+    await writeFile(
+      probeProject,
+      JSON.stringify({
+        extends: join(root, 'tsconfig.base.json'),
+        compilerOptions: {
+          noEmit: true,
+          typeRoots: [join(root, 'node_modules', '@types')],
+        },
+        include: ['probe.ts'],
+      })
+    )
+    const runCheck = () =>
+      spawnSync(process.execPath, ['check', '-p', probeProject], {
+        cwd: disposable,
+        encoding: 'utf8',
+      })
+
+    await writeFile(probeFile, 'export const cp1233TypecheckProbe: number = 1\n')
+    const clean = runCheck()
+    assert.equal(clean.status, 0, 'the clean disposable project must typecheck')
+
+    await writeFile(probeFile, "export const cp1233TypecheckProbe: number = 'not a number'\n")
+    const failed = runCheck()
+    assert.notEqual(failed.status, 0, 'the checker must fail on an intentional type error')
+    assert.match(
+      `${failed.stdout}\n${failed.stderr}`,
+      /probe\.ts/,
+      'the failure must name the file that carries the intentional error'
+    )
+  } finally {
+    await rm(disposable, { recursive: true, force: true })
+  }
+  assert.equal(existsSync(disposable), false, 'the disposable check must leave nothing behind')
+})
+
+test('the generated declarations the checker resolves are the ones the build produces', async () => {
+  const root = fileURLToPath(new URL('..', import.meta.url))
+  const tasks = buildTasks(root, expectedId(root))
+  const workspacePackages = workspaces(root)
+
+  for (const entry of workspacePackages) {
+    const short = entry.manifest.name.replace('@control-plane/', '')
+    const declaration = publishedDeclaration(entry.manifest)
+    assert.ok(
+      declaration,
+      `${short} must publish a declaration for its consumers, or name no types at all`
+    )
+    // The declaration has to be a build output, not a source: a declaration that
+    // pointed into src/ would be checked as if it were the built shape, and a
+    // consumer would resolve a shape the build never produced.
+    const project = await readJson(join(relative(root, entry.dir), 'tsconfig.json'))
+    const outDir = project.compilerOptions?.outDir
+    assert.ok(outDir, `${short}'s project must declare the directory its build writes to`)
+    const published = relative(entry.dir, join(entry.dir, declaration)).replaceAll('\\', '/')
+    assert.ok(
+      published.startsWith(`${outDir}/`),
+      `${short} publishes ${published}, which is outside the ${outDir} its build writes to`
+    )
+    // The build task has to produce that directory, and the check has to wait for
+    // it, or the checker resolves a declaration that is absent or stale.
+    const build = tasks[`orch:${short}:build`]
+    assert.ok(build, `${short} must have a build task in the check graph`)
+    assert.ok(
+      (build.cache?.output ?? []).includes(
+        `${relative(root, entry.dir).replaceAll('\\', '/')}/${outDir}/**`
+      ),
+      `${short}'s build task must produce the ${outDir} its declaration is published from`
+    )
+  }
+
+  // The consumers resolve those declarations through the workspace links, so every
+  // workspace dependency has to be resolvable from the consumer that declares it.
+  // Node resolution walks the consumer's own node_modules and then each ancestor's,
+  // so a link anywhere on that path is enough.
+  const byName = new Map(workspacePackages.map((entry) => [entry.manifest.name, entry]))
+  const resolvable = (consumer, dependency) => {
+    let directory = consumer.dir
+    for (;;) {
+      if (existsSync(join(directory, 'node_modules', dependency))) return true
+      const parent = join(directory, '..')
+      if (parent === directory) return false
+      directory = parent
+    }
+  }
+  for (const entry of workspacePackages) {
+    const short = entry.manifest.name.replace('@control-plane/', '')
+    const dependencies = new Set()
+    for (const field of [
+      'dependencies',
+      'devDependencies',
+      'peerDependencies',
+      'optionalDependencies',
+    ]) {
+      for (const name of Object.keys(entry.manifest[field] ?? {})) {
+        if (byName.has(name)) dependencies.add(name)
+      }
+    }
+    for (const dependency of dependencies) {
+      assert.ok(
+        resolvable(entry, dependency),
+        `${short} must resolve ${dependency} from its own node_modules or an ancestor's, or it cannot read its declaration`
+      )
+    }
+  }
+})
+
+test('a project that loses, renames, or neuters its typecheck script fails the checker contract', async () => {
+  const root = fileURLToPath(new URL('..', import.meta.url))
+  const workspacePackages = workspaces(root)
+
+  // The contract is applied to a disposable copy of the workspace, so the mutation
+  // is made on real manifests and the real check graph is built from them, while
+  // the repository's own tree is never written.
+  const fixture = await mkdtemp(join(tmpdir(), 'control-plane-typecheck-contract-'))
+  try {
+    for (const entry of workspacePackages) {
+      const directory = join(fixture, relative(root, entry.dir))
+      await mkdir(directory, { recursive: true })
+      await writeFile(join(directory, 'package.json'), JSON.stringify(entry.manifest, null, 2))
+    }
+    const required = '@control-plane/tool-sdk'
+    const short = 'tool-sdk'
+    const original = workspacePackages.find((entry) => entry.manifest.name === required)
+    assert.ok(original, 'the regression needs a project the repository checks')
+    const originalScript = original.manifest.scripts.typecheck
+    assert.equal(
+      originalScript,
+      pinnedCheckerInvocation,
+      'the regression needs a project whose typecheck script invokes the pinned checker'
+    )
+
+    const contractFor = async (mutate) => {
+      const manifestPath = join(fixture, relative(root, original.dir), 'package.json')
+      const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
+      mutate(manifest.scripts)
+      await writeFile(manifestPath, JSON.stringify(manifest, null, 2))
+      const entries = workspaces(fixture)
+      const tasks = buildTasks(fixture, 'fixture-toolchain')
+      return checkerContractViolations(fixture, entries, tasks, new Map())
+    }
+
+    // The control: the copy of the workspace satisfies the contract as it stands.
+    assert.deepEqual(
+      await contractFor(() => {}),
+      [],
+      'the workspace must satisfy the checker contract'
+    )
+
+    // The script removed: the project is still expected, so the contract must say so.
+    assert.deepEqual(
+      await contractFor((scripts) => delete scripts.typecheck),
+      [
+        `${short} must declare a typecheck script`,
+        `${short} must have a typecheck task in the check graph`,
+      ],
+      'a project that loses its typecheck script must fail the contract'
+    )
+
+    // The script renamed: the project is still expected under its own name.
+    assert.deepEqual(
+      await contractFor((scripts) => {
+        scripts.typechecks = scripts.typecheck
+        delete scripts.typecheck
+      }),
+      [
+        `${short} must declare a typecheck script`,
+        `${short} must have a typecheck task in the check graph`,
+      ],
+      'a project that renames its typecheck script must fail the contract'
+    )
+
+    // A script that does nothing: the task exists, but the checker does not run.
+    assert.deepEqual(
+      await contractFor((scripts) => {
+        scripts.typecheck = 'node -e 0'
+      }),
+      [
+        `${short}'s typecheck script must invoke the pinned checker as "${pinnedCheckerInvocation}", not "node -e 0"`,
+      ],
+      'a project whose typecheck script does nothing must fail the contract'
+    )
+
+    // A script that checks with another compiler.
+    assert.deepEqual(
+      await contractFor((scripts) => {
+        scripts.typecheck = 'tsc -p tsconfig.json'
+      }),
+      [
+        `${short}'s typecheck script must invoke the pinned checker as "${pinnedCheckerInvocation}", not "tsc -p tsconfig.json"`,
+      ],
+      'a project that checks with another compiler must fail the contract'
+    )
+
+    // A script that checks the wrong project: the checker runs, but not over this
+    // project's own sources.
+    assert.deepEqual(
+      await contractFor((scripts) => {
+        scripts.typecheck = 'bun check -p tsconfig.base.json'
+      }),
+      [
+        `${short}'s typecheck script must invoke the pinned checker as "${pinnedCheckerInvocation}", not "bun check -p tsconfig.base.json"`,
+      ],
+      'a project that checks another project must fail the contract'
+    )
+
+    // The exclusion list is the one way a project could leave the check, so it is
+    // held to the same standard: a project that holds TypeScript cannot be
+    // excluded from the check by naming it.
+    assert.deepEqual(
+      exclusionViolations(workspacePackages, new Map([[required, 'not a TypeScript project']])),
+      [
+        `${required} is excluded from the type checker but holds a tsconfig project`,
+        `${required} is excluded from the type checker but holds TypeScript sources`,
+      ],
+      'an exclusion cannot hide a project that holds TypeScript'
+    )
+  } finally {
+    await rm(fixture, { recursive: true, force: true })
+  }
+  assert.equal(existsSync(fixture), false, 'the disposable fixture must leave nothing behind')
 })

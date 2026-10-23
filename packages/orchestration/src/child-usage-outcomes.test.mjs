@@ -1,5 +1,9 @@
 import { describe, expect, test } from 'bun:test'
-import { ChildUsageLedger, ChildUsageLedgerError } from './child-usage-outcomes.ts'
+import {
+  ChildUsageLedger,
+  ChildUsageLedgerError,
+  ChildUsageOutcomeSchema,
+} from './child-usage-outcomes.ts'
 
 const ids = {
   workspaceId: 'wsp_01JABCDEF0123456789ABCDEFG',
@@ -67,6 +71,71 @@ describe('correlated child usage outcomes', () => {
     expect(status.settled).toBeUndefined()
     expect(ledger.listByDelegation(ids.delegationIdA)).toStrictEqual([])
     expect(Object.keys(status).toSorted()).toStrictEqual(['costState', 'identity'])
+  })
+
+  test('refuses a cost state that claims a stage without its evidence', () => {
+    const identity = identityA()
+
+    expect(() => ChildUsageOutcomeSchema.parse({ identity, costState: 'settled' })).toThrow()
+    expect(() => ChildUsageOutcomeSchema.parse({ identity, costState: 'reported' })).toThrow()
+  })
+
+  test('refuses a cost state that hides a later stage behind an earlier one', () => {
+    const identity = identityA()
+
+    expect(() =>
+      ChildUsageOutcomeSchema.parse({
+        identity,
+        costState: 'reported',
+        reported: reportedUsage(42_000),
+        settled: {
+          currency: 'USD',
+          settledMicrounits: 42_000,
+          settledAt: at(2_000),
+          settlementRef: 'settlement:run:1',
+        },
+      })
+    ).toThrow()
+  })
+
+  test('refuses an unknown cost state that carries recorded evidence', () => {
+    const identity = identityA()
+
+    expect(() =>
+      ChildUsageOutcomeSchema.parse({
+        identity,
+        costState: 'unknown',
+        reported: reportedUsage(42_000),
+      })
+    ).toThrow()
+  })
+
+  test('accepts the truthful cost states', () => {
+    const identity = identityA()
+
+    expect(ChildUsageOutcomeSchema.parse({ identity, costState: 'unknown' }).costState).toBe(
+      'unknown'
+    )
+    expect(
+      ChildUsageOutcomeSchema.parse({
+        identity,
+        costState: 'reported',
+        reported: reportedUsage(42_000),
+      }).costState
+    ).toBe('reported')
+    expect(
+      ChildUsageOutcomeSchema.parse({
+        identity,
+        costState: 'settled',
+        reported: reportedUsage(42_000),
+        settled: {
+          currency: 'USD',
+          settledMicrounits: 42_000,
+          settledAt: at(2_000),
+          settlementRef: 'settlement:run:1',
+        },
+      }).costState
+    ).toBe('settled')
   })
 
   test('advances estimated → reserved → reported → reconciled → settled on explicit evidence', () => {

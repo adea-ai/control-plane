@@ -17,7 +17,7 @@ evidence is recorded in `m11-context-command-delivery-2026-09-12.md`.
 - The standalone E2E executes both supported Local adapter families through
   `DirectLocalRuntimeTransport`, the Local composition, SQLite persistence and
   filesystem Artifacts with a restart/reopen recovery check; it never starts a Runtime
-  Gateway process and requires no Railway, Neon, R2, PostgreSQL, Cortana or reusable
+  Gateway process and requires no Railway, PostgreSQL, R2, PostgreSQL, Cortana or reusable
   provider credentials. No-provider, disabled-provider and fake alternate provider
   paths are included.
 - Environment note: the checkout needed `bun install` after pulling the merged release

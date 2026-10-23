@@ -20,7 +20,7 @@ port. A shared identity assertion makes compare-and-set preserve workspace, dedu
 execution and source attempt in SQLite, PostgreSQL and the in-memory test repository.
 
 The PostgreSQL fixture seeds a valid owner for existing proposal persistence coverage. The new
-seven-case provenance suite is assigned to the existing third Neon shard, with isolated databases,
+seven-case provenance suite is assigned to the existing third PostgreSQL shard, with isolated databases,
 serial file execution and existing per-case budgets. The foundation's 65 names and 37/28 split
 remain unchanged.
 

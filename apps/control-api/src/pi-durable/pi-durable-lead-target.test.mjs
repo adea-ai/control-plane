@@ -4,10 +4,18 @@ import { DatabaseSync } from 'node:sqlite'
 import { canonicalJsonStringify } from '@control-plane/contracts'
 import { createExecutionPlanTestFixture } from '@control-plane/execution-plan/testing'
 import {
+  PiDurableLeadDispatchResponseSchema,
+  PiDurableLeadStatusResponseSchema,
+} from '@control-plane/runtime-sdk'
+import {
   DurablePiDurableLeadService,
   PiDurableLeadError,
   SqlitePiDurableLeadReceiptStore,
 } from './pi-durable-lead.service.ts'
+import {
+  PreChangeDispatchResponseSchema,
+  PreChangeStatusResponseSchema,
+} from './lead-pre-change-client.fixture.mjs'
 
 const id = (prefix) => `${prefix}_01JABCDEF0123456789ABCDEFG`
 const at = '2026-10-08T09:00:00.000Z'
@@ -24,7 +32,7 @@ const requestedTarget = {
   generation: 3,
 }
 
-function harness() {
+function harness(options = {}) {
   const plan = createExecutionPlanTestFixture({
     profileCapabilityRequirements: [],
     skillRequiredCapabilities: [],
@@ -92,11 +100,18 @@ function harness() {
       handle,
       state: calls.cancels > 0 ? (confirmed ? 'cancelled' : 'cancelling') : 'running',
       observedAt: at,
+      ...(options.observedGeneration ? { observedGeneration: options.observedGeneration } : {}),
     }),
     progress: async function* () {},
     cancel: async () => {
       calls.cancels += 1
-      return { handle, state: confirmed ? 'cancelled' : 'cancelling', observedAt: at }
+      const generation = options.cancelGeneration ?? options.observedGeneration
+      return {
+        handle,
+        state: confirmed ? 'cancelled' : 'cancelling',
+        observedAt: at,
+        ...(generation ? { observedGeneration: generation } : {}),
+      }
     },
   }
   const service = new DurablePiDurableLeadService({
@@ -120,7 +135,7 @@ function harness() {
   })
   const envelope = (operation, payload, key = 'target-command:one') => ({
     caller: { servicePrincipalId: principalId },
-    contractVersion: { major: 1, minor: 0 },
+    contractVersion: options.contractVersion ?? { major: 3, minor: 1 },
     requestId: id('req'),
     commandId: id('cmd'),
     workspaceId,
@@ -134,7 +149,7 @@ function harness() {
   })
   const read = (operation, parameters) => ({
     caller: { servicePrincipalId: principalId },
-    contractVersion: { major: 1, minor: 0 },
+    contractVersion: options.contractVersion ?? { major: 3, minor: 1 },
     requestId: id('req'),
     workspaceId,
     ...(projectId ? { projectId } : {}),
@@ -298,6 +313,76 @@ test('935: observedTarget binds server-owned session and plan task', async () =>
   expect(dispatched.data.observedTarget.sessionId).toBe(dispatched.data.runtimeSessionId)
 })
 
+test('935: the receipt carries the runtime-observed generation, never the claimed one', async () => {
+  // The claim stays a claim: the caller's number is echoed on the receipt as
+  // the request's target and never becomes an observation. The observation is
+  // the runtime's own identity for the attempt that owns the receipt.
+  const observedGeneration = {
+    schemaVersion: 'runtime-observed-generation/v1',
+    attemptId: id('att'),
+    turnKey: `pi-turn:${id('att')}:initial`,
+    inferenceId: 'pi-generation:1',
+    inferenceKey: `pi-turn:${id('att')}:initial:pi-generation:1`,
+  }
+  const { service, envelope, principal } = harness({ observedGeneration })
+  const claimed = {
+    sessionId: 'ses_02JABCDEF0123456789ABCDEH',
+    taskId: '11111111-2222-4333-8444-555555555555',
+    generation: 7,
+  }
+  const dispatched = await service.dispatch(
+    envelope('pi-durable.lead.dispatch', { intentId, requestedTarget: claimed }),
+    principal
+  )
+  expect(dispatched.data.requestedTarget).toEqual(claimed)
+  expect(dispatched.data.observedTarget.generation).toEqual(observedGeneration)
+  // The claimed number is not the observation, and never becomes one.
+  expect(dispatched.data.observedTarget.generation).not.toEqual(claimed.generation)
+})
+
+test('935: a generation observed for another attempt is fenced at the control boundary', async () => {
+  // A runtime that reports a generation observed for another attempt is
+  // reporting a late old-attempt event. The control is refused instead of
+  // publishing an outcome for the wrong attempt.
+  const foreignGeneration = {
+    schemaVersion: 'runtime-observed-generation/v1',
+    attemptId: 'att_01JABCDEF0123456789ABCDEFH',
+    turnKey: `pi-turn:att_01JABCDEF0123456789ABCDEFH:initial`,
+    inferenceId: 'pi-generation:late',
+    inferenceKey: `pi-turn:att_01JABCDEF0123456789ABCDEFH:initial:pi-generation:late`,
+  }
+  const { service, envelope, principal, calls } = harness({
+    observedGeneration: {
+      schemaVersion: 'runtime-observed-generation/v1',
+      attemptId: id('att'),
+      turnKey: `pi-turn:${id('att')}:initial`,
+      inferenceId: 'pi-generation:1',
+      inferenceKey: `pi-turn:${id('att')}:initial:pi-generation:1`,
+    },
+    cancelGeneration: foreignGeneration,
+  })
+  const dispatched = await service.dispatch(
+    envelope('pi-durable.lead.dispatch', { intentId, requestedTarget }),
+    principal
+  )
+  expect(
+    await codeOf(() =>
+      service.cancel(
+        envelope(
+          'pi-durable.lead.cancel',
+          { dispatchId: dispatched.data.dispatchId },
+          'target-cancel:late-generation'
+        ),
+        principal
+      )
+    )
+  ).toBe('PI_LEAD_CANCELLATION_OUTCOME_UNKNOWN')
+  // The runtime has already received cancel; the late generation refuses publication,
+  // but cannot establish that cancellation had no effect. It never cascades to children.
+  expect(calls.cancels).toBe(1)
+  expect(calls.childStops).toHaveLength(0)
+})
+
 test('935: ordinary lead-stop performs zero child-cancel calls', async () => {
   // CP935 first clause: ordinary lead-stop stops the lead execution only.
   // The spying delegation service is deliberately configured: the proof
@@ -319,4 +404,74 @@ test('935: ordinary lead-stop performs zero child-cancel calls', async () => {
   )
   expect(calls.cancels).toBe(1)
   expect(calls.childStops).toHaveLength(0)
+})
+
+test('935: an old consumer parses the new server response with the pre-3.1 strict shapes', async () => {
+  // Rollout compatibility: the installed Adea SDK validates a lead response
+  // with the pre-3.1 strict target and runtime-status shapes and maps a parse
+  // failure to an invalid response. A consumer that advertised 3.0 must
+  // therefore receive a response those shapes accept.
+  const observedGeneration = {
+    schemaVersion: 'runtime-observed-generation/v1',
+    attemptId: id('att'),
+    turnKey: `pi-turn:${id('att')}:initial`,
+    inferenceId: 'pi-generation:1',
+    inferenceKey: `pi-turn:${id('att')}:initial:pi-generation:1`,
+  }
+  const { service, envelope, read, principal } = harness({
+    observedGeneration,
+    contractVersion: { major: 3, minor: 0 },
+  })
+  const dispatched = await service.dispatch(
+    envelope('pi-durable.lead.dispatch', { intentId, requestedTarget }),
+    principal
+  )
+  const status = await service.status(
+    read('pi-durable.lead.status', { dispatchId: dispatched.data.dispatchId }),
+    principal
+  )
+  // The installed consumer's own validation accepts the response.
+  expect(() => PreChangeDispatchResponseSchema.parse(dispatched)).not.toThrow()
+  expect(() => PreChangeStatusResponseSchema.parse(status)).not.toThrow()
+  // The observed generation is not published to a consumer that cannot parse
+  // it: it is absent from the observed target and from the runtime status.
+  expect(dispatched.data.observedTarget).not.toHaveProperty('generation')
+  expect(status.data.observedTarget).not.toHaveProperty('generation')
+  expect(status.data.status).not.toHaveProperty('observedGeneration')
+  // The gate is required, not cosmetic: the same response with the
+  // generation published is rejected by the installed consumer's shapes.
+  expect(() =>
+    PreChangeStatusResponseSchema.parse({
+      ...status,
+      data: {
+        ...status.data,
+        observedTarget: { ...status.data.observedTarget, generation: observedGeneration },
+        status: { ...status.data.status, observedGeneration },
+      },
+    })
+  ).toThrow()
+})
+
+test('935: an updated consumer receives and parses the observed generation', async () => {
+  const observedGeneration = {
+    schemaVersion: 'runtime-observed-generation/v1',
+    attemptId: id('att'),
+    turnKey: `pi-turn:${id('att')}:initial`,
+    inferenceId: 'pi-generation:1',
+    inferenceKey: `pi-turn:${id('att')}:initial:pi-generation:1`,
+  }
+  const { service, envelope, read, principal } = harness({ observedGeneration })
+  const dispatched = await service.dispatch(
+    envelope('pi-durable.lead.dispatch', { intentId, requestedTarget }),
+    principal
+  )
+  const status = await service.status(
+    read('pi-durable.lead.status', { dispatchId: dispatched.data.dispatchId }),
+    principal
+  )
+  expect(dispatched.data.observedTarget.generation).toEqual(observedGeneration)
+  expect(status.data.status.observedGeneration).toEqual(observedGeneration)
+  // The current consumer's own validation accepts the response.
+  expect(() => PiDurableLeadDispatchResponseSchema.parse(dispatched)).not.toThrow()
+  expect(() => PiDurableLeadStatusResponseSchema.parse(status)).not.toThrow()
 })

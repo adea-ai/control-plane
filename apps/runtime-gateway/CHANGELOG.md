@@ -1,5 +1,27 @@
 # Changelog
 
+## [1.10.0](https://github.com/adea-ai/control-plane/compare/runtime-gateway-v1.9.2...runtime-gateway-v1.10.0) (2026-10-23)
+
+
+### Features
+
+* **acp-adapter:** add the production secure ACP remote wire and device agent ([#1023](https://github.com/adea-ai/control-plane/issues/1023)) ([#1238](https://github.com/adea-ai/control-plane/issues/1238)) ([52c3b36](https://github.com/adea-ai/control-plane/commit/52c3b36bccd04e3419b28945e8cfc97342b8612a))
+
+## [1.9.2](https://github.com/adea-ai/control-plane/compare/runtime-gateway-v1.9.1...runtime-gateway-v1.9.2) (2026-10-22)
+
+
+### Bug Fixes
+
+* **railway:** verify production PostgreSQL identity and scoped migrations ([#1256](https://github.com/adea-ai/control-plane/issues/1256)) ([86b7515](https://github.com/adea-ai/control-plane/commit/86b751520c569106644c518dd5fd0819056cd169))
+
+## [1.9.1](https://github.com/adea-ai/control-plane/compare/runtime-gateway-v1.9.0...runtime-gateway-v1.9.1) (2026-10-22)
+
+
+### Bug Fixes
+
+* runtime-gateway-start-authority-marker ([#1245](https://github.com/adea-ai/control-plane/issues/1245)) ([f6e012b](https://github.com/adea-ai/control-plane/commit/f6e012b4906cafe515d086ace93c8956acb143bc))
+* **testing:** print the authority marker the startup test looks for ([f6e012b](https://github.com/adea-ai/control-plane/commit/f6e012b4906cafe515d086ace93c8956acb143bc))
+
 ## [1.9.0](https://github.com/adea-ai/control-plane/compare/runtime-gateway-v1.8.1...runtime-gateway-v1.9.0) (2026-10-17)
 
 

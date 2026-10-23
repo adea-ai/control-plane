@@ -74,5 +74,5 @@ classes and external provider deletion/hold coordination are incomplete.
 Current-head whole-package/workspace validation, CI, deployment and all original
 profile/runtime/provider/evaluation/native-document/independent-human gates
 remain required. Neither this checkpoint nor successful foundation tests close
-#194 or Milestone 11. No production or staging mutation was performed for this
+#194 or Milestone 11. No production or sandbox mutation was performed for this
 hold batch.

@@ -1,14 +1,19 @@
 import { describe, expect, test } from 'bun:test'
+import { createHash } from 'node:crypto'
 import {
+  AppliedStateMutationSchema,
   InMemoryProjectStateRepository,
   InMemoryStatePromotionProposalRepository,
   ProjectStateConflict,
   ProjectStateOperationSchema,
   ProjectStateService,
   RecordingProjectStateEventPublisher,
+  projectStateMutationDigestForVersion,
   projectStateMutationDigestV2,
   projectStateMutationLegacyDigest,
+  projectStateMutationMatchesDigest,
 } from './index.ts'
+import { projectStateDigestHistoryFixtures } from './project-state-digest-history-fixtures.mjs'
 
 const workspaceId = 'wsp_01JABCDEF0123456789ABCDEFG'
 const projectId = 'prj_01JABCDEF0123456789ABCDEFG'
@@ -51,6 +56,258 @@ describe('project state digest cutover', () => {
     // record must resolve to an idempotent replay, never MUTATION_ID_REUSED.
     const replay = await service.applyMutation(input)
     expect(replay.applied).toBe(false)
+  })
+})
+
+describe('project state mutation digest versioning', () => {
+  test('the frozen historical fixtures authenticate their own canonical bytes', () => {
+    // The frozen digest is the witness for the frozen bytes, so this check holds on any
+    // host: it never re-derives the historical digest from the input.
+    for (const testCase of projectStateDigestHistoryFixtures.cases) {
+      const digest = createHash('sha256').update(testCase.canonicalBytes).digest('hex')
+      expect(`sha256:${digest}`).toBe(testCase.legacyDigest)
+    }
+  })
+
+  test('the frozen historical digests genuinely diverge from the code-point digests', () => {
+    for (const testCase of projectStateDigestHistoryFixtures.cases) {
+      expect(projectStateMutationDigestV2(testCase.input)).not.toBe(testCase.legacyDigest)
+    }
+  })
+
+  test('the record version decides the canonicalization a reader accepts', async () => {
+    // The historical canonicalization sorts keys with a locale-dependent collation, so the
+    // compatibility path is pinned to the locale the frozen fixtures were produced under.
+    // The code-point path is unaffected: it never consults the locale.
+    await withPinnedLegacyLocale(
+      projectStateDigestHistoryFixtures.provenance.generationProfile.locale,
+      async () => {
+        for (const testCase of projectStateDigestHistoryFixtures.cases) {
+          const versionedDigest = projectStateMutationDigestV2(testCase.input)
+          // An untagged record predates explicit versioning: the reader accepts the
+          // compatibility forms it can still justify.
+          expect(projectStateMutationMatchesDigest(testCase.input, testCase.legacyDigest)).toBe(
+            true
+          )
+          expect(projectStateMutationMatchesDigest(testCase.input, versionedDigest)).toBe(true)
+          // A versioned record names its canonicalization: only that form is accepted.
+          expect(projectStateMutationMatchesDigest(testCase.input, versionedDigest, 2)).toBe(true)
+          expect(projectStateMutationMatchesDigest(testCase.input, testCase.legacyDigest, 2)).toBe(
+            false
+          )
+        }
+      }
+    )
+  })
+
+  test('the current legacy helper reproduces the frozen historical bytes under the pinned profile', async () => {
+    // Consistency only. The proof is the frozen canonical bytes hashing to the frozen
+    // digest; this shows the compatibility path still reaches the same bytes.
+    const locale = projectStateDigestHistoryFixtures.provenance.generationProfile.locale
+    await withPinnedLegacyLocale(locale, async () => {
+      for (const testCase of projectStateDigestHistoryFixtures.cases) {
+        expect(projectStateMutationLegacyDigest(testCase.input)).toBe(testCase.legacyDigest)
+      }
+    })
+  })
+
+  test('an unsupported digest version fails closed', () => {
+    const testCase = projectStateDigestHistoryFixtures.cases[0]
+    const versionedDigest = projectStateMutationDigestV2(testCase.input)
+    for (const version of [1, 3, 0, -1, 2.5, '2', null, true]) {
+      expect(
+        projectStateMutationMatchesDigest(testCase.input, testCase.legacyDigest, version)
+      ).toBe(false)
+      expect(projectStateMutationMatchesDigest(testCase.input, versionedDigest, version)).toBe(
+        false
+      )
+    }
+  })
+
+  test('a malformed digest version is rejected by the record schema', () => {
+    const record = {
+      mutationId: 'stm_01JABCDEF0123456789ABCDEFG',
+      inputDigest: projectStateMutationDigestV2(projectStateDigestHistoryFixtures.cases[0].input),
+      resultingRevision: 1,
+      touchedItemIds: [],
+    }
+    expect(AppliedStateMutationSchema.safeParse(record).success).toBe(true)
+    expect(AppliedStateMutationSchema.safeParse({ ...record, inputDigestVersion: 2 }).success).toBe(
+      true
+    )
+    for (const malformed of [2.5, '2', null, true, {}]) {
+      expect(
+        AppliedStateMutationSchema.safeParse({ ...record, inputDigestVersion: malformed }).success
+      ).toBe(false)
+    }
+    // Well-formed but unsupported versions survive the schema and are refused by the reader.
+    expect(AppliedStateMutationSchema.safeParse({ ...record, inputDigestVersion: 3 }).success).toBe(
+      true
+    )
+  })
+
+  test('the default writer keeps the untagged record it has always written', async () => {
+    const { service, repository } = setupWithRepository()
+    await service.initialize({ workspaceId, projectId, at: now })
+    const input = mutation('stm_01JABCDEF0123456789ABCDEFG', 0, [
+      appendItem('psi_01JABCDEF0123456789ABCDEFG', 'goal', 'ship M2'),
+    ])
+    await service.applyMutation(input)
+    const stored = await repository.getMutation(workspaceId, projectId, input.mutationId)
+    expect(stored.inputDigestVersion).toBeUndefined()
+    expect(stored.inputDigest).toBe(projectStateMutationDigestV2(input))
+    expect(Object.hasOwn(stored, 'inputDigestVersion')).toBe(false)
+  })
+
+  test('the versioned writer is opt-in and records the canonicalization it used', async () => {
+    const { service, repository } = setupWithRepository()
+    await service.initialize({ workspaceId, projectId, at: now })
+    const input = mutation('stm_01JABCDEF0123456789ABCDEFG', 0, [
+      appendItem('psi_01JABCDEF0123456789ABCDEFG', 'goal', 'ship M2'),
+    ])
+    const written = await service.applyMutation(input, { digestVersion: 2 })
+    expect(written.applied).toBe(true)
+    const stored = await repository.getMutation(workspaceId, projectId, input.mutationId)
+    expect(stored.inputDigestVersion).toBe(2)
+    expect(stored.inputDigest).toBe(projectStateMutationDigestV2(input))
+  })
+
+  test('a versioned writer rejects an unsupported version instead of writing one', async () => {
+    const { service } = setupWithRepository()
+    await service.initialize({ workspaceId, projectId, at: now })
+    const input = mutation('stm_01JABCDEF0123456789ABCDEFG', 0, [
+      appendItem('psi_01JABCDEF0123456789ABCDEFG', 'goal', 'ship M2'),
+    ])
+    await expect(service.applyMutation(input, { digestVersion: 3 })).rejects.toThrow()
+  })
+
+  test('an ordinary replay and a compare-and-set loser accept the same records', async () => {
+    const { service, repository } = setupWithRepository()
+    await service.initialize({ workspaceId, projectId, at: now })
+    const input = mutation('stm_01JABCDEF0123456789ABCDEFG', 0, [
+      appendItem('psi_01JABCDEF0123456789ABCDEFG', 'goal', 'ship M2'),
+    ])
+    await service.applyMutation(input, { digestVersion: 2 })
+
+    // The ordinary replay reads the record and verifies it against its own version.
+    const replay = await service.applyMutation(input)
+    expect(replay.applied).toBe(false)
+    expect(replay.state.revision).toBe(1)
+
+    // The compare-and-set loser reaches the same record through the same verification.
+    const loser = await service.applyMutation(input, { digestVersion: 2 })
+    expect(loser.applied).toBe(false)
+    expect(loser.state.revision).toBe(1)
+    expect(await repository.getHistory(workspaceId, projectId)).toHaveLength(2)
+  })
+
+  test('an altered input is refused for a versioned and for an untagged record', async () => {
+    const { service, repository } = setupWithRepository()
+    await service.initialize({ workspaceId, projectId, at: now })
+    const input = mutation('stm_01JABCDEF0123456789ABCDEFG', 0, [
+      appendItem('psi_01JABCDEF0123456789ABCDEFG', 'goal', 'ship M2'),
+    ])
+    await service.applyMutation(input, { digestVersion: 2 })
+    const altered = mutation('stm_01JABCDEF0123456789ABCDEFG', 0, [
+      appendItem('psi_01JABCDEF0123456789ABCDEFG', 'goal', 'ship M3'),
+    ])
+    await expect(service.applyMutation(altered)).rejects.toMatchObject({
+      code: 'MUTATION_ID_REUSED',
+    })
+    expect(await repository.getHistory(workspaceId, projectId)).toHaveLength(2)
+  })
+
+  test('a record carrying an unsupported version is refused instead of replayed', async () => {
+    const { service, repository } = setupWithRepository()
+    await service.initialize({ workspaceId, projectId, at: now })
+    const input = mutation('stm_01JABCDEF0123456789ABCDEFG', 0, [
+      appendItem('psi_01JABCDEF0123456789ABCDEFG', 'goal', 'ship M2'),
+    ])
+    // Simulate a record written by a release this reader does not know.
+    const originalCompareAndSet = repository.compareAndSet.bind(repository)
+    repository.compareAndSet = async (expectedRevision, state, record) =>
+      originalCompareAndSet(expectedRevision, state, { ...record, inputDigestVersion: 3 })
+    await service.applyMutation(input)
+    await expect(service.applyMutation(input)).rejects.toMatchObject({
+      code: 'MUTATION_DIGEST_VERSION_UNSUPPORTED',
+    })
+  })
+
+  test('the recorded version selects the canonicalization the digest was produced with', async () => {
+    const { service, repository } = setupWithRepository()
+    await service.initialize({ workspaceId, projectId, at: now })
+    const input = mutation('stm_01JABCDEF0123456789ABCDEFG', 0, [
+      appendItem('psi_01JABCDEF0123456789ABCDEFG', 'goal', 'ship M2'),
+    ])
+    await service.applyMutation(input, { digestVersion: 2 })
+    const stored = await repository.getMutation(workspaceId, projectId, input.mutationId)
+
+    // The bytes the record carries are the digest of the canonicalization the record names,
+    // so the version tag can never disagree with the digest it stands for.
+    expect(stored.inputDigest).toBe(projectStateMutationDigestForVersion(2, input))
+    expect(stored.inputDigest).toBe(projectStateMutationDigestV2(input))
+
+    // A version this release has no canonicalization for has no digest at all: the writer
+    // cannot record it and the reader cannot verify against it.
+    expect(projectStateMutationDigestForVersion(3, input)).toBeUndefined()
+    expect(projectStateMutationMatchesDigest(input, stored.inputDigest, 3)).toBe(false)
+  })
+
+  test('the promotion path can write a versioned record', async () => {
+    const { service, repository } = setupWithRepository()
+    await service.initialize({ workspaceId, projectId, at: now })
+    const operation = appendItem('psi_01JBBCDEF0123456789ABCDEFG', 'finding', 'tests pass', {
+      sourceKind: 'execution',
+      sourceExecutionId: executionId,
+      sourcePrincipalRef: 'principal://control-plane/runtime-worker',
+      artifactRefs: [],
+      capturedAt: now,
+    })
+    const approved = await approveProposal(service, operation)
+
+    await service.mergePromotion(
+      {
+        proposalId: approved.proposalId,
+        mutationId: 'stm_01JBBCDEF0123456789ABCDEFG',
+        mergedAt: later,
+      },
+      { digestVersion: 2 }
+    )
+
+    // The merged record names the canonicalization it was written with.
+    const stored = await repository.getMutation(
+      workspaceId,
+      projectId,
+      'stm_01JBBCDEF0123456789ABCDEFG'
+    )
+    expect(stored.inputDigestVersion).toBe(2)
+  })
+
+  test('the promotion path keeps the untagged record when the writer does not opt in', async () => {
+    const { service, repository } = setupWithRepository()
+    await service.initialize({ workspaceId, projectId, at: now })
+    const operation = appendItem('psi_01JBBCDEF0123456789ABCDEFG', 'finding', 'tests pass', {
+      sourceKind: 'execution',
+      sourceExecutionId: executionId,
+      sourcePrincipalRef: 'principal://control-plane/runtime-worker',
+      artifactRefs: [],
+      capturedAt: now,
+    })
+    const approved = await approveProposal(service, operation)
+
+    await service.mergePromotion({
+      proposalId: approved.proposalId,
+      mutationId: 'stm_01JBBCDEF0123456789ABCDEFG',
+      mergedAt: later,
+    })
+
+    const stored = await repository.getMutation(
+      workspaceId,
+      projectId,
+      'stm_01JBBCDEF0123456789ABCDEFG'
+    )
+    expect(stored.inputDigestVersion).toBeUndefined()
+    expect(Object.hasOwn(stored, 'inputDigestVersion')).toBe(false)
   })
 })
 
@@ -339,6 +596,37 @@ function setup() {
   return { service, events }
 }
 
+function setupWithRepository() {
+  const repository = new InMemoryProjectStateRepository()
+  const events = new RecordingProjectStateEventPublisher()
+  const service = new ProjectStateService(
+    repository,
+    new InMemoryStatePromotionProposalRepository(),
+    events
+  )
+  return { service, repository, events }
+}
+
+/**
+ * Pins the locale the locale-dependent legacy canonicalization resolves against, so the
+ * compatibility path is exercised under the profile the frozen fixtures were produced
+ * under instead of the host's ambient locale. Calls that pass an explicit locale are left
+ * alone, and the original implementation is always restored.
+ */
+async function withPinnedLegacyLocale(locale, callback) {
+  const originalLocaleCompare = String.prototype.localeCompare
+  Reflect.set(String.prototype, 'localeCompare', function (...args) {
+    return args.length === 1
+      ? originalLocaleCompare.call(this, args[0], locale)
+      : originalLocaleCompare.apply(this, args)
+  })
+  try {
+    return await callback()
+  } finally {
+    Reflect.set(String.prototype, 'localeCompare', originalLocaleCompare)
+  }
+}
+
 function mutation(mutationId, expectedRevision, operations) {
   return {
     mutationId,
@@ -406,4 +694,26 @@ function proposal(proposalId) {
     createdAt: now,
     expiresAt: '2026-09-01T00:00:00.000Z',
   }
+}
+
+/**
+ * A reviewed promotion proposal for one execution-derived operation, so a test can drive the
+ * merge path the way the reviewed flow does.
+ */
+async function approveProposal(service, operation) {
+  const candidate = await service.createPromotionProposal({
+    proposalId: 'spp_01JABCDEF0123456789ABCDEFG',
+    workspaceId,
+    projectId,
+    baseRevision: 0,
+    sourceExecutionId: executionId,
+    operations: [operation],
+    createdAt: now,
+    expiresAt: '2026-09-01T00:00:00.000Z',
+  })
+  return service.approvePromotion({
+    proposalId: candidate.proposalId,
+    reviewingPrincipalRef: 'principal://agent-hq/user/42',
+    reviewedAt: later,
+  })
 }

@@ -1,8 +1,8 @@
 // Explicit shard assignment for the disposable-local-PostgreSQL integration lane.
 // The file-level partition preserves the serialization guarantees that
-// motivated the original Neon sharding (b5028c10, #146): each shard runs files
-// one at a time and test cases use isolated databases. The historical Neon
-// timing notes below describe earlier remote runs; current trusted-main Neon
+// motivated the original PostgreSQL sharding (b5028c10, #146): each shard runs files
+// one at a time and test cases use isolated databases. The historical PostgreSQL
+// timing notes below describe earlier remote runs; current trusted-main PostgreSQL
 // verification owns only provider compatibility.
 //
 // Run 37155172856 (2026-10-03) spent 2,339s on 55 of 65 foundation cases before
@@ -36,7 +36,7 @@
 // preserves tests, filters, timeout, and branch count. This review candidate
 // separately removes automatic per-file reruns. A complete hosted run must
 // qualify the new ownership.
-// The trusted-main Neon workflow now runs only a bounded provider-compatibility
+// The trusted-main PostgreSQL workflow now runs only a bounded provider-compatibility
 // proof. Full integration coverage and the single Hosted Restate qualification
 // owner run in pull-request lanes on disposable local PostgreSQL; see the
 // current compatibility-budget evidence.
@@ -56,7 +56,7 @@ export const INTEGRATION_SHARDS = [
       {
         package: 'packages/database',
         files: [
-          'src/neon-ddl-probe.integration.test.mjs',
+          'src/migrator-ddl-probe.integration.test.mjs',
           'src/usage-store.integration.test.mjs',
           'src/memory-provenance-retention.integration.test.mjs',
           'src/retention-hold-owner-activation.integration.test.mjs',
@@ -79,6 +79,7 @@ export const INTEGRATION_SHARDS = [
           'src/retention-hold-activation.integration.test.mjs',
           'src/retention-ancestry.integration.test.mjs',
           'src/operations-measurements.integration.test.mjs',
+          'src/project-state-digest-postgres.integration.test.mjs',
         ],
       },
     ],
@@ -187,6 +188,11 @@ export const INTEGRATION_SHARDS = [
 // and strict no-skip assertions, so its sole owner is the dedicated local-DB
 // qualification step rather than an ordinary shard.
 export const DEDICATED_INTEGRATION_QUALIFICATIONS = [
+  {
+    file: 'packages/database/src/scoped-migrations.integration.test.mjs',
+    workflow: '.github/workflows/postgres-pull-request.yml',
+    command: 'bun test ./packages/database/src/scoped-migrations.integration.test.mjs',
+  },
   {
     file: 'packages/database/src/fresh-schema-bootstrap.integration.test.mjs',
     workflow: '.github/workflows/postgres-pull-request.yml',

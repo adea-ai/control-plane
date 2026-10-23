@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.2](https://github.com/adea-ai/control-plane/compare/tool-gateway-v1.5.1...tool-gateway-v1.5.2) (2026-10-22)
+
+
+### Bug Fixes
+
+* **railway:** verify production PostgreSQL identity and scoped migrations ([#1256](https://github.com/adea-ai/control-plane/issues/1256)) ([86b7515](https://github.com/adea-ai/control-plane/commit/86b751520c569106644c518dd5fd0819056cd169))
+
 ## [1.5.1](https://github.com/adea-ai/control-plane/compare/tool-gateway-v1.5.0...tool-gateway-v1.5.1) (2026-10-17)
 
 

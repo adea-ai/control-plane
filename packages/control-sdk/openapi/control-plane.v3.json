@@ -1,6 +1,6 @@
 {
   "openapi": "3.1.0",
-  "info": { "title": "Agent HQ Control Plane API", "version": "3.0.0" },
+  "info": { "title": "Agent HQ Control Plane API", "version": "3.1.0" },
   "paths": {
     "/v1/authentication/verify": {
       "post": {
@@ -5937,7 +5937,7 @@
                       "modelId": {
                         "maxLength": 128,
                         "minLength": 1,
-                        "pattern": "^[a-z0-9][a-z0-9._/-]*$",
+                        "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._/-]*$",
                         "type": "string"
                       },
                       "parentExecutionId": {
@@ -17753,6 +17753,34 @@
                         "observedTarget": {
                           "additionalProperties": false,
                           "properties": {
+                            "generation": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "attemptId": {},
+                                "inferenceId": {
+                                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$",
+                                  "type": "string"
+                                },
+                                "inferenceKey": {
+                                  "maxLength": 8192,
+                                  "minLength": 1,
+                                  "type": "string"
+                                },
+                                "schemaVersion": {
+                                  "const": "runtime-observed-generation/v1",
+                                  "type": "string"
+                                },
+                                "turnKey": { "maxLength": 4096, "minLength": 1, "type": "string" }
+                              },
+                              "required": [
+                                "schemaVersion",
+                                "attemptId",
+                                "turnKey",
+                                "inferenceId",
+                                "inferenceKey"
+                              ],
+                              "type": "object"
+                            },
                             "sessionId": { "maxLength": 256, "minLength": 1, "type": "string" },
                             "taskId": { "maxLength": 256, "minLength": 1, "type": "string" }
                           },
@@ -17847,6 +17875,34 @@
                               "format": "date-time",
                               "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
                               "type": "string"
+                            },
+                            "observedGeneration": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "attemptId": {},
+                                "inferenceId": {
+                                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$",
+                                  "type": "string"
+                                },
+                                "inferenceKey": {
+                                  "maxLength": 8192,
+                                  "minLength": 1,
+                                  "type": "string"
+                                },
+                                "schemaVersion": {
+                                  "const": "runtime-observed-generation/v1",
+                                  "type": "string"
+                                },
+                                "turnKey": { "maxLength": 4096, "minLength": 1, "type": "string" }
+                              },
+                              "required": [
+                                "schemaVersion",
+                                "attemptId",
+                                "turnKey",
+                                "inferenceId",
+                                "inferenceKey"
+                              ],
+                              "type": "object"
                             },
                             "result": {
                               "additionalProperties": false,
@@ -18421,6 +18477,34 @@
                         "observedTarget": {
                           "additionalProperties": false,
                           "properties": {
+                            "generation": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "attemptId": {},
+                                "inferenceId": {
+                                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$",
+                                  "type": "string"
+                                },
+                                "inferenceKey": {
+                                  "maxLength": 8192,
+                                  "minLength": 1,
+                                  "type": "string"
+                                },
+                                "schemaVersion": {
+                                  "const": "runtime-observed-generation/v1",
+                                  "type": "string"
+                                },
+                                "turnKey": { "maxLength": 4096, "minLength": 1, "type": "string" }
+                              },
+                              "required": [
+                                "schemaVersion",
+                                "attemptId",
+                                "turnKey",
+                                "inferenceId",
+                                "inferenceKey"
+                              ],
+                              "type": "object"
+                            },
                             "sessionId": { "maxLength": 256, "minLength": 1, "type": "string" },
                             "taskId": { "maxLength": 256, "minLength": 1, "type": "string" }
                           },
@@ -18722,6 +18806,34 @@
                         "observedTarget": {
                           "additionalProperties": false,
                           "properties": {
+                            "generation": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "attemptId": {},
+                                "inferenceId": {
+                                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$",
+                                  "type": "string"
+                                },
+                                "inferenceKey": {
+                                  "maxLength": 8192,
+                                  "minLength": 1,
+                                  "type": "string"
+                                },
+                                "schemaVersion": {
+                                  "const": "runtime-observed-generation/v1",
+                                  "type": "string"
+                                },
+                                "turnKey": { "maxLength": 4096, "minLength": 1, "type": "string" }
+                              },
+                              "required": [
+                                "schemaVersion",
+                                "attemptId",
+                                "turnKey",
+                                "inferenceId",
+                                "inferenceKey"
+                              ],
+                              "type": "object"
+                            },
                             "sessionId": { "maxLength": 256, "minLength": 1, "type": "string" },
                             "taskId": { "maxLength": 256, "minLength": 1, "type": "string" }
                           },
@@ -19013,6 +19125,38 @@
                                 "observedTarget": {
                                   "additionalProperties": false,
                                   "properties": {
+                                    "generation": {
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "attemptId": {},
+                                        "inferenceId": {
+                                          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$",
+                                          "type": "string"
+                                        },
+                                        "inferenceKey": {
+                                          "maxLength": 8192,
+                                          "minLength": 1,
+                                          "type": "string"
+                                        },
+                                        "schemaVersion": {
+                                          "const": "runtime-observed-generation/v1",
+                                          "type": "string"
+                                        },
+                                        "turnKey": {
+                                          "maxLength": 4096,
+                                          "minLength": 1,
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "schemaVersion",
+                                        "attemptId",
+                                        "turnKey",
+                                        "inferenceId",
+                                        "inferenceKey"
+                                      ],
+                                      "type": "object"
+                                    },
                                     "sessionId": {
                                       "maxLength": 256,
                                       "minLength": 1,
@@ -19836,6 +19980,34 @@
                         "observedTarget": {
                           "additionalProperties": false,
                           "properties": {
+                            "generation": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "attemptId": {},
+                                "inferenceId": {
+                                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$",
+                                  "type": "string"
+                                },
+                                "inferenceKey": {
+                                  "maxLength": 8192,
+                                  "minLength": 1,
+                                  "type": "string"
+                                },
+                                "schemaVersion": {
+                                  "const": "runtime-observed-generation/v1",
+                                  "type": "string"
+                                },
+                                "turnKey": { "maxLength": 4096, "minLength": 1, "type": "string" }
+                              },
+                              "required": [
+                                "schemaVersion",
+                                "attemptId",
+                                "turnKey",
+                                "inferenceId",
+                                "inferenceKey"
+                              ],
+                              "type": "object"
+                            },
                             "sessionId": { "maxLength": 256, "minLength": 1, "type": "string" },
                             "taskId": { "maxLength": 256, "minLength": 1, "type": "string" }
                           },
@@ -20130,6 +20302,34 @@
                         "observedTarget": {
                           "additionalProperties": false,
                           "properties": {
+                            "generation": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "attemptId": {},
+                                "inferenceId": {
+                                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$",
+                                  "type": "string"
+                                },
+                                "inferenceKey": {
+                                  "maxLength": 8192,
+                                  "minLength": 1,
+                                  "type": "string"
+                                },
+                                "schemaVersion": {
+                                  "const": "runtime-observed-generation/v1",
+                                  "type": "string"
+                                },
+                                "turnKey": { "maxLength": 4096, "minLength": 1, "type": "string" }
+                              },
+                              "required": [
+                                "schemaVersion",
+                                "attemptId",
+                                "turnKey",
+                                "inferenceId",
+                                "inferenceKey"
+                              ],
+                              "type": "object"
+                            },
                             "sessionId": { "maxLength": 256, "minLength": 1, "type": "string" },
                             "taskId": { "maxLength": 256, "minLength": 1, "type": "string" }
                           },
@@ -20224,6 +20424,34 @@
                               "format": "date-time",
                               "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
                               "type": "string"
+                            },
+                            "observedGeneration": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "attemptId": {},
+                                "inferenceId": {
+                                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$",
+                                  "type": "string"
+                                },
+                                "inferenceKey": {
+                                  "maxLength": 8192,
+                                  "minLength": 1,
+                                  "type": "string"
+                                },
+                                "schemaVersion": {
+                                  "const": "runtime-observed-generation/v1",
+                                  "type": "string"
+                                },
+                                "turnKey": { "maxLength": 4096, "minLength": 1, "type": "string" }
+                              },
+                              "required": [
+                                "schemaVersion",
+                                "attemptId",
+                                "turnKey",
+                                "inferenceId",
+                                "inferenceKey"
+                              ],
+                              "type": "object"
                             },
                             "result": {
                               "additionalProperties": false,

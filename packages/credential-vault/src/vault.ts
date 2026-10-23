@@ -455,6 +455,8 @@ export class CredentialVault {
     }
     try {
       const result = await operation(secret)
+      // Fail closed: a result that carries the secret, or that cannot be proven
+      // not to carry it, never leaves the vault.
       if (containsSecret(result, secret)) fail('SECRET_EGRESS_BLOCKED')
       await this.#record('lease.used', credential.metadata, {
         credentialLeaseId: lease.credentialLeaseId,
@@ -547,13 +549,301 @@ function assertSecret(secret: unknown): asserts secret is string {
 const sensitiveKey =
   /^(?:api[_-]?key|authorization|cookie|credential|password|private[_-]?key|refresh[_-]?token|secret|token)$/i
 
+/**
+ * Outcome of inspecting one value for secret material.
+ *
+ * - `absent`: the value was inspected completely and does not carry the secret.
+ * - `present`: the secret was found.
+ * - `unverifiable`: the value's shape cannot be inspected without running
+ *   caller-controlled code, so the vault cannot prove that it is secret-free.
+ */
+type SecretPresence = 'absent' | 'present' | 'unverifiable'
+
+/** Bounds the inspection so a hostile or accidental structure cannot stall a lease. */
+const MAXIMUM_INSPECTED_NODES = 100_000
+const MAXIMUM_INSPECTION_DEPTH = 64
+
+/**
+ * Bounds for binary containers. Their own properties can only be listed by
+ * walking every element, so a container larger than this is rejected rather
+ * than inspected.
+ */
+const MAXIMUM_BINARY_BYTES = 65_536
+
+/**
+ * Reads an intrinsic accessor without running caller-defined code. The
+ * accessors are captured once, from the built-in prototypes, so a subclass that
+ * overrides `buffer`, `byteOffset`, or `byteLength` never runs.
+ */
+function intrinsicGetter(prototype: object, name: string): (() => unknown) | undefined {
+  const descriptor = Object.getOwnPropertyDescriptor(prototype, name)
+  return descriptor && typeof descriptor.get === 'function'
+    ? (descriptor.get as () => unknown)
+    : undefined
+}
+
+/** Calls an intrinsic accessor; a shape that does not match yields undefined. */
+function callIntrinsic(getter: (() => unknown) | undefined, receiver: unknown): unknown {
+  if (getter === undefined) return undefined
+  try {
+    return getter.call(receiver)
+  } catch {
+    return undefined
+  }
+}
+
+const typedArrayPrototype = Object.getPrototypeOf(Uint8Array.prototype) as object
+const typedArrayBuffer = intrinsicGetter(typedArrayPrototype, 'buffer')
+const typedArrayByteOffset = intrinsicGetter(typedArrayPrototype, 'byteOffset')
+const typedArrayByteLength = intrinsicGetter(typedArrayPrototype, 'byteLength')
+const typedArrayLength = intrinsicGetter(typedArrayPrototype, 'length')
+const dataViewBuffer = intrinsicGetter(DataView.prototype, 'buffer')
+const dataViewByteOffset = intrinsicGetter(DataView.prototype, 'byteOffset')
+const dataViewByteLength = intrinsicGetter(DataView.prototype, 'byteLength')
+const arrayBufferByteLength = intrinsicGetter(ArrayBuffer.prototype, 'byteLength')
+const sharedArrayBufferByteLength =
+  typeof SharedArrayBuffer === 'undefined'
+    ? undefined
+    : intrinsicGetter(SharedArrayBuffer.prototype, 'byteLength')
+const mapSize = intrinsicGetter(Map.prototype, 'size')
+const setSize = intrinsicGetter(Set.prototype, 'size')
+
+/**
+ * True when `value` carries `secret`, and also when `value` cannot be proven
+ * not to carry it.
+ *
+ * Every caller must read `true` as "this value must not leave the vault", so an
+ * uninspectable value fails closed. The inspection reads own property
+ * descriptors and intrinsic accessors, so it never invokes a getter, a
+ * `toString`, or any other caller-defined code, and it understands the
+ * containers a callback may realistically return: plain objects and arrays,
+ * `Error`, `Map`, `Set`, `Buffer`, typed arrays, and `ArrayBuffer`.
+ *
+ * The guarantee is about a result's own contents and is bounded: a traversal
+ * visits at most {@link MAXIMUM_INSPECTED_NODES} values and
+ * {@link MAXIMUM_INSPECTION_DEPTH} levels, and a binary container larger than
+ * {@link MAXIMUM_BINARY_BYTES} is rejected rather than inspected. This is not a
+ * sandbox for hostile JavaScript: reading a prototype can still run a proxy's
+ * `getPrototypeOf` trap, so a result that fabricates values through a proxy is
+ * outside the guarantee, and such an operation already holds the secret.
+ */
 export function containsSecret(value: unknown, secret: string): boolean {
-  if (typeof value === 'string') return value.includes(secret)
-  if (Array.isArray(value)) return value.some((entry) => containsSecret(entry, secret))
-  if (value === null || typeof value !== 'object') return false
-  return Object.entries(value).some(
-    ([key, entry]) => sensitiveKey.test(key) || containsSecret(entry, secret)
-  )
+  return secretPresence(value, secret) !== 'absent'
+}
+
+function secretPresence(value: unknown, secret: string): SecretPresence {
+  const seen = new Set<object>()
+  const secretBytes = Buffer.from(secret, 'utf8')
+  let nodes = 0
+
+  const visit = (input: unknown, depth: number): SecretPresence => {
+    nodes += 1
+    if (nodes > MAXIMUM_INSPECTED_NODES) return 'unverifiable'
+    if (typeof input === 'string') return input.includes(secret) ? 'present' : 'absent'
+    if (typeof input === 'symbol') {
+      const description = input.description ?? ''
+      return description.includes(secret) ? 'present' : 'absent'
+    }
+    if (input === null || input === undefined) return 'absent'
+    if (typeof input === 'number' || typeof input === 'boolean' || typeof input === 'bigint') {
+      return 'absent'
+    }
+    // A function can close over the secret without exposing it as a property.
+    if (typeof input === 'function') return 'unverifiable'
+    if (typeof input !== 'object') return 'absent'
+    if (depth > MAXIMUM_INSPECTION_DEPTH) return 'unverifiable'
+    // A cycle is outside the inspectable representation; fail closed instead
+    // of recursing without bound.
+    if (seen.has(input)) return 'unverifiable'
+
+    seen.add(input)
+    try {
+      if (Array.isArray(input)) return inspectOwnProperties(input, secret, visit, depth)
+      // The `size` accessors are intrinsic, so they identify a genuine Map or
+      // Set without running a proxy's traps.
+      if (callIntrinsic(mapSize, input) !== undefined) {
+        return inspectMap(input as Map<unknown, unknown>, secret, visit, depth)
+      }
+      if (callIntrinsic(setSize, input) !== undefined) {
+        return inspectSet(input as Set<unknown>, secret, visit, depth)
+      }
+      const binary = binaryShape(input)
+      if (binary !== undefined) {
+        // A binary container above the enumeration bound is rejected rather than
+        // inspected: its own properties can only be listed by walking every
+        // element, which is not bounded work.
+        if (binary.bytes.byteLength > MAXIMUM_BINARY_BYTES) return 'unverifiable'
+        if (containsBytes(binary.bytes, secretBytes)) return 'present'
+        return inspectOwnProperties(input, secret, visit, depth, (key) =>
+          isElementSlot(key, binary.elementCount)
+        )
+      }
+      const prototype = Object.getPrototypeOf(input)
+      if (prototype === Object.prototype || prototype === null) {
+        return inspectOwnProperties(input, secret, visit, depth)
+      }
+      // An error carries its message, stack, and cause as own properties, so it
+      // is inspected like a plain object even though its prototype is not one.
+      if (hasErrorPrototype(prototype)) {
+        return inspectOwnProperties(input, secret, visit, depth)
+      }
+      // A class instance or an exotic object: its contents cannot be read
+      // without running caller-controlled code.
+      return 'unverifiable'
+    } finally {
+      seen.delete(input)
+    }
+  }
+
+  try {
+    return visit(value, 0)
+  } catch {
+    // Reading the value failed, so the secret cannot be ruled out.
+    return 'unverifiable'
+  }
+}
+
+/**
+ * Inspects own properties without invoking accessors. A property whose value
+ * cannot be read without running caller code makes the whole value
+ * unverifiable rather than being skipped. A symbol key's own description is
+ * inspected too, because a key can carry the secret as well.
+ */
+function inspectOwnProperties(
+  input: object,
+  secret: string,
+  visit: (value: unknown, depth: number) => SecretPresence,
+  depth: number,
+  skip?: (key: string) => boolean
+): SecretPresence {
+  for (const key of Object.getOwnPropertyNames(input)) {
+    if (skip?.(key) === true) continue
+    const descriptor = Object.getOwnPropertyDescriptor(input, key)
+    if (!descriptor) continue
+    if (!('value' in descriptor)) return 'unverifiable'
+    // The name itself is material: a property can be named after the secret.
+    if (key.includes(secret)) return 'present'
+    if (sensitiveKey.test(key)) return 'present'
+    const presence = visit(descriptor.value, depth + 1)
+    if (presence !== 'absent') return presence
+  }
+  for (const symbol of Object.getOwnPropertySymbols(input)) {
+    const descriptor = Object.getOwnPropertyDescriptor(input, symbol)
+    if (!descriptor) continue
+    if (!('value' in descriptor)) return 'unverifiable'
+    // The key itself is material: a symbol description can name the secret.
+    if (symbol.description?.includes(secret) === true) return 'present'
+    const presence = visit(descriptor.value, depth + 1)
+    if (presence !== 'absent') return presence
+  }
+  return 'absent'
+}
+
+function inspectMap(
+  input: Map<unknown, unknown>,
+  secret: string,
+  visit: (value: unknown, depth: number) => SecretPresence,
+  depth: number
+): SecretPresence {
+  // `Map.prototype.entries` is called directly so a proxy cannot run its traps.
+  for (const [key, value] of Map.prototype.entries.call(input)) {
+    if (typeof key === 'string' && sensitiveKey.test(key)) return 'present'
+    const keyPresence = visit(key, depth + 1)
+    if (keyPresence !== 'absent') return keyPresence
+    const valuePresence = visit(value, depth + 1)
+    if (valuePresence !== 'absent') return valuePresence
+  }
+  // A Map may also carry own properties beside its entries.
+  return inspectOwnProperties(input, secret, visit, depth)
+}
+
+function inspectSet(
+  input: Set<unknown>,
+  secret: string,
+  visit: (value: unknown, depth: number) => SecretPresence,
+  depth: number
+): SecretPresence {
+  for (const value of Set.prototype.values.call(input)) {
+    const presence = visit(value, depth + 1)
+    if (presence !== 'absent') return presence
+  }
+  // A Set may also carry own properties beside its values.
+  return inspectOwnProperties(input, secret, visit, depth)
+}
+
+/**
+ * The bytes of a binary container, read through intrinsic accessors only, so a
+ * subclass that overrides `buffer`, `byteOffset`, or `byteLength` never runs. A
+ * shape that cannot be read that way yields undefined and fails closed.
+ */
+function binaryShape(
+  input: object
+): { readonly bytes: Uint8Array; readonly elementCount: number } | undefined {
+  if (ArrayBuffer.isView(input)) {
+    const dataViewLength = callIntrinsic(dataViewByteLength, input) as number | undefined
+    if (dataViewLength !== undefined) {
+      const byteOffset = callIntrinsic(dataViewByteOffset, input) as number | undefined
+      const buffer = callIntrinsic(dataViewBuffer, input) as ArrayBufferLike | undefined
+      if (byteOffset === undefined || buffer === undefined) return undefined
+      return { bytes: byteView(buffer, byteOffset, dataViewLength), elementCount: 0 }
+    }
+    const byteLength = callIntrinsic(typedArrayByteLength, input) as number | undefined
+    if (byteLength === undefined) return undefined
+    const byteOffset = callIntrinsic(typedArrayByteOffset, input) as number | undefined
+    const buffer = callIntrinsic(typedArrayBuffer, input) as ArrayBufferLike | undefined
+    const length = callIntrinsic(typedArrayLength, input) as number | undefined
+    if (byteOffset === undefined || buffer === undefined || length === undefined) return undefined
+    return { bytes: byteView(buffer, byteOffset, byteLength), elementCount: length }
+  }
+  // The `byteLength` accessor only answers for a genuine buffer, so it is the
+  // type test as well as the measurement.
+  if (callIntrinsic(arrayBufferByteLength, input) !== undefined) {
+    return { bytes: new Uint8Array(input as ArrayBuffer), elementCount: 0 }
+  }
+  if (callIntrinsic(sharedArrayBufferByteLength, input) !== undefined) {
+    return { bytes: new Uint8Array(input as SharedArrayBuffer), elementCount: 0 }
+  }
+  return undefined
+}
+
+/** True for a key that names an element slot rather than a user-added property. */
+function isElementSlot(key: string, elementCount: number): boolean {
+  if (!/^(0|[1-9]\d*)$/u.test(key)) return false
+  return Number(key) < elementCount
+}
+
+/**
+ * True when the prototype chain reaches `Error.prototype`, so an error and an
+ * error subclass are both recognised. The walk is bounded.
+ */
+function hasErrorPrototype(prototype: object | null): boolean {
+  let current = prototype
+  for (let depth = 0; current !== null && depth < 16; depth += 1) {
+    if (current === Error.prototype) return true
+    current = Object.getPrototypeOf(current) as object | null
+  }
+  return false
+}
+
+/**
+ * A byte view over a buffer. A shared buffer is accepted at runtime; the
+ * library types are narrower than the runtime behaviour.
+ */
+function byteView(buffer: ArrayBufferLike, byteOffset: number, byteLength: number): Uint8Array {
+  return new Uint8Array(buffer as ArrayBuffer, byteOffset, byteLength)
+}
+
+/** Byte-exact search, so binary material is matched without decoding it. */
+function containsBytes(haystack: Uint8Array, needle: Uint8Array): boolean {
+  if (needle.length === 0) return true
+  if (needle.length > haystack.length) return false
+  outer: for (let start = 0; start <= haystack.length - needle.length; start += 1) {
+    for (let offset = 0; offset < needle.length; offset += 1) {
+      if (haystack[start + offset] !== needle[offset]) continue outer
+    }
+    return true
+  }
+  return false
 }
 
 export function hash(value: unknown): string {

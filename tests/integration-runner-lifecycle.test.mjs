@@ -19,6 +19,11 @@ import {
   integrationFileArguments,
   selectIntegrationShard,
 } from '../scripts/integration-shards.mjs'
+import {
+  describePostgresProbeFailure,
+  isProbeTimeout,
+  POSTGRES_RECOVERY_CEILING_SECONDS,
+} from '../scripts/postgres-probe-diagnostics.mjs'
 
 const repository = fileURLToPath(new URL('..', import.meta.url))
 const runner = join(repository, 'scripts/run-integration-tests.mjs')
@@ -263,7 +268,7 @@ describe('integration runner resource ownership', () => {
   )
 
   test(
-    'remote Neon connection drops remain failed checks without automatic retries',
+    'remote PostgreSQL connection drops remain failed checks without automatic retries',
     () => {
       const result = executeRunner({
         ...remoteTarget,
@@ -282,7 +287,7 @@ describe('integration runner resource ownership', () => {
   )
 
   test(
-    'remote Neon does not retry assertion failures even when their output mentions a connection code',
+    'remote PostgreSQL does not retry assertion failures even when their output mentions a connection code',
     () => {
       const result = executeRunner({
         ...remoteTarget,
@@ -302,7 +307,7 @@ describe('integration runner resource ownership', () => {
   )
 
   test(
-    'remote Neon does not retry a mixed unknown failure that mentions a connection code',
+    'remote PostgreSQL does not retry a mixed unknown failure that mentions a connection code',
     () => {
       const result = executeRunner({
         ...remoteTarget,
@@ -322,7 +327,7 @@ describe('integration runner resource ownership', () => {
   )
 
   test(
-    'remote Neon streams oversized output completely and retains only bounded failure tails',
+    'remote PostgreSQL streams oversized output completely and retains only bounded failure tails',
     () => {
       const result = executeRunner({
         ...remoteTarget,
@@ -567,6 +572,10 @@ for (const script of ['run-integration-tests.mjs', 'run-postgres-disruption-dril
       Date: { now: () => (clockReads++ === 0 ? 0 : now) },
       process: { cwd: () => repository },
       runnerEnvironment: {},
+      POSTGRES_RECOVERY_CEILING_SECONDS,
+      describePostgresProbeFailure,
+      isProbeTimeout,
+      readContainerState: () => '',
       spawnSync: (_command, _args, options) => {
         timeouts.push(options.timeout)
         now += options.timeout ?? 5000

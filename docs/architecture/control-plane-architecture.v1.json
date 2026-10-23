@@ -9,7 +9,7 @@
     {
       "name": "@control-plane/acp-adapter",
       "path": "packages/acp-adapter",
-      "version": "1.11.1",
+      "version": "1.14.0",
       "lockVersion": "1.11.1",
       "kind": "package",
       "private": true,
@@ -29,7 +29,7 @@
     {
       "name": "@control-plane/bootstrap",
       "path": "packages/bootstrap",
-      "version": "1.3.2",
+      "version": "1.3.4",
       "lockVersion": "1.3.2",
       "kind": "package",
       "private": true,
@@ -44,7 +44,7 @@
     {
       "name": "@control-plane/config",
       "path": "packages/config",
-      "version": "1.12.0",
+      "version": "1.12.1",
       "lockVersion": "1.12.0",
       "kind": "package",
       "private": true,
@@ -59,7 +59,7 @@
     {
       "name": "@control-plane/context",
       "path": "packages/context",
-      "version": "1.11.0",
+      "version": "1.12.0",
       "lockVersion": "1.11.0",
       "kind": "package",
       "private": true,
@@ -74,7 +74,7 @@
     {
       "name": "@control-plane/contracts",
       "path": "packages/contracts",
-      "version": "1.21.4",
+      "version": "1.21.6",
       "lockVersion": "1.21.4",
       "kind": "package",
       "private": false,
@@ -89,8 +89,8 @@
     {
       "name": "@control-plane/control-api",
       "path": "apps/control-api",
-      "version": "1.34.2",
-      "lockVersion": "1.34.1",
+      "version": "1.35.0",
+      "lockVersion": "1.34.3",
       "kind": "application",
       "private": true,
       "browser": false,
@@ -161,7 +161,7 @@
     {
       "name": "@control-plane/credential-vault",
       "path": "packages/credential-vault",
-      "version": "1.4.1",
+      "version": "1.4.2",
       "lockVersion": "1.4.1",
       "kind": "package",
       "private": true,
@@ -176,7 +176,7 @@
     {
       "name": "@control-plane/database",
       "path": "packages/database",
-      "version": "1.52.1",
+      "version": "1.53.0",
       "lockVersion": "1.52.1",
       "kind": "package",
       "private": true,
@@ -209,8 +209,8 @@
     {
       "name": "@control-plane/deployment",
       "path": "packages/deployment",
-      "version": "1.10.7",
-      "lockVersion": "1.10.7",
+      "version": "1.10.8",
+      "lockVersion": "1.10.8",
       "kind": "package",
       "private": true,
       "browser": false,
@@ -224,7 +224,7 @@
     {
       "name": "@control-plane/domain",
       "path": "packages/domain",
-      "version": "1.32.0",
+      "version": "1.33.0",
       "lockVersion": "1.32.0",
       "kind": "package",
       "private": true,
@@ -286,7 +286,7 @@
     {
       "name": "@control-plane/hosted-control-plane",
       "path": "apps/hosted-control-plane",
-      "version": "1.21.3",
+      "version": "1.21.4",
       "lockVersion": "1.21.3",
       "kind": "application",
       "private": true,
@@ -356,8 +356,8 @@
     {
       "name": "@control-plane/local-control-plane",
       "path": "apps/local-control-plane",
-      "version": "1.36.2",
-      "lockVersion": "1.36.2",
+      "version": "1.38.0",
+      "lockVersion": "1.36.3",
       "kind": "application",
       "private": true,
       "browser": false,
@@ -440,8 +440,8 @@
     {
       "name": "@control-plane/model-gateway",
       "path": "packages/model-gateway",
-      "version": "1.6.1",
-      "lockVersion": "1.6.1",
+      "version": "1.6.2",
+      "lockVersion": "1.6.2",
       "kind": "package",
       "private": true,
       "browser": false,
@@ -481,8 +481,8 @@
     {
       "name": "@control-plane/orchestration",
       "path": "packages/orchestration",
-      "version": "1.10.3",
-      "lockVersion": "1.10.3",
+      "version": "1.12.0",
+      "lockVersion": "1.11.0",
       "kind": "package",
       "private": true,
       "browser": false,
@@ -522,7 +522,7 @@
     {
       "name": "@control-plane/pi-durable-adapter",
       "path": "packages/pi-durable-adapter",
-      "version": "0.10.4",
+      "version": "0.10.5",
       "lockVersion": "0.10.4",
       "kind": "package",
       "private": true,
@@ -567,7 +567,7 @@
     {
       "name": "@control-plane/production-readiness",
       "path": "packages/production-readiness",
-      "version": "1.5.1",
+      "version": "1.5.2",
       "lockVersion": "1.5.1",
       "kind": "package",
       "private": true,
@@ -606,7 +606,7 @@
     {
       "name": "@control-plane/profile-portability",
       "path": "packages/profile-portability",
-      "version": "1.7.2",
+      "version": "1.7.3",
       "lockVersion": "1.7.2",
       "kind": "package",
       "private": true,
@@ -660,8 +660,8 @@
     {
       "name": "@control-plane/runtime-gateway",
       "path": "apps/runtime-gateway",
-      "version": "1.9.0",
-      "lockVersion": "1.9.0",
+      "version": "1.10.0",
+      "lockVersion": "1.9.1",
       "kind": "application",
       "private": true,
       "browser": false,
@@ -682,14 +682,17 @@
         "@control-plane/telemetry"
       ],
       "externalDependencies": [],
-      "developmentWorkspaceDependencies": ["@control-plane/object-store"],
+      "developmentWorkspaceDependencies": [
+        "@control-plane/acp-adapter",
+        "@control-plane/object-store"
+      ],
       "developmentExternalDependencies": [],
       "layer": "composition-root"
     },
     {
       "name": "@control-plane/runtime-gateway-protocol",
       "path": "packages/runtime-gateway-protocol",
-      "version": "1.9.0",
+      "version": "1.10.0",
       "lockVersion": "1.9.0",
       "kind": "package",
       "private": false,
@@ -704,7 +707,7 @@
     {
       "name": "@control-plane/runtime-sdk",
       "path": "packages/runtime-sdk",
-      "version": "1.17.0",
+      "version": "1.17.1",
       "lockVersion": "1.17.0",
       "kind": "package",
       "private": false,
@@ -719,7 +722,7 @@
     {
       "name": "@control-plane/runtime-worker",
       "path": "apps/runtime-worker",
-      "version": "1.9.2",
+      "version": "1.9.3",
       "lockVersion": "1.9.2",
       "kind": "application",
       "private": true,
@@ -760,7 +763,7 @@
     {
       "name": "@control-plane/sdk",
       "path": "packages/control-sdk",
-      "version": "1.20.0",
+      "version": "1.20.1",
       "lockVersion": "1.20.0",
       "kind": "package",
       "private": false,
@@ -790,8 +793,8 @@
     {
       "name": "@control-plane/sqlite-persistence",
       "path": "packages/sqlite-persistence",
-      "version": "1.42.1",
-      "lockVersion": "1.42.1",
+      "version": "1.43.0",
+      "lockVersion": "1.42.3",
       "kind": "package",
       "private": true,
       "browser": false,
@@ -825,7 +828,7 @@
       "name": "@control-plane/telemetry",
       "path": "packages/telemetry",
       "version": "1.8.2",
-      "lockVersion": "1.8.1",
+      "lockVersion": "1.8.2",
       "kind": "package",
       "private": false,
       "browser": false,
@@ -843,8 +846,8 @@
     {
       "name": "@control-plane/testing",
       "path": "packages/testing",
-      "version": "1.2.4",
-      "lockVersion": "1.2.4",
+      "version": "1.2.5",
+      "lockVersion": "1.2.5",
       "kind": "package",
       "private": true,
       "browser": false,
@@ -858,7 +861,7 @@
     {
       "name": "@control-plane/tool-execution",
       "path": "packages/tool-execution",
-      "version": "1.5.2",
+      "version": "1.5.3",
       "lockVersion": "1.5.2",
       "kind": "package",
       "private": true,
@@ -879,7 +882,7 @@
     {
       "name": "@control-plane/tool-gateway",
       "path": "apps/tool-gateway",
-      "version": "1.5.1",
+      "version": "1.5.2",
       "lockVersion": "1.5.1",
       "kind": "application",
       "private": true,
@@ -946,8 +949,8 @@
     {
       "name": "@control-plane/workflow-worker",
       "path": "apps/workflow-worker",
-      "version": "1.18.2",
-      "lockVersion": "1.18.1",
+      "version": "1.18.4",
+      "lockVersion": "1.18.2",
       "kind": "application",
       "private": true,
       "browser": false,
@@ -1512,7 +1515,7 @@
       "trace": {
         "auth": "service bearer with credential:write scope; authenticated caller and envelope workspace binding",
         "service": "CredentialAdministrationController -> VaultCredentialAdministrationService -> CredentialVault",
-        "persistence": "PostgresCredentialVaultRepository (Cloud) or SqliteCredentialVaultRepository; ciphertext only through NeonEncryptedSecretProvider",
+        "persistence": "PostgresCredentialVaultRepository (Cloud) or SqliteCredentialVaultRepository; ciphertext only through PostgresEncryptedSecretProvider",
         "execution": "server-generated crd_ ID; secret stored once through the secret provider; one live credential per workspace connector",
         "delivery": "strict metadata-only credential response; secrets never returned",
         "cleanup": "composition-owned connection shutdown; failed writes discard unbound secret revisions"
@@ -1555,7 +1558,7 @@
       "trace": {
         "auth": "service bearer with credential:read scope; authenticated caller and envelope workspace binding",
         "service": "CredentialAdministrationController -> VaultCredentialAdministrationService -> CredentialVault",
-        "persistence": "PostgresCredentialVaultRepository (Cloud) or SqliteCredentialVaultRepository; ciphertext only through NeonEncryptedSecretProvider",
+        "persistence": "PostgresCredentialVaultRepository (Cloud) or SqliteCredentialVaultRepository; ciphertext only through PostgresEncryptedSecretProvider",
         "execution": "workspace-scoped metadata read; other workspaces report not found",
         "delivery": "strict metadata-only credential response; secrets never returned",
         "cleanup": "composition-owned connection shutdown; failed writes discard unbound secret revisions"
@@ -1598,7 +1601,7 @@
       "trace": {
         "auth": "service bearer with credential:read scope; authenticated caller and envelope workspace binding",
         "service": "CredentialAdministrationController -> VaultCredentialAdministrationService -> CredentialVault",
-        "persistence": "PostgresCredentialVaultRepository (Cloud) or SqliteCredentialVaultRepository; ciphertext only through NeonEncryptedSecretProvider",
+        "persistence": "PostgresCredentialVaultRepository (Cloud) or SqliteCredentialVaultRepository; ciphertext only through PostgresEncryptedSecretProvider",
         "execution": "workspace-scoped cursor page ordered by credential ID",
         "delivery": "strict metadata-only credential response; secrets never returned",
         "cleanup": "composition-owned connection shutdown; failed writes discard unbound secret revisions"
@@ -1641,7 +1644,7 @@
       "trace": {
         "auth": "service bearer with credential:write scope; authenticated caller and envelope workspace binding",
         "service": "CredentialAdministrationController -> VaultCredentialAdministrationService -> CredentialVault",
-        "persistence": "PostgresCredentialVaultRepository (Cloud) or SqliteCredentialVaultRepository; ciphertext only through NeonEncryptedSecretProvider",
+        "persistence": "PostgresCredentialVaultRepository (Cloud) or SqliteCredentialVaultRepository; ciphertext only through PostgresEncryptedSecretProvider",
         "execution": "status revoked with active leases revoked atomically, then provider deletion of every secret revision",
         "delivery": "strict metadata-only credential response; secrets never returned",
         "cleanup": "composition-owned connection shutdown; failed writes discard unbound secret revisions"
@@ -1684,7 +1687,7 @@
       "trace": {
         "auth": "service bearer with credential:write scope; authenticated caller and envelope workspace binding",
         "service": "CredentialAdministrationController -> VaultCredentialAdministrationService -> CredentialVault",
-        "persistence": "PostgresCredentialVaultRepository (Cloud) or SqliteCredentialVaultRepository; ciphertext only through NeonEncryptedSecretProvider",
+        "persistence": "PostgresCredentialVaultRepository (Cloud) or SqliteCredentialVaultRepository; ciphertext only through PostgresEncryptedSecretProvider",
         "execution": "expected-revision compare-and-set adding a secret revision; pinned leases keep their revision",
         "delivery": "strict metadata-only credential response; secrets never returned",
         "cleanup": "composition-owned connection shutdown; failed writes discard unbound secret revisions"
@@ -3353,13 +3356,13 @@
         "discovery": "PostgresRuntimeDiscoveryRepository",
         "objectStore": "R2ObjectStore",
         "observability": "packages/telemetry",
-        "persistence": "PostgreSQL/Neon repositories",
+        "persistence": "PostgreSQL repositories",
         "processes": "Railway service lifecycle",
         "runtimeTransport": "DisabledCloudRuntime, CloudCertificationRuntime, or explicit DurableRemoteWorkflowRuntime",
         "secrets": "Railway environment; no SecretsProvider",
         "workflow": "Restate"
       },
-      "assessment": "Historical staging passed bounded Railway/Neon/R2/Restate certification. Explicit remote mode now composes PostgreSQL runtime discovery, managed-Pi command persistence and durable outcome polling; existing deployment configuration remains disabled or certification-only. Gateway/RuntimeNode identity, Artifact/usage delivery and frozen-candidate end-to-end acceptance remain unverified; shared deployment ports are not uniformly composed.",
+      "assessment": "Historical sandbox passed bounded Railway/PostgreSQL/R2/Restate certification. Explicit remote mode now composes PostgreSQL runtime discovery, managed-Pi command persistence and durable outcome polling; existing deployment configuration remains disabled or certification-only. Gateway/RuntimeNode identity, Artifact/usage delivery and frozen-candidate end-to-end acceptance remain unverified; shared deployment ports are not uniformly composed.",
       "evidence": [
         {
           "kind": "source",
@@ -3380,7 +3383,7 @@
         "owner": "managed-cloud-runtime",
         "disposition": "Verify the explicit remote composition with authenticated Gateway/RuntimeNode execution, Artifact and usage delivery, recovery and provider boundaries from the frozen deployed candidate before claiming general Cloud execution readiness."
       },
-      "sourceDigest": "sha256:6a7ba672e7ead55ffc6f055914dbaae929e0bc80889db896f76dabc2f0964629"
+      "sourceDigest": "sha256:1f08e5ea04ec05618f32ed0d8d0ad396d0dc8b7e594b8ebf5fa36078369a6935"
     },
     {
       "id": "hosted-server",
@@ -3458,7 +3461,7 @@
         "owner": "hosted-simple-runtime",
         "disposition": "Certify the packaged managed Pi process client with a live provider and package a supported concrete ACP launcher."
       },
-      "sourceDigest": "sha256:31a06098ed2da7f769ae13528fae13dc5f6b8ce65c724ad3ad20e55ccb9ce74b"
+      "sourceDigest": "sha256:3225cc501b08494cf89f8b043311f173ac27c79bc63f5f56b618a651bcaa49fe"
     },
     {
       "id": "local",
@@ -3501,7 +3504,7 @@
         "owner": "local-runtime",
         "disposition": "Certify the packaged managed Pi process client with a live provider and package a supported concrete ACP launcher."
       },
-      "sourceDigest": "sha256:31a06098ed2da7f769ae13528fae13dc5f6b8ce65c724ad3ad20e55ccb9ce74b"
+      "sourceDigest": "sha256:3225cc501b08494cf89f8b043311f173ac27c79bc63f5f56b618a651bcaa49fe"
     }
   ],
   "ownership": [
@@ -3888,7 +3891,7 @@
   "persistenceParity": [
     {
       "id": "PERSIST-BACKUP-RESTORE",
-      "postgresql": "Operator/Neon backup plus profile-portability export/import; no PersistenceProvider backup method",
+      "postgresql": "Operator/PostgreSQL backup plus profile-portability export/import; no PersistenceProvider backup method",
       "sqlite": "Online backup/restore with SHA-256 and quick_check",
       "classification": "partially_verified",
       "assessment": "SQLite has a concrete provider backup while PostgreSQL backup remains an external operational responsibility.",

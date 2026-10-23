@@ -27,10 +27,12 @@ wrong targets, any source diff, and changes observed during planning. Link the C
 applies. A missing image, connected Git source, mutable tag, pending promotion, or concurrent change
 fails closed.
 
-Staging continues to use the `main` GitHub source without a production image input. Link the Railway
-CLI to staging and run `railway config plan` there. Review the complete plan before applying it.
-Production and staging must be planned and applied separately; never apply a staging plan to
-production. Destructive changes require explicit confirmation.
+Persistent sandbox is retired. This authoring entry point rejects every
+non-production environment before constructing resources; do not link it to a
+preview or recreate sandbox. Optional hosted qualification requires a separately
+reviewed isolated ephemeral graph. Production database cutover is gated by the
+verified target contract in `infrastructure/railway/production-database.json`;
+see `docs/railway-production-database-cutover.md`.
 
 ### Running the plan locally
 
@@ -66,15 +68,13 @@ has two consequences this file must respect:
   such as restart policy or sleep settings may remain for separate review; the helper does not apply
   it. Apply only a separately reviewed and approved change.
 
-The current live staging inventory has no Restate volume or mount even though the activation
-definition declares one. Standby preserves volumes that exist; it never creates missing volumes.
-Before staging activation, verify the volume and request-identity keypair are present and provision
-the configured 500 MB volume plus matching identity if either is absent. Production's former Restate
-volume was removed with the service; any future production runtime reactivation needs fresh
-provisioning.
+The retained Restate contract describes optional cloud qualification capabilities,
+not permission to provision a persistent test deployment. Production
+continues to run control-api only. Any hosted qualification needs independent
+synthetic data, credentials, request identity and bounded cleanup.
 
 The catalog approval gate (#188) is declared here for control-api: production enables it with a fixed
-cutover instant, staging keeps it disabled. Changing the cutover is a deliberate data-governance
+cutover instant. Changing the cutover is a deliberate data-governance
 decision; the operator procedure is in `docs/operations.md`.
 
 Use the runbook in `docs/operations.md` for the complete activation, verification, and
