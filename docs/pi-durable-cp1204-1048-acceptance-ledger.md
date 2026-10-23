@@ -59,7 +59,7 @@ current-candidate test pass is claimed here.
 
 The published scope is the diff from the base `ab931d068142a0c5629ed4d6cc2c96a1b377a986`
 to the published head, which is the head that carries this section. The complete changed scope is
-**215 paths: 77 added, 138 modified**; no path was deleted.
+**216 paths: 78 added, 138 modified**; no path was deleted.
 `tests/pi-durable-cp1048-evidence-discipline.test.mjs` checks this list, these counts and this
 area table against the repository, so the published scope cannot drift away from the code
 without that lane failing.
@@ -82,7 +82,7 @@ without that lane failing.
 | `packages/database`           | 1     | 4        | 5     |
 | `packages/domain`             | 0     | 6        | 6     |
 | `packages/orchestration`      | 0     | 2        | 2     |
-| `packages/pi-durable-adapter` | 22    | 18       | 40    |
+| `packages/pi-durable-adapter` | 23    | 18       | 41    |
 | `packages/policy`             | 0     | 5        | 5     |
 | `packages/profile-adapters`   | 3     | 6        | 9     |
 | `packages/runtime-sdk`        | 0     | 1        | 1     |
@@ -229,6 +229,7 @@ A  packages/pi-durable-adapter/src/native-cancellation-boundary.test.mjs
 A  packages/pi-durable-adapter/src/native-cancellation-boundary.ts
 A  packages/pi-durable-adapter/src/native-fence-public-api-probe.test.mjs
 A  packages/pi-durable-adapter/src/native-guarded-abort-compat.test.mjs
+A  packages/pi-durable-adapter/src/pi-engine-receipt-observer.test.mjs
 A  packages/pi-durable-adapter/src/pi-engine-request-valued.fixture.mjs
 M  packages/pi-durable-adapter/src/pi-engine-tools.loopback.fixture.mjs
 M  packages/pi-durable-adapter/src/pi-engine-tools.test.mjs

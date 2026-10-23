@@ -98,6 +98,56 @@ journal cancellation publication; a racing or lost publication is reported as
 unknown, never as proof of zero effect, and does not rewrite a successor. The
 ordinary production path remains unchanged and unqualified by this fixture.
 
+## Historical observation by an existing owner
+
+The opt-in engine exposes `readReceipt` and `drainReceipt` only for an already
+initialized, explicitly owned qualification harness. They do not open a session,
+resolve models, authorize an inference, submit input, resume scheduling or commit
+another abort. An unopened, still-opening or closed owner is unavailable.
+
+Observation binds the native conversation, request ID/digest and retained target,
+expiry, turn and inference metadata. Retained fence revision and scope digest
+must have the expected format; the input does not supply independent expected
+values for them. Drain first validates the historical receipt, then waits only
+its selected task IDs and verifies the returned receipt has not changed. Expired
+pins can identify historical evidence; they do not grant permission for a new
+effect. Neither operation settles a journal or supplies current authority.
+
+A discarded native reply can therefore be observed through its existing owner.
+This does not implement an adapter recovery consumer, an executed lost-journal
+publication recovery journey or read-only reopening. The ordinary engine opener
+checks authority/models, initializes host state and registers an owner. SDK
+`Harness.open` also reconciles surviving tasks. Calling those openers cannot be
+described as mutation-free historical observation.
+
+## Proposed read-only SDK reader — not implemented
+
+A later public SDK addition could expose
+`openNodeSqliteAbortReceiptReader(existingPath, { mustExist: true }, context)`
+returning only `readAbortReceipt({ conversationId, requestId }, context)` and
+`close()`. The SDK would own its supported receipt format; CP would not inspect
+private document addresses or SQL. The reader must open an existing supported
+store in read-only mode, without a Harness, Session, scheduler, models, registry
+or owner registration. It must not create a root or store, initialize a document,
+run schema migrations, reconcile tasks, checkpoint a WAL or repair corruption.
+Missing, incompatible or corrupt stores fail unavailable rather than looking
+like an absent receipt. Drain remains an existing-owner operation.
+
+Before implementation or qualification, actual SQLite proofs must establish:
+
+- Existing running tasks, queued inputs, documents, receipts and logical database
+  contents remain unchanged through repeated and cancelled reads and closure.
+- No scheduler, abort, provider, model or host-authority callback runs; an absent
+  path remains absent, and reading creates no database/schema artifacts.
+- Conversation/request bindings are exact; a committed receipt survives a lost
+  reply and reopen, while missing evidence remains missing.
+- Supported committed-WAL snapshots and any concurrent-owner mode have explicit
+  mutation-free evidence; unsupported combinations fail unavailable.
+
+This is a proposed source/API contract requiring further review, not an available
+upstream API or an implemented compatibility extension. Historical store evidence
+also cannot establish an independent restore generation or current authorization.
+
 ## Qualification and remaining obligations
 
 Actual disposable SQLite regressions cover rollback after late SQL preparation,

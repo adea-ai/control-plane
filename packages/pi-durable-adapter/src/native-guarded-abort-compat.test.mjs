@@ -648,6 +648,119 @@ describe('explicit guarded native abort SDK compatibility on disposable Node SQL
     })
   })
 
+  for (const operation of ['doc', 'replaceDoc'])
+    test(`unawaited ${operation} held across preparation settlement rolls back without a receipt or late write`, async () => {
+      await fixture(async (f) => {
+        const { taskId } = await f.seed()
+        const token = defineDoc({
+          kind: `cp.test.unawaited-${operation}`,
+          scope: 'session',
+          version: 1,
+          initial: () => ({ nested: { pin: 'original' } }),
+        })
+        await f.current.root.commit((tx) => tx.doc(token), context)
+        await f.reopen()
+        const before = await state(f.current, taskId)
+        const storage = f.current.storage
+        const record = await storage.findDocument(
+          { kind: token.definition.kind, scope: { kind: 'session' } },
+          'current',
+          context
+        )
+        expect(record).toBeDefined()
+        const entered = deferred()
+        const release = deferred()
+        const preparationReturned = deferred()
+        const method = operation === 'doc' ? 'findDocument' : 'document'
+        const original = storage[method]
+        let heldReads = 0
+        storage[method] = async function (...args) {
+          const value = await Reflect.apply(original, this, args)
+          const target =
+            method === 'findDocument'
+              ? args[0].kind === token.definition.kind
+              : args[0] === record.id
+          if (target) {
+            heldReads += 1
+            entered.resolve()
+            await release.promise
+          }
+          return value
+        }
+        let pendingResult
+        let finalGuardCalls = 0
+        let savedFacet
+        const id = `pending-${operation}`
+        const commitResult = f.current.root
+          .commitAbort(
+            {
+              requestId: id,
+              requestDigest: digest,
+              hostDocuments: [{ token, mode: operation === 'doc' ? 'read' : 'write' }],
+              prepare(facet) {
+                savedFacet = facet
+                // Deliberately do not await this operation: it must still be held
+                // when preparation returns, then fail closed without flushing it.
+                const pending =
+                  operation === 'doc'
+                    ? facet.doc(token)
+                    : facet.replaceDoc(token, { nested: { pin: 'must-not-persist' } })
+                pendingResult = pending.then(
+                  (value) => ({ value }),
+                  (error) => ({ error })
+                )
+                preparationReturned.resolve()
+                return () => {
+                  finalGuardCalls += 1
+                }
+              },
+            },
+            context
+          )
+          .then(
+            (value) => ({ value }),
+            (error) => ({ error })
+          )
+        const prematurelySettled = commitResult.then((result) => {
+          throw new Error('Guarded abort settled before the held preparation operation', {
+            cause: result.error,
+          })
+        })
+        try {
+          await Promise.race([preparationReturned.promise, prematurelySettled])
+          await Promise.race([entered.promise, prematurelySettled])
+          await Promise.resolve()
+          expect(heldReads).toBe(1)
+          // The original operation remains blocked at the public storage await,
+          // while preparation has already closed its capability lifetime.
+          expect(() => savedFacet.doc(token)).toThrow('PI_GUARDED_ABORT_PREPARATION_REVOKED')
+          expect(finalGuardCalls).toBe(0)
+          release.resolve()
+          const result = await commitResult
+          expect(result.error?.message).toBe('PI_GUARDED_ABORT_PREPARATION_PENDING')
+          expect((await pendingResult).error?.message).toBe('PI_GUARDED_ABORT_PREPARATION_REVOKED')
+        } finally {
+          release.resolve()
+          await commitResult
+          await pendingResult
+          storage[method] = original
+        }
+        expect(finalGuardCalls).toBe(0)
+        expect(await state(f.current, taskId)).toEqual(before)
+        expect(await f.current.harness.snapshot(token, context)).toEqual({
+          nested: { pin: 'original' },
+        })
+        expect(await f.current.root.readAbortReceipt(id, context)).toBeUndefined()
+        expect(f.calls).toEqual({ work: [], abort: [] })
+        const reopened = await f.reopen()
+        expect(await reopened.harness.snapshot(token, context)).toEqual({
+          nested: { pin: 'original' },
+        })
+        expect(await state(reopened, taskId)).toEqual(before)
+        expect(await reopened.root.readAbortReceipt(id, context)).toBeUndefined()
+      })
+    })
+
   for (const outcome of ['resolved', 'rejected'])
     test(`preparation ${outcome} revokes cached facade and nested host document references`, async () => {
       await fixture(async (f) => {

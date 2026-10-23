@@ -197,6 +197,10 @@ export interface PiGuardedCancellationPreparation extends PiGuardedCancellationI
 export interface PiGuardedCancellationEngine {
   prepare(input: PiGuardedCancellationInput): Promise<PiGuardedCancellationPreparation>
   commit(preparation: PiGuardedCancellationPreparation): Promise<AbortCommitReceipt>
+  /** Historical evidence from an already-open owner only; never opens or authorizes a session. */
+  readReceipt(identity: PiGuardedCancellationInput): Promise<AbortCommitReceipt | undefined>
+  /** Observes only the matching receipt's tasks; no abort, scheduler activation or journal settlement. */
+  drainReceipt(identity: PiGuardedCancellationInput): Promise<AbortCommitReceipt>
 }
 
 export interface DurablePiEngine {
