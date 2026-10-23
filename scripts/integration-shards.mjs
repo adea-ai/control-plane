@@ -93,6 +93,8 @@ export const INTEGRATION_SHARDS = [
           'src/child-budget-admission.integration.test.mjs',
           'src/tool-repositories.integration.test.mjs',
           'src/runtime-node-identity-repository.integration.test.mjs',
+          'src/runtime-node-credential-binding.integration.test.mjs',
+          'src/runtime-node-credential-restricted.integration.test.mjs',
           'src/delegation-reference.integration.test.mjs',
           'src/admission-rollout-admin.integration.test.mjs',
           'src/graph-definition-repository.integration.test.mjs',
@@ -107,6 +109,7 @@ export const INTEGRATION_SHARDS = [
           'src/retention-claim-budget.integration.test.mjs',
           'src/retention-claim-lock-order.integration.test.mjs',
           'src/workspace-execution-scope.integration.test.mjs',
+          'src/workspace-execution-scope-version-pairing.integration.test.mjs',
           'src/legacy-drain-fence-repository.integration.test.mjs',
         ],
       },
@@ -140,11 +143,16 @@ export const INTEGRATION_SHARDS = [
         ],
       },
       {
+        package: 'apps/runtime-gateway',
+        files: ['src/runtime-node-credential-binding.integration.test.mjs'],
+      },
+      {
         package: '.',
         files: [
           './tests/child-progress-scanner.integration.test.mjs',
           './tests/child-progress-sqlite-feed-replay.integration.test.mjs',
           './tests/memory-process-loss.integration.test.mjs',
+          './tests/acp-remote-device-postgres.integration.test.mjs',
           './tests/runtime-node-credential-revocation.integration.test.mjs',
         ],
       },

@@ -283,8 +283,8 @@ test.each([false, true])(
   }
 )
 
-test('workspace to real project child requires narrowed current authority and retained structural proof', async () => {
-  const { base, contextCompiler, context, plan, projectId } = fixture()
+test('workspace child narrowing retains lineage and rechecks parent authority at admission', async () => {
+  const { base, contextCompiler, context, plan, projectId, input: planFixtureInput } = fixture()
   const projectContext = contextCompiler.compile({
     objective: base.objective,
     projectState: {
@@ -327,7 +327,7 @@ test('workspace to real project child requires narrowed current authority and re
       { ...childInput, contextPackage: context },
       {
         callerPrincipalId: 'svc_scope-test',
-        authority: { readCurrent: async (input) => snapshot(input) },
+        authority: { readCurrent: async (authorityInput) => snapshot(authorityInput) },
         now: at,
       }
     )
@@ -341,6 +341,66 @@ test('workspace to real project child requires narrowed current authority and re
   })
   expect(child.schemaVersion).toBe(2)
   expect(assertExecutionPlanDerivedFrom(plan, child, context, childContext)).toEqual(child)
+  const plans = new InMemoryExecutionPlanRepository()
+  await plans.put(plan)
+  await plans.put(child)
+  let parentActive = true
+  const validator = new ExecutionPlanAcceptanceValidator(plans, {
+    catalog: {
+      profiles: {
+        getAgentProfileVersion: async () => planFixtureInput.profile,
+        getAgentProfile: async (profileId) => ({ profileId, ownership: { scope: 'system' } }),
+      },
+      skills: {
+        getSkillVersion: async () => planFixtureInput.skills[0],
+        getSkill: async (skillId) => ({ skillId, ownership: { scope: 'system' } }),
+      },
+    },
+    scopeAuthority: {
+      readCurrent: async (value) => ({
+        ...snapshot(value),
+        grantActive: value.executionPlan.executionPlanId !== plan.executionPlanId || parentActive,
+      }),
+    },
+    now: () => at,
+  })
+  expect(await validator.validate(admission(child))).toBe(true)
+  expect(await validator.authorize(admission(child))).toBe(true)
+  parentActive = false
+  expect(await validator.validate(admission(child))).toBe(false)
+  expect(await validator.authorize(admission(child))).toBe(false)
+  const repository = new InMemoryCommandAcceptanceRepository()
+  const inbox = new CommandInboxService({
+    repository,
+    executionIdFactory: () => id('exe'),
+    now: () => at,
+    executionPlanValidator: validator,
+  })
+  await expect(inbox.acceptExecution(command(child))).rejects.toThrow(
+    'INVALID_EXECUTION_PLAN_REFERENCE'
+  )
+  expect(repository.executionCount).toBe(0)
+  // A version 1 grandchild (same project, scope omitted) is derived from the scoped child. It carries
+  // no scope itself, but it must not escape the lineage recheck: the inactive root grant stops it.
+  const legacyCorrelation = { ...child.correlation }
+  delete legacyCorrelation.executionScope
+  const grandchild = deriveExecutionPlan(child, {
+    correlation: legacyCorrelation,
+    contextPackage: childContext,
+    constraints: child.constraints,
+    runtimeRequirements: child.runtimeRequirements,
+    outputContract: child.outputContract,
+    compiledAt: child.compiledAt,
+  })
+  expect(grandchild.schemaVersion).toBe(1)
+  expect(grandchild.parentExecutionPlan?.executionPlanId).toBe(child.executionPlanId)
+  await plans.put(grandchild)
+  expect(await validator.validate(admission(grandchild))).toBe(false)
+  expect(await validator.authorize(admission(grandchild))).toBe(false)
+  parentActive = true
+  expect(await validator.validate(admission(grandchild))).toBe(true)
+  expect(await validator.authorize(admission(grandchild))).toBe(true)
+  parentActive = false
   for (const override of [
     { projectWorkspaceId: id('wsp', 'H') },
     { grantActive: false },
@@ -351,10 +411,10 @@ test('workspace to real project child requires narrowed current authority and re
         callerPrincipalId: 'svc_scope-test',
         now: at,
         authority: {
-          readCurrent: async (input) =>
-            input.executionScope.kind === 'project'
-              ? { ...snapshot(input), ...override }
-              : snapshot(input),
+          readCurrent: async (authorityInput) =>
+            authorityInput.executionScope.kind === 'project'
+              ? { ...snapshot(authorityInput), ...override }
+              : snapshot(authorityInput),
         },
       })
     ).rejects.toThrow('CHILD_AUTHORITY_EXPANSION')

@@ -1,4 +1,8 @@
-import { executionScopeColumn, executionScopeCheck } from './execution-scope.js'
+import {
+  executionScopeColumn,
+  executionScopeCheck,
+  executionScopeVersionCheck,
+} from './execution-scope.js'
 import type { ContextPackage } from '@control-plane/context'
 import {
   index,
@@ -30,6 +34,7 @@ export const contextPackages = pgTable(
   },
   (table) => [
     executionScopeCheck('context_packages_scope_check', table),
+    executionScopeVersionCheck('context_packages_scope_version_check', table),
     uniqueIndex('context_packages_content_digest_unique').on(table.contentDigest),
     index('context_packages_scope_index').on(table.workspaceId, table.projectId, table.compiledAt),
   ]

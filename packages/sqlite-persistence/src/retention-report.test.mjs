@@ -21,7 +21,19 @@ function run(database, now) {
 // this suite covers counting and read-only behavior, not the repositories'
 // own lifecycle rules.
 async function seed(provider, namespace, id, value) {
-  await provider.transaction((transaction) => transaction.put({ namespace, id, value }))
+  const ownedValue =
+    namespace === 'command-inbox'
+      ? { ...value, workspaceId: 'wsp_retention-report', projectId: 'prj_retention-report' }
+      : namespace === 'execution-events'
+        ? {
+            ...value,
+            correlation: {
+              workspaceId: 'wsp_retention-report',
+              projectId: 'prj_retention-report',
+            },
+          }
+        : value
+  await provider.transaction((transaction) => transaction.put({ namespace, id, value: ownedValue }))
 }
 
 describe('retention report (#194)', () => {

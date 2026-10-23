@@ -12,6 +12,7 @@ import {
   runtimeNodeIssuedCredentials,
   runtimeNodeVerificationKeys,
 } from './schema/runtime-node-identity.js'
+import { runtimeChannelOwnership } from './schema/runtime-channel-ownership.js'
 
 const REVOCATION_CHANNEL = 'runtime_node_credential_revocations_v1'
 const MAX_SAFE_VERSION = Number.MAX_SAFE_INTEGER
@@ -60,6 +61,19 @@ export type RuntimeNodeCredentialConsumeResult =
   | 'revoked'
   | 'expired'
   | 'unknown'
+  | 'node_mismatch'
+  | 'workspace_mismatch'
+  | 'superseded'
+
+/**
+ * The scope and generation a presenting channel asserts. The fenced consumption checks it against
+ * canonical records in the same transaction, and a rejected binding leaves the credential unconsumed.
+ */
+export interface RuntimeNodeCredentialBinding {
+  readonly nodeId: string
+  readonly workspaceId: string
+  readonly channelGeneration: number
+}
 
 export type RuntimeNodeIdentityRepositoryErrorCode =
   | 'RUNTIME_NODE_IDENTITY_INVALID_INPUT'
@@ -204,86 +218,101 @@ export class PostgresRuntimeNodeIdentityRepository {
   async consumeCredential(
     credentialIdInput: string,
     revocationVersionInput: number,
-    nowInput: Date | string
+    nowInput: Date | string,
+    bindingInput?: RuntimeNodeCredentialBinding
   ): Promise<RuntimeNodeCredentialConsumeResult> {
     const credentialId = parseCredentialId(credentialIdInput)
     const revocationVersion = parseVersion(revocationVersionInput)
     const now = parseTimestamp(nowInput)
+    const binding = bindingInput === undefined ? undefined : parseBinding(bindingInput)
 
-    return this.database.transaction(async (tx) => {
-      const [initial] = await tx
-        .select()
-        .from(runtimeNodeIssuedCredentials)
-        .where(eq(runtimeNodeIssuedCredentials.credentialId, credentialId))
-        .limit(1)
-      if (!initial) return 'unknown'
+    try {
+      return await this.database.transaction(async (tx) => {
+        const [initial] = await tx
+          .select()
+          .from(runtimeNodeIssuedCredentials)
+          .where(eq(runtimeNodeIssuedCredentials.credentialId, credentialId))
+          .limit(1)
+        if (!initial) return 'unknown'
 
-      let current: RuntimeNodeIssuedCredentialRecord
-      try {
-        current = parseIssuedCredentialRow(initial)
-      } catch {
-        return 'revoked'
-      }
-      await lockIdentity(tx, 'key', current.keyId)
+        let current: RuntimeNodeIssuedCredentialRecord
+        try {
+          current = parseIssuedCredentialRow(initial)
+        } catch {
+          return 'revoked'
+        }
+        await lockIdentity(tx, 'key', current.keyId)
 
-      const [key] = await tx
-        .select()
-        .from(runtimeNodeVerificationKeys)
-        .where(
-          and(
-            eq(runtimeNodeVerificationKeys.keyId, current.keyId),
-            eq(runtimeNodeVerificationKeys.nodeId, current.nodeId),
-            eq(runtimeNodeVerificationKeys.workspaceId, current.workspaceId)
+        const [key] = await tx
+          .select()
+          .from(runtimeNodeVerificationKeys)
+          .where(
+            and(
+              eq(runtimeNodeVerificationKeys.keyId, current.keyId),
+              eq(runtimeNodeVerificationKeys.nodeId, current.nodeId),
+              eq(runtimeNodeVerificationKeys.workspaceId, current.workspaceId)
+            )
           )
-        )
-        .limit(1)
-      if (!key || key.status !== 'active') return 'revoked'
+          .limit(1)
+        if (!key || key.status !== 'active') return 'revoked'
 
-      const activeKey = tx
-        .select({ keyId: runtimeNodeVerificationKeys.keyId })
-        .from(runtimeNodeVerificationKeys)
-        .where(
-          and(
-            eq(runtimeNodeVerificationKeys.keyId, current.keyId),
-            eq(runtimeNodeVerificationKeys.nodeId, current.nodeId),
-            eq(runtimeNodeVerificationKeys.workspaceId, current.workspaceId),
-            eq(runtimeNodeVerificationKeys.status, 'active')
+        const activeKey = tx
+          .select({ keyId: runtimeNodeVerificationKeys.keyId })
+          .from(runtimeNodeVerificationKeys)
+          .where(
+            and(
+              eq(runtimeNodeVerificationKeys.keyId, current.keyId),
+              eq(runtimeNodeVerificationKeys.nodeId, current.nodeId),
+              eq(runtimeNodeVerificationKeys.workspaceId, current.workspaceId),
+              eq(runtimeNodeVerificationKeys.status, 'active')
+            )
           )
-        )
-      const consumed = await tx
-        .update(runtimeNodeIssuedCredentials)
-        .set({ consumedAt: now })
-        .where(
-          and(
-            eq(runtimeNodeIssuedCredentials.credentialId, credentialId),
-            eq(runtimeNodeIssuedCredentials.revocationVersion, revocationVersion),
-            isNull(runtimeNodeIssuedCredentials.revokedAt),
-            isNull(runtimeNodeIssuedCredentials.consumedAt),
-            gt(runtimeNodeIssuedCredentials.expiresAt, now),
-            exists(activeKey)
+        if (binding !== undefined) {
+          if (current.nodeId !== binding.nodeId) return 'node_mismatch'
+          if (current.workspaceId !== binding.workspaceId) return 'workspace_mismatch'
+        }
+        const consumed = await tx
+          .update(runtimeNodeIssuedCredentials)
+          .set({ consumedAt: now })
+          .where(
+            and(
+              eq(runtimeNodeIssuedCredentials.credentialId, credentialId),
+              eq(runtimeNodeIssuedCredentials.revocationVersion, revocationVersion),
+              isNull(runtimeNodeIssuedCredentials.revokedAt),
+              isNull(runtimeNodeIssuedCredentials.consumedAt),
+              gt(runtimeNodeIssuedCredentials.expiresAt, now),
+              exists(activeKey)
+            )
           )
-        )
-        .returning({ credentialId: runtimeNodeIssuedCredentials.credentialId })
-      if (consumed.length === 1) return 'consumed'
+          .returning({ credentialId: runtimeNodeIssuedCredentials.credentialId })
+        if (consumed.length === 1) {
+          // Rolls back the consumption above when the canonical channel owner rejects this binding.
+          if (binding !== undefined) await assertChannelOwnerAccepts(tx, binding)
+          return 'consumed'
+        }
 
-      const [latest] = await tx
-        .select()
-        .from(runtimeNodeIssuedCredentials)
-        .where(eq(runtimeNodeIssuedCredentials.credentialId, credentialId))
-        .limit(1)
-      if (!latest) return 'unknown'
-      let latestRecord: RuntimeNodeIssuedCredentialRecord
-      try {
-        latestRecord = parseIssuedCredentialRow(latest)
-      } catch {
+        const [latest] = await tx
+          .select()
+          .from(runtimeNodeIssuedCredentials)
+          .where(eq(runtimeNodeIssuedCredentials.credentialId, credentialId))
+          .limit(1)
+        if (!latest) return 'unknown'
+        let latestRecord: RuntimeNodeIssuedCredentialRecord
+        try {
+          latestRecord = parseIssuedCredentialRow(latest)
+        } catch {
+          return 'revoked'
+        }
+        if (latestRecord.revokedAt !== null || latestRecord.revocationVersion !== revocationVersion)
+          return 'revoked'
+        if (Date.parse(latestRecord.expiresAt) <= now.getTime()) return 'expired'
+        if (latestRecord.consumedAt !== null) return 'replayed'
         return 'revoked'
-      }
-      if (latestRecord.revokedAt !== null || latestRecord.revocationVersion !== revocationVersion)
-        return 'revoked'
-      if (Date.parse(latestRecord.expiresAt) <= now.getTime()) return 'expired'
-      if (latestRecord.consumedAt !== null) return 'replayed'
-      return 'revoked'
-    })
+      })
+    } catch (error) {
+      if (error instanceof ConsumptionBindingRejected) return error.result
+      throw error
+    }
   }
 
   async isCredentialRevoked(
@@ -606,6 +635,58 @@ function timestampToIso(value: Date | null): string | null {
   if (!(value instanceof Date) || !Number.isFinite(value.getTime()))
     fail('RUNTIME_NODE_IDENTITY_DATA_CORRUPT')
   return value.toISOString()
+}
+
+function parseBinding(input: RuntimeNodeCredentialBinding): RuntimeNodeCredentialBinding {
+  if (
+    typeof input !== 'object' ||
+    input === null ||
+    RuntimeNodeIdSchema.safeParse(input.nodeId).success !== true ||
+    RuntimeNodeWorkspaceIdSchema.safeParse(input.workspaceId).success !== true ||
+    !Number.isSafeInteger(input.channelGeneration) ||
+    input.channelGeneration < 1
+  )
+    fail('RUNTIME_NODE_IDENTITY_INVALID_INPUT')
+  return {
+    nodeId: input.nodeId,
+    workspaceId: input.workspaceId,
+    channelGeneration: input.channelGeneration,
+  }
+}
+
+/** Thrown inside the consumption transaction so its UPDATE rolls back; the caller maps it to a result. */
+class ConsumptionBindingRejected extends Error {
+  constructor(readonly result: 'workspace_mismatch' | 'superseded') {
+    super(result)
+    this.name = 'ConsumptionBindingRejected'
+  }
+}
+
+/**
+ * Checks the canonical channel owner inside the consumption transaction. The consumption locks the
+ * credential before this owner read, the same order the claim uses, and FOR SHARE keeps a concurrent
+ * claim from advancing the owner until this transaction commits. Rejection never leaves a consumed credential.
+ */
+async function assertChannelOwnerAccepts(
+  tx: Parameters<ControlPlaneDatabase['transaction']>[0] extends (transaction: infer T) => unknown
+    ? T
+    : never,
+  binding: RuntimeNodeCredentialBinding
+): Promise<void> {
+  const [owner] = await tx
+    .select({
+      workspaceId: runtimeChannelOwnership.workspaceId,
+      generation: runtimeChannelOwnership.generation,
+    })
+    .from(runtimeChannelOwnership)
+    .where(eq(runtimeChannelOwnership.nodeId, binding.nodeId))
+    .limit(1)
+    .for('share')
+  if (owner === undefined) return
+  if (owner.workspaceId !== binding.workspaceId)
+    throw new ConsumptionBindingRejected('workspace_mismatch')
+  if (binding.channelGeneration <= owner.generation)
+    throw new ConsumptionBindingRejected('superseded')
 }
 
 async function lockIdentity(

@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import {
+  GatewayCommandEnvelopeSchema,
   GatewayEnvelopeSchema,
   GatewayProtocolDeprecationSchema,
   GatewayProtocolManifest,
@@ -345,11 +346,20 @@ describe('Runtime Gateway protocol', () => {
     ).toBeTrue()
   })
 
+  test('carries the sealed ACP remote operation as a typed gateway operation', () => {
+    // Dedicated typed operation for the sealed ACP route (no reuse of an unrelated
+    // operation): present in the zod contract and regenerated JSON schema alike.
+    expect(GatewayCommandEnvelopeSchema.shape.operation.options).toContain(
+      'runtime.acp-remote-sealed'
+    )
+  })
+
   test('publishes terminal usage and negotiated version rules in the language-neutral JSON schema', async () => {
     const schema = await import('../schema/gateway-envelope.v1.json', { with: { type: 'json' } })
     const manifest = await import('../package.json', { with: { type: 'json' } })
 
     expect(schema.default.$schema).toBe('https://json-schema.org/draft/2020-12/schema')
+    expect(JSON.stringify(schema.default)).toContain('"runtime.acp-remote-sealed"')
     expect(schema.default.oneOf).toHaveLength(9)
     expect(schema.default.allOf[0].if.properties.type.const).toBe('inventory')
     expect(schema.default.allOf[0].then.properties.protocolVersion.properties.minor.minimum).toBe(6)

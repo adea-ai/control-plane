@@ -32,6 +32,7 @@ import {
   stable,
   withGatewayTimeout,
 } from './acp-gateway-protocol.js'
+import { denyRemote, remoteDenialError } from './acp-remote-fence.js'
 
 export class AcpGatewayClient implements AcpTransport {
   readonly #transport: AcpGatewayTransport
@@ -355,7 +356,10 @@ export class AcpGatewayClient implements AcpTransport {
     },
     signal?: AbortSignal
   ): Promise<AcpGatewayExchange> {
-    if (this.#transport.connectionState() !== 'online') {
+    const connection = this.#transport.connectionState()
+    // A revoked device is a terminal, non-retryable local denial; it is never retried or rerouted.
+    if (connection === 'revoked') throw remoteDenialError(denyRemote('device_revoked'))
+    if (connection !== 'online') {
       throw runtimeError('RUNTIME_GATEWAY_UNAVAILABLE', 'unavailable', true)
     }
     await this.#driver(signal)

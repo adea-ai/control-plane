@@ -505,6 +505,20 @@
       "when": 1792096144707,
       "tag": "0071_event_payload_hash_version",
       "breakpoints": true
+    },
+    {
+      "idx": 72,
+      "version": "7",
+      "when": 1792104418155,
+      "tag": "0072_persistence_records",
+      "breakpoints": true
+    },
+    {
+      "idx": 73,
+      "version": "7",
+      "when": 1792104439811,
+      "tag": "0073_scope_version_pairing",
+      "breakpoints": true
     }
   ]
 }

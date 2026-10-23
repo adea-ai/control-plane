@@ -300,7 +300,18 @@ export class RuntimeGatewayWebSocketLifecycle {
       throw new RuntimeGatewayOutboundError('RUNTIME_GATEWAY_PROTOCOL_INCOMPATIBLE')
     }
     await connection.authenticatedChannel.assertCommandAllowed(command)
+    const currentOwner = await this.#coordination.lookup(command.nodeId)
     signal?.throwIfAborted()
+    if (
+      connection.state !== 'active' ||
+      !connection.authenticatedChannel.active ||
+      connection.record === undefined ||
+      !sameChannel(connection.record, coordinated) ||
+      currentOwner === undefined ||
+      !sameChannel(currentOwner, coordinated)
+    ) {
+      throw new RuntimeGatewayOutboundError('RUNTIME_GATEWAY_CHANNEL_UNAVAILABLE')
+    }
     const serialized = JSON.stringify(command)
     if (Buffer.byteLength(serialized) > this.#limits.maxFrameBytes) {
       throw new RuntimeGatewayOutboundError('RUNTIME_GATEWAY_COMMAND_TOO_LARGE')

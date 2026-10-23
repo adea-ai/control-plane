@@ -4,13 +4,17 @@ import { mkdtemp, open, readFile, readdir, rm, writeFile } from 'node:fs/promise
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import { SqlitePersistenceProvider } from './index.ts'
+import { SqlitePersistenceProvider } from './provider.ts'
 import {
   SCHEMA_STATEMENTS,
   SCHEMA_VERSION,
   applyMigrations,
   SQLITE_MIGRATIONS,
 } from './migrations.ts'
+import {
+  MAIN_C538_MIGRATION_CHECKSUMS,
+  MAIN_C538_V3_STATEMENTS,
+} from './main-c538-v3-migration.fixture.mjs'
 
 const resources = []
 afterEach(async () => {
@@ -82,6 +86,104 @@ test('restores a valid v1 backup by staging and applying the current indexes', a
     value: { retentionExpiresAt: '2026-01-01T00:00:00.000Z' },
   })
   expect(await provider.health()).toMatchObject({ version: String(SCHEMA_VERSION) })
+})
+
+test('restores a main c538 v3 backup through the additive candidate migrations', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'sqlite-restore-main-v3-'))
+  const livePath = join(directory, 'live.sqlite')
+  const provider = new SqlitePersistenceProvider({ path: livePath })
+  resources.push({ directory, provider })
+  await provider.migrate()
+  const sourcePath = join(directory, 'main-v3.sqlite')
+  const source = new DatabaseSync(sourcePath)
+  const legacyPlan = {
+    schemaVersion: 3,
+    correlation: {
+      workspaceId: 'wsp_main-v3-fixture',
+      projectId: 'prj_main-v3-fixture',
+      executionScope: {
+        schemaVersion: 1,
+        kind: 'project',
+        projectId: 'prj_main-v3-fixture',
+      },
+    },
+  }
+  try {
+    // Main v1/v2 match these frozen checksums; v3 is installed from the
+    // independent c538 snapshot below, never candidate SQLITE_MIGRATIONS[2].
+    expect(createHash('sha256').update(JSON.stringify(MAIN_C538_V3_STATEMENTS)).digest('hex')).toBe(
+      MAIN_C538_MIGRATION_CHECKSUMS[2]
+    )
+    applyMigrations(source, SQLITE_MIGRATIONS.slice(0, 2))
+    for (let version = 1; version <= 2; version++) {
+      expect(
+        source
+          .prepare('SELECT value FROM control_plane_metadata WHERE key = ?')
+          .get(`migration:${version}`).value
+      ).toBe(MAIN_C538_MIGRATION_CHECKSUMS[version - 1])
+    }
+    source.exec(MAIN_C538_V3_STATEMENTS.join(';'))
+    source
+      .prepare('INSERT INTO control_plane_metadata (key, value) VALUES (?, ?)')
+      .run('migration:3', MAIN_C538_MIGRATION_CHECKSUMS[2])
+    source
+      .prepare("UPDATE control_plane_metadata SET value = '3' WHERE key = 'schema_version'")
+      .run()
+    const insert = source.prepare(
+      'INSERT INTO control_plane_records(namespace, id, revision, value, updated_at) VALUES (?, ?, 1, ?, ?)'
+    )
+    // Both records were accepted by the actual main-v3 triggers.
+    insert.run(
+      'command-inbox',
+      'legacy-main-v3-command',
+      JSON.stringify({ legacy: true }),
+      '2026-10-13T00:00:00.000Z'
+    )
+    insert.run(
+      'execution-plans',
+      'legacy-main-v3-plan',
+      JSON.stringify(legacyPlan),
+      '2026-10-13T00:00:00.000Z'
+    )
+  } finally {
+    source.close()
+  }
+
+  const bytes = new Uint8Array(await readFile(sourcePath))
+  await provider.restore({
+    schemaVersion: 3,
+    createdAt: '2026-10-13T00:00:00.000Z',
+    digest: `sha256:${createHash('sha256').update(bytes).digest('hex')}`,
+    bytes,
+  })
+  expect(await provider.health()).toMatchObject({ version: String(SCHEMA_VERSION) })
+  expect(
+    await provider.transaction((tx) => tx.get('command-inbox', 'legacy-main-v3-command'))
+  ).toMatchObject({
+    value: { legacy: true },
+  })
+  expect(
+    await provider.transaction((tx) => tx.get('execution-plans', 'legacy-main-v3-plan'))
+  ).toMatchObject({
+    value: legacyPlan,
+  })
+  const restored = new DatabaseSync(livePath)
+  try {
+    expect(() =>
+      restored
+        .prepare(
+          'INSERT INTO control_plane_records(namespace, id, revision, value, updated_at) VALUES (?, ?, 1, ?, ?)'
+        )
+        .run('command-inbox', 'missing-project', '{"legacy":true}', '2026-10-13T00:00:00.000Z')
+    ).toThrow('SQLITE_EXECUTION_SCOPE_INVALID')
+    expect(() =>
+      restored
+        .prepare('UPDATE control_plane_records SET value = ? WHERE namespace = ? AND id = ?')
+        .run(JSON.stringify(legacyPlan), 'execution-plans', 'legacy-main-v3-plan')
+    ).toThrow('SQLITE_EXECUTION_SCOPE_INVALID')
+  } finally {
+    restored.close()
+  }
 })
 
 test('rejects a tampered v2 index without replacing live data', async () => {

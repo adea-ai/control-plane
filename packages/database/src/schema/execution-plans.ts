@@ -1,4 +1,8 @@
-import { executionScopeColumn, executionScopeCheck } from './execution-scope.js'
+import {
+  executionScopeColumn,
+  executionScopeCheck,
+  executionScopeVersionCheck,
+} from './execution-scope.js'
 import { index, integer, jsonb, pgTable, timestamp, varchar } from 'drizzle-orm/pg-core'
 import type { ExecutionPlan } from '@control-plane/execution-plan'
 
@@ -24,6 +28,7 @@ export const executionPlans = pgTable(
   },
   (table) => [
     executionScopeCheck('execution_plans_scope_check', table),
+    executionScopeVersionCheck('execution_plans_scope_version_check', table),
     index('execution_plans_scope_index').on(
       table.workspaceId,
       table.projectId,

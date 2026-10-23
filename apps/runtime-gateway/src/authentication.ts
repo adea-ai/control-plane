@@ -6,16 +6,24 @@ import {
   RuntimeNodeIdentityValidationError,
   type RuntimeNodeCredentialClaims,
 } from '@control-plane/runtime-gateway-protocol'
-import type { RuntimeNodeIdentityGatewayPort } from './runtime-node-identity-port.js'
+import type {
+  RuntimeNodeCredentialGatewayConsumption,
+  RuntimeNodeIdentityGatewayPort,
+} from './runtime-node-identity-port.js'
 
 export * from './synthetic-node-identity.js'
 
+/**
+ * Independent expectations a caller may assert. The node, workspace, and generation fields are
+ * optional: the production upgrade asserts none, and its claims are bound to canonical records by
+ * the fenced consumption instead of by comparison with themselves.
+ */
 export interface RuntimeNodeAuthenticationExpectation {
   readonly audience: string
   readonly issuer: string
-  readonly nodeId: string
-  readonly workspaceId: string
-  readonly channelGeneration: number
+  readonly nodeId?: string
+  readonly workspaceId?: string
+  readonly channelGeneration?: number
   readonly challenge: string
 }
 
@@ -31,6 +39,25 @@ export class RuntimeNodeAuthenticationError extends Error {
   constructor(readonly code: string) {
     super('RuntimeNode authentication was rejected')
     this.name = 'RuntimeNodeAuthenticationError'
+  }
+}
+
+function consumptionRejectionCode(consumption: RuntimeNodeCredentialGatewayConsumption): string {
+  switch (consumption) {
+    case 'replayed':
+      return 'RUNTIME_NODE_CREDENTIAL_REPLAYED'
+    case 'revoked':
+      return 'RUNTIME_NODE_CREDENTIAL_REVOKED'
+    case 'expired':
+      return 'RUNTIME_NODE_CREDENTIAL_EXPIRED'
+    case 'node_mismatch':
+      return 'RUNTIME_NODE_CREDENTIAL_NODE_MISMATCH'
+    case 'workspace_mismatch':
+      return 'RUNTIME_NODE_CREDENTIAL_WORKSPACE_MISMATCH'
+    case 'superseded':
+      return 'RUNTIME_NODE_CHANNEL_GENERATION_SUPERSEDED'
+    default:
+      return 'RUNTIME_NODE_CREDENTIAL_UNKNOWN'
   }
 }
 
@@ -178,13 +205,16 @@ export class RuntimeNodeChannelAuthenticator {
     if (claims.audience !== expected.audience) {
       this.#reject('RUNTIME_NODE_CREDENTIAL_INVALID_AUDIENCE', claims)
     }
-    if (claims.nodeId !== expected.nodeId) {
+    if (expected.nodeId !== undefined && claims.nodeId !== expected.nodeId) {
       this.#reject('RUNTIME_NODE_CREDENTIAL_NODE_MISMATCH', claims)
     }
-    if (claims.workspaceId !== expected.workspaceId) {
+    if (expected.workspaceId !== undefined && claims.workspaceId !== expected.workspaceId) {
       this.#reject('RUNTIME_NODE_CREDENTIAL_WORKSPACE_MISMATCH', claims)
     }
-    if (claims.channelGeneration !== expected.channelGeneration) {
+    if (
+      expected.channelGeneration !== undefined &&
+      claims.channelGeneration !== expected.channelGeneration
+    ) {
       this.#reject('RUNTIME_NODE_CHANNEL_GENERATION_MISMATCH', claims)
     }
 
@@ -212,27 +242,23 @@ export class RuntimeNodeChannelAuthenticator {
       this.#reject('RUNTIME_NODE_CHANNEL_GENERATION_STALE', claims)
     }
 
-    let consumption: Awaited<ReturnType<RuntimeNodeIdentityGatewayPort['consumeCredential']>>
+    let consumption: RuntimeNodeCredentialGatewayConsumption
     try {
       consumption = await this.#identityValidator.consumeCredential(
         claims.credentialId,
         claims.revocationVersion,
-        this.#now()
+        this.#now(),
+        {
+          nodeId: claims.nodeId,
+          workspaceId: claims.workspaceId,
+          channelGeneration: claims.channelGeneration,
+        }
       )
     } catch {
       this.#reject('RUNTIME_NODE_IDENTITY_UNAVAILABLE', claims)
     }
     if (consumption !== 'consumed') {
-      this.#reject(
-        consumption === 'replayed'
-          ? 'RUNTIME_NODE_CREDENTIAL_REPLAYED'
-          : consumption === 'revoked'
-            ? 'RUNTIME_NODE_CREDENTIAL_REVOKED'
-            : consumption === 'expired'
-              ? 'RUNTIME_NODE_CREDENTIAL_EXPIRED'
-              : 'RUNTIME_NODE_CREDENTIAL_UNKNOWN',
-        claims
-      )
+      this.#reject(consumptionRejectionCode(consumption), claims)
     }
     const channel = new RuntimeNodeChannel(claims, this.#identityValidator, {
       now: this.#now,

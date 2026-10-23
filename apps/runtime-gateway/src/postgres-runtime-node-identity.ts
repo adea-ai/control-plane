@@ -15,7 +15,11 @@ import type {
   RuntimeNodeChannel,
   RuntimeNodeChannelAuthenticator,
 } from './authentication.js'
-import type { RuntimeNodeIdentityGatewayPort } from './runtime-node-identity-port.js'
+import type {
+  RuntimeNodeCredentialBinding,
+  RuntimeNodeCredentialGatewayConsumption,
+  RuntimeNodeIdentityGatewayPort,
+} from './runtime-node-identity-port.js'
 
 const MAX_TRUSTED_ISSUER_KEYS = 16
 const MAX_PUBLIC_KEY_PEM_BYTES = 4096
@@ -53,10 +57,9 @@ export function authenticateRuntimeNodeUpgrade(
   }
   const credential = authorization.slice('RuntimeNode '.length)
   let challenge: string
-  let claims: RuntimeNodeCredentialClaims
   try {
     challenge = runtimeNodeWebSocketChallenge(secWebSocketKey)
-    claims = parseUntrustedRuntimeNodeCredentialClaims(credential)
+    parseUntrustedRuntimeNodeCredentialClaims(credential)
   } catch {
     throw new RuntimeNodeIdentityValidationError('credential')
   }
@@ -64,12 +67,11 @@ export function authenticateRuntimeNodeUpgrade(
     credential,
     proof: { challenge, signature: proofSignature },
   }
+  // The upgrade asserts no node, workspace, or generation of its own. The claims are bound to the
+  // canonical credential, key, and channel owner inside the fenced consumption, not to themselves.
   const expected: RuntimeNodeAuthenticationExpectation = {
     issuer: trust.issuer,
     audience: trust.audience,
-    nodeId: claims.nodeId,
-    workspaceId: claims.workspaceId,
-    channelGeneration: claims.channelGeneration,
     challenge,
   }
   return authenticator.authenticate(attempt, expected)
@@ -206,12 +208,18 @@ export class PostgresRuntimeNodeIdentityValidationPort implements RuntimeNodeIde
       throw new RuntimeNodeIdentityValidationError('credential')
     }
     const issued = await this.#repository.getIssuedCredential(claims.credentialId)
+    // Revocation advances the durable version by one. A signed credential revoked after issuance
+    // still verifies here, so the revocation check reports it as revoked rather than malformed.
+    const revokedAfterIssue =
+      issued !== undefined &&
+      issued.revokedAt !== null &&
+      issued.revocationVersion === claims.revocationVersion + 1
     if (
       issued === undefined ||
       issued.nodeId !== claims.nodeId ||
       issued.workspaceId !== claims.workspaceId ||
       issued.keyId !== claims.keyId ||
-      issued.revocationVersion !== claims.revocationVersion ||
+      (issued.revocationVersion !== claims.revocationVersion && !revokedAfterIssue) ||
       !sameClaims(issued.claims, claims)
     ) {
       throw new RuntimeNodeIdentityValidationError('credential')
@@ -245,9 +253,15 @@ export class PostgresRuntimeNodeIdentityValidationPort implements RuntimeNodeIde
   consumeCredential(
     credentialId: string,
     revocationVersion: number,
-    now: Date
-  ): Promise<'consumed' | 'replayed' | 'revoked' | 'expired' | 'unknown'> {
-    return this.#repository.consumeCredential(credentialId, revocationVersion, now.toISOString())
+    now: Date,
+    binding?: RuntimeNodeCredentialBinding
+  ): Promise<RuntimeNodeCredentialGatewayConsumption> {
+    return this.#repository.consumeCredential(
+      credentialId,
+      revocationVersion,
+      now.toISOString(),
+      binding
+    )
   }
 }
 

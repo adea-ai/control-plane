@@ -93,6 +93,13 @@ live owner; a new event cannot hide a workspace owner's scope by supplying
 legacy project fields. SQLite context scope constraints also cover the nested
 `projectState` representation.
 
+Raw SQLite writes to every scoped namespace require a real legacy project or
+explicit scope. Additive PostgreSQL migration 0072 enforces the version 1/no-scope
+and version 2/explicit-scope pairing for plan and context columns. Admission and
+retained-plan replay recheck current authority for every retained ancestor; a
+missing ancestor fails closed. The legacy workflow router rejects version 2
+plans before discovery because its adapters accept version 1 only.
+
 ## Qualification and rollout
 
 Focused deterministic source fixtures exercise historical digests, workspace

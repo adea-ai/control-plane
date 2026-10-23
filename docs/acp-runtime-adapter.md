@@ -52,6 +52,190 @@ reconciles as unknown until connectivity returns.
 The in-repository reference driver runs only a disposable ACP transport fixture. It does not launch
 Adea or take ownership of native authentication, configuration, MCP setup, or session files.
 
+## Secure remote device route
+
+`SecureAcpRemoteTransport` (controller) and `SecureAcpDeviceEndpoint` (device) implement the
+authenticated, encrypted ACP route between the Control Plane and a device-side executor. Commands
+are HPKE-sealed (X25519/HKDF-SHA256/AES-128-GCM) to the registered device recipient key with the
+cleartext header bound as associated data and signed by the controller's Ed25519 key; replies are
+sealed to a per-command ephemeral return key and signed by the device identity key. The shared route
+record is a public-key-only strict schema, so credential or private-key fields cannot enter it.
+Inventory has two wire modes. In the default mode the device signs each inventory reply over a
+per-request nonce, and the controller verifies the signature, route and nonce within a 60-second
+freshness bound. In `channel-authenticated` mode the wire supplies an already-pushed inventory that the
+authenticated gateway channel vouches for: it is not device-signed and no request nonce is checked, the
+controller checks only node/workspace identity, a 60-second freshness bound, and that the reply's channel
+generation equals the generation the same wire reports. That mode therefore trusts the channel and the
+wire object that selects it, and is not a replay defence on its own (see incomplete milestones).
+
+Authority checks are current-authority: the route fence (revocation, trust-record staleness, finite
+clock) and the command's window/channel-generation gates are evaluated before decryption and
+re-evaluated after **every** await on the effect and publication paths — after send and after reply
+opening at the controller, and after each storage read, the ledger claim, execution, and reply
+sealing at the device — with every reply publication (fresh, sealed, or cached) fenced against the
+persisted fence, and the persisted fence enforced atomically inside the durable claim transaction.
+A revocation or superseded generation durable before a claim refuses that command atomically, and any
+revocation, superseded generation, expired window, or broken clock in force at the final read refuses
+the reply (see the response authorization boundary below). A command whose effect may have run is never
+reported as undelivered: once a reply is in hand the controller ignores a wire that has since gone
+offline and maps a window that closed afterwards to `response_unknown`, and the device reports a
+transient publication refusal (expired window, superseded generation) after an exchange was recorded
+as `response_unknown` rather than as the pre-effect denial. Only revocation is reported as itself.
+`response_unknown` is retryable on the same command identity, whose recorded outcome the device
+replays. After a successful claim, a fresh durable
+fence read immediately before dispatch refuses the command before the executor is called (see the
+pre-dispatch boundary below). A non-finite clock or malformed window fails
+closed. Unauthenticated input receives no signed reply, so an intermediary cannot harvest a device
+signature over copyable header fields. Every denial carries an explicit `fallback: 'none'`.
+
+Device fence state is durable through `AcpRemoteDeviceStateStore`:
+`PersistenceProviderAcpRemoteDeviceStateStore` persists the highest accepted channel generation, the
+first applied revocation, and the replay ledger (create-if-absent claim, then recorded outcome) over
+the Local/Hosted `PersistenceProvider`, while the in-memory store is a test/default seam that is not
+durable across restart. After a restart a recorded command replays its recorded outcome without
+re-executing, an older channel generation stays denied, a revocation stays terminal, and a claim
+whose effect never completed denies as `outcome_uncertain` instead of being blindly retried. A stale
+generation or an expired delivery window is denied even when a recorded outcome exists; only a
+current window under current authority may recover it. Fence and ledger keys derive from the
+authenticated route identity through `acpRemoteDeviceStateScope`, so two routes sharing one store
+never observe each other's revocation, generation, or recorded effects, and `claim` re-evaluates the
+persisted fence inside the same transaction that would create the ledger entry — an endpoint that
+loaded its mirror once still fails closed on a revocation or supersession applied elsewhere: claims
+are decided inside the durable transaction, and replay, dispatch, publication, and inventory re-read
+the persisted fence before deciding.
+
+**Response authorization boundary:** a device reply (exchange, cached replay, or signed denial) is
+authorized by the last durable fence read that completes before the endpoint returns its bytes to the
+caller. For a fresh outcome that read follows sealing; for a cached replay it precedes returning the
+cached bytes; inventory replies follow the same rule. A revocation, higher channel generation, or
+expired window that is durable before that read refuses the reply, and the refusal is sealed in place
+of the bytes. The boundary is a point-in-time read, not a lock: no durable transaction or lock is held
+across sealing or transmission, and the endpoint makes no claim about delivery once bytes leave it, so
+a revocation committed afterwards is not reflected in bytes already returned. A refused publication
+never repeats the effect; the outcome recorded at execution stays durable.
+
+**Pre-dispatch boundary:** after a successful claim, the last durable fence read before the executor is
+called decides whether the effect runs. A denial it observes is not dispatched. Revocation is terminal and is recorded as the
+command's outcome. Every other pre-dispatch refusal (expiry, supersession, stale trust record, broken clock) is
+specific to that delivery, so the claim is released (`abandonClaim`) instead of being stored: a later
+delivery of the same command id with a fresh window and current generation runs once. A store failure at that
+read also dispatches nothing and releases the claim when the store can; if the release itself fails the
+claim stays unrecorded, so a later delivery of the same identity reads `outcome_uncertain` and nothing
+re-runs. A
+retry on the same return key receives the byte-identical reply it already got. The read is point-in-time.
+No await separates its completion from the dispatch call, but a commit landing after its snapshot is not
+observed by it. This does not make the executor's side effects or any network delivery atomic with the
+read, and a revocation committed after the read cannot stop a dispatch already in progress.
+
+**Ledger retention:** duplicate protection outlives the delivery window. A controller may retry the
+same command id with a fresh window at any time, and that retry passes the window fence, so a claim is
+never deleted. `capacity` (default 1,024 per route) bounds only the live entries. When a route is at
+capacity, the claim transaction first compacts entries whose window ended more than the clock-skew
+bound ago, moving them to a compact record in a separate namespace
+(`acp-remote-device-ledger-compacted`), then re-checks the bound. A compacted record keeps the
+command's identity and its pending or recorded state: a pending claim stays pending and replays as
+`outcome_uncertain`, a recorded denial is kept, and a recorded exchange, whose sealed output is no
+longer retained, becomes `outcome_uncertain`. A same-command retry therefore never executes again, and
+a different payload under a compacted id is `command_conflict`. Entries written before retention
+existed carry no window and are never compacted. While every entry is still inside its window a new
+command is refused `replay_ledger_full`. Compact records are kept for the life of the route (one small
+record per command); a retention horizon for them needs a controller-side command-id epoch and is an
+open design decision (see incomplete milestones).
+
+**Device key rotation:** device state is scoped by the device key id. Re-enrolling the device with a new
+signing key id starts a fresh fence and ledger; a still-valid captured command is only safe because the
+route's encryption key, controller key and short command window bound it. Rotation procedure and any
+carry-over of the old fence are not defined yet (see incomplete milestones).
+
+**Production construction is wired (no documented-gap substitute):**
+`createPersistentSecureAcpDeviceEndpoint` always builds the scoped
+`PersistenceProviderAcpRemoteDeviceStateStore(provider, acpRemoteDeviceStateScope(route))`, and the
+Local composition's `secureAcpRemoteRoute` option constructs the endpoint over the composition's
+own `SqlitePersistenceProvider` (`LocalControlPlaneComposition.secureAcpDevice`), with passthrough
+from `start()` via `compositionOptions`. The route record (public keys, ids, validity) stays an
+explicit host-supplied composition input — no ambient credential or key material — and the
+in-memory default remains test-only. Controller construction has a separate
+`createEnrolledSecureAcpRemoteTransport` factory. It requires the current controller enrollment
+authority and binds each durable check to the route scope, controller key id, and public key before
+inventory requests, before commands leave, after wire replies, and before publishing decrypted
+replies. Connection-state reporting uses the synchronous cache only after a durable check passes;
+it stays offline before that check and after a rejected check or observed wire disconnect. Enrolled
+transports use
+`revokeCurrent()` to recheck authority before signing; the synchronous `revoke()` helper is only for
+isolated transport tests. The authority port is a required production boundary; the raw constructor
+remains useful for isolated transport tests.
+
+**Production wire boundary (#1023 remains open):** the Local composition constructs the durable
+device endpoint and controller construction can require a current enrollment authority, but
+`AcpRemoteWire` still has no concrete production implementation or call site that sends sealed
+commands and inventory requests through `apps/runtime-gateway`. The secure route tests connect
+callbacks directly to `device.handleCommand` and `device.handleInventory`; they prove endpoint
+behavior, not an authenticated controller-to-device production exchange. The runtime-gateway
+WebSocket server handles runtime-node connections, but these paths do not join it to a
+controller-side ACP wire. This repository contains no node agent that answers the sealed ACP
+operation and no enrolled-controller signer source implementing the new authority port. The wire
+also needs a per-command reply artifact path because the existing runtime artifact verifier permits
+one result artifact per attempt. No live ACP producer, node-agent hook, enrolled device, or signer
+was available for qualification. Therefore #1023's production transport acceptance remains open.
+
+**SQLite credential-fence contract:** SQLite runtime-command settlement now requires an authority
+that validates credential id and version, the command's node and workspace, and current revocation
+state through the same `PersistenceTransaction` as the ACK/result write. A plain `isRevoked` call
+cannot authorize a SQLite settlement; if the transaction-bound authority is missing, validation
+fails closed. SQLite serializes writes through that provider, so an invalidation using the same
+provider orders before the check or after the fenced update. The same transaction-bound authority now fences
+`SqliteRuntimeEventEffectSink` progress and terminal effects: every effect, replays included, validates
+the delivering channel's credential fence against the stored command's node and workspace before any
+execution, attempt or receipt write, and a missing command, malformed fence or absent authority fails
+closed (parity with `PostgresRuntimeEventEffectSink`). The Local all-in-one currently has no production
+fenced settlement caller; its authority seam is for future callers. Context-command ACK, result and error
+settlement on SQLite (`SqliteContextCommandRepository`) and the reconnect `hello` retained-outcome
+applier are not credential-fenced yet (see incomplete milestones). Hosted PostgreSQL
+settlements continue to use the PostgreSQL identity authority and fence path, not the SQLite
+transaction hook.
+
+**Hosted PostgreSQL durable state:** the same `PersistenceProvider` contract is qualified, in tests
+only, through `PostgresPersistenceProvider`; no Hosted composition constructs it or a device endpoint
+over it yet, and the only production device endpoint is the Local/SQLite one
+(`packages/profile-portability/src/postgres-persistence-provider.ts`) over the new
+`persistence_records` table (drizzle migration `0071_persistence_records`; the canonical migration
+chain, applied by the migration role, owns DDL — the provider verifies presence and never creates
+tables). The device fence/ledger store is proven on real PostgreSQL — atomic claims, revoked and
+superseded rejection without writes, restart persistence, concurrent same-key races, and per-route
+namespacing — in `tests/acp-remote-device-postgres.integration.test.mjs` against a disposable
+isolated database.
+
+Neither layer can produce an implicit cloud reroute: an offline or revoked route denies with
+`fallback: 'none'` and the transport has no alternate route, and at attempt selection
+`RuntimeDiscoveryAttemptRouter` never replaces a local runtime that the plan could have used but that
+is not live-eligible (offline, stale, reconnecting, unknown health, revoked or missing grant, revoked
+compatibility, no node) with a remote one (`WORKFLOW_RUNTIME_LOCAL_UNAVAILABLE_NO_FALLBACK`). While such
+a local runtime exists the choice is restricted to local candidates, so a healthy local runtime still
+wins and no local candidate is a typed denial. A local runtime that could never have served the attempt
+(disallowed family or location, missing capability, unpinned harness, denied entitlement, `incompatible`
+or `capability_missing` compatibility) does not block a remote one.
+
+Evidence: `packages/acp-adapter/src/acp-remote-fence.test.mjs` (route schema, fence decisions,
+finite-clock guards, HPKE/signature binding), `packages/acp-adapter/src/acp-remote-transport.test.mjs`
+(parked-async revocation/abort regressions, parked storage window/generation regressions,
+revocation at execution/sealing/response-opening boundaries, authenticated and encrypted runs,
+replay/conflict/generation proofs, edge fences), `packages/acp-adapter/src/acp-remote-delivery-fences.test.mjs` (delivered-not-undelivered, withheld
+exchange as `response_unknown`, claim release and retry, ledger capacity recovery),
+`tests/acp-remote-device-retention.test.mjs` (retention and `abandonClaim` on the in-memory and SQLite
+stores, including same-command retries after compaction), `packages/acp-adapter/src/acp-remote-response-boundary.test.mjs`
+(the response authorization boundary: peer revocation before the final read and while sealing, cached
+replay after revocation, identity conflict; the pre-dispatch boundary: peer revocation after the claim,
+a positive control, and a store failure at the read),
+`apps/local-control-plane/src/acp-remote-device-restart.test.mjs` (restart proofs through the real
+SQLite persistence composition using disposable per-test databases), and
+`apps/local-control-plane/src/acp-remote-device-fence.test.mjs` (two endpoints over one shared
+store, atomic claim rejection without writes, and per-route fence/ledger namespacing),
+`packages/acp-adapter/src/acp-remote-composition.test.mjs` and
+`apps/local-control-plane/src/acp-remote-secure-route.test.mjs` (persistent factory and production
+Local composition construction, including a revocation that survives composition restart), and
+`tests/acp-remote-device-postgres.integration.test.mjs` (Hosted PostgreSQL durable-state
+qualification over an isolated disposable database).
+
 ## External session references
 
 When configured with an `ExternalSessionRegistry`, native list/create/resume/close observations create

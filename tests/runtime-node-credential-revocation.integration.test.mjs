@@ -127,12 +127,12 @@ describe.skipIf(!enabled)('hosted RuntimeNode credential revocation over Postgre
         await expect(channel.assertActive()).rejects.toMatchObject({
           code: 'RUNTIME_NODE_CREDENTIAL_REVOKED',
         })
-        // The signed claims still carry revocation version 1 while the durable version is 2, so
-        // the gateway refuses the stale credential during verification, before any new channel.
+        // The original signed credential remains verifiable, but current durable revocation state
+        // rejects it before a new channel is admitted.
         const reauthentication = await authenticate(authenticator, provisioned).catch(
           (error) => error
         )
-        expect(reauthentication.code).toBe('RUNTIME_NODE_CREDENTIAL_MALFORMED')
+        expect(reauthentication.code).toBe('RUNTIME_NODE_CREDENTIAL_REVOKED')
 
         const replay = await revoke(control, provisioned.credentialId, WORKSPACE)
         expect(replay.statusCode).toBe(200)

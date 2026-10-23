@@ -105,6 +105,54 @@ export const EXECUTION_SCOPE_STATEMENTS = {
   ),
 } as const
 
+// Added in v4. Keep the v3 scope triggers and checksum immutable; these additional
+// triggers reject execution/context records whose schema version has no PG equivalent.
+export const SCOPE_SCHEMA_VERSION_STATEMENTS = {
+  control_plane_records_scope_schema_version_insert: scopeSchemaVersionTrigger('INSERT'),
+  control_plane_records_scope_schema_version_update: scopeSchemaVersionTrigger('UPDATE'),
+} as const
+
+function scopeSchemaVersionTrigger(action: 'INSERT' | 'UPDATE'): string {
+  return `CREATE TRIGGER IF NOT EXISTS control_plane_records_scope_schema_version_${action.toLowerCase()}
+    BEFORE ${action} ON control_plane_records
+    WHEN NEW.namespace IN ('execution-plans', 'context-packages') AND NOT coalesce(
+      json_type(NEW.value, '$.schemaVersion') = 'integer'
+      AND json_extract(NEW.value, '$.schemaVersion') IN (1, 2), 0
+    )
+    BEGIN SELECT RAISE(ABORT, 'SQLITE_EXECUTION_SCOPE_INVALID'); END`
+}
+
+// Added in v5. Keep the released v3 scope-trigger checksum unchanged while
+// enforcing project ownership for new writes that omit an execution scope.
+function projectRequiredTrigger(
+  action: 'INSERT' | 'UPDATE',
+  suffix: string,
+  path: string,
+  namespaces: string
+): string {
+  const scope = `${path}.executionScope`
+  const project = `${path}.projectId`
+  return `CREATE TRIGGER IF NOT EXISTS control_plane_records_project_required_${suffix}_${action.toLowerCase()}
+    BEFORE ${action} ON control_plane_records
+    WHEN NEW.namespace IN (${namespaces})
+      AND json_type(NEW.value, '${scope}') IS NULL
+      AND NOT coalesce((json_type(NEW.value, '${project}') = 'text' AND length(json_extract(NEW.value, '${project}')) > 0), 0)
+    BEGIN SELECT RAISE(ABORT, 'SQLITE_EXECUTION_SCOPE_INVALID'); END`
+}
+
+export const PROJECT_REQUIRED_STATEMENTS: Readonly<Record<string, string>> = Object.fromEntries(
+  (['INSERT', 'UPDATE'] as const).flatMap((action) =>
+    [
+      ['command', '$', "'command-inbox'"],
+      ['correlation', '$.correlation', "'executions', 'execution-plans', 'execution-events'"],
+      ['cancellation', '$.request', "'execution-cancellation-receipts'"],
+    ].map(([suffix, path, namespaces]) => [
+      `control_plane_records_project_required_${suffix}_${action.toLowerCase()}`,
+      projectRequiredTrigger(action, suffix!, path!, namespaces!),
+    ])
+  )
+)
+
 interface SqliteMigration {
   readonly version: number
   readonly statements: readonly string[]
@@ -115,6 +163,8 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   { version: 1, statements: Object.values(SCHEMA_STATEMENTS) },
   { version: 2, statements: Object.values(EXPIRY_INDEX_STATEMENTS) },
   { version: 3, statements: Object.values(EXECUTION_SCOPE_STATEMENTS) },
+  { version: 4, statements: Object.values(SCOPE_SCHEMA_VERSION_STATEMENTS) },
+  { version: 5, statements: Object.values(PROJECT_REQUIRED_STATEMENTS) },
 ]
 export const SCHEMA_VERSION = SQLITE_MIGRATIONS.length
 

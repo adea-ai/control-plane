@@ -21,7 +21,7 @@
         "@control-plane/runtime-gateway-protocol",
         "@control-plane/runtime-sdk"
       ],
-      "externalDependencies": ["zod"],
+      "externalDependencies": ["@hpke/core", "@hpke/dhkem-x25519", "zod"],
       "developmentWorkspaceDependencies": [],
       "developmentExternalDependencies": [],
       "layer": "adapter-infrastructure"
@@ -74,7 +74,7 @@
     {
       "name": "@control-plane/contracts",
       "path": "packages/contracts",
-      "version": "1.20.0",
+      "version": "1.21.0",
       "lockVersion": "1.19.0",
       "kind": "package",
       "private": false,
@@ -89,8 +89,8 @@
     {
       "name": "@control-plane/control-api",
       "path": "apps/control-api",
-      "version": "1.31.0",
-      "lockVersion": "1.27.1",
+      "version": "1.32.0",
+      "lockVersion": "1.28.0",
       "kind": "application",
       "private": true,
       "browser": false,
@@ -176,7 +176,7 @@
     {
       "name": "@control-plane/database",
       "path": "packages/database",
-      "version": "1.45.1",
+      "version": "1.46.1",
       "lockVersion": "1.43.0",
       "kind": "package",
       "private": true,
@@ -286,7 +286,7 @@
     {
       "name": "@control-plane/hosted-control-plane",
       "path": "apps/hosted-control-plane",
-      "version": "1.20.0",
+      "version": "1.21.0",
       "lockVersion": "1.19.0",
       "kind": "application",
       "private": true,
@@ -324,7 +324,7 @@
     {
       "name": "@control-plane/langgraph-adapter",
       "path": "packages/langgraph-adapter",
-      "version": "1.9.0",
+      "version": "1.10.0",
       "lockVersion": "1.9.0",
       "kind": "package",
       "private": true,
@@ -355,7 +355,7 @@
     {
       "name": "@control-plane/local-control-plane",
       "path": "apps/local-control-plane",
-      "version": "1.32.0",
+      "version": "1.34.0",
       "lockVersion": "1.31.0",
       "kind": "application",
       "private": true,
@@ -480,7 +480,7 @@
     {
       "name": "@control-plane/orchestration",
       "path": "packages/orchestration",
-      "version": "1.8.0",
+      "version": "1.10.0",
       "lockVersion": "1.7.0",
       "kind": "package",
       "private": true,
@@ -503,7 +503,7 @@
       "name": "@control-plane/pi-cloudflare-host",
       "path": "packages/pi-cloudflare-host",
       "version": "0.6.1",
-      "lockVersion": "0.6.0",
+      "lockVersion": "0.6.1",
       "kind": "package",
       "private": true,
       "browser": false,
@@ -521,8 +521,8 @@
     {
       "name": "@control-plane/pi-durable-adapter",
       "path": "packages/pi-durable-adapter",
-      "version": "0.8.0",
-      "lockVersion": "0.4.1",
+      "version": "0.9.0",
+      "lockVersion": "0.5.0",
       "kind": "package",
       "private": true,
       "browser": false,
@@ -703,7 +703,7 @@
       "name": "@control-plane/runtime-sdk",
       "path": "packages/runtime-sdk",
       "version": "1.15.1",
-      "lockVersion": "1.14.0",
+      "lockVersion": "1.15.0",
       "kind": "package",
       "private": false,
       "browser": false,
@@ -759,7 +759,7 @@
       "name": "@control-plane/sdk",
       "path": "packages/control-sdk",
       "version": "1.18.0",
-      "lockVersion": "1.16.0",
+      "lockVersion": "1.17.0",
       "kind": "package",
       "private": false,
       "browser": false,
@@ -788,7 +788,7 @@
     {
       "name": "@control-plane/sqlite-persistence",
       "path": "packages/sqlite-persistence",
-      "version": "1.37.0",
+      "version": "1.38.0",
       "lockVersion": "1.35.0",
       "kind": "package",
       "private": true,
@@ -822,7 +822,7 @@
     {
       "name": "@control-plane/telemetry",
       "path": "packages/telemetry",
-      "version": "1.6.0",
+      "version": "1.7.0",
       "lockVersion": "1.6.0",
       "kind": "package",
       "private": false,
@@ -856,7 +856,7 @@
     {
       "name": "@control-plane/tool-execution",
       "path": "packages/tool-execution",
-      "version": "1.4.0",
+      "version": "1.5.0",
       "lockVersion": "1.4.0",
       "kind": "package",
       "private": true,
@@ -3366,7 +3366,7 @@
         "owner": "hosted-simple-runtime",
         "disposition": "Certify the packaged managed Pi process client with a live provider and package a supported concrete ACP launcher."
       },
-      "sourceDigest": "sha256:622e32acac52d2f7581b9df796669e306204436dd1ee0b4540cf91d7e31b311b"
+      "sourceDigest": "sha256:31a06098ed2da7f769ae13528fae13dc5f6b8ce65c724ad3ad20e55ccb9ce74b"
     },
     {
       "id": "local",
@@ -3409,7 +3409,7 @@
         "owner": "local-runtime",
         "disposition": "Certify the packaged managed Pi process client with a live provider and package a supported concrete ACP launcher."
       },
-      "sourceDigest": "sha256:622e32acac52d2f7581b9df796669e306204436dd1ee0b4540cf91d7e31b311b"
+      "sourceDigest": "sha256:31a06098ed2da7f769ae13528fae13dc5f6b8ce65c724ad3ad20e55ccb9ce74b"
     }
   ],
   "ownership": [

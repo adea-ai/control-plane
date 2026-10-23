@@ -9,6 +9,7 @@ import {
   InMemoryRuntimeEventEffectSink,
 } from '@control-plane/events'
 import { golden } from '@control-plane/runtime-gateway-protocol/fixtures'
+import { SqlitePersistenceProvider } from '@control-plane/sqlite-persistence'
 import {
   RuntimeNodeChannelAuthenticator,
   SyntheticRuntimeNodeIdentityAuthority,
@@ -20,6 +21,7 @@ import {
 } from './websocket-lifecycle.ts'
 
 const ownedDirectories = new Set()
+const TEST_CREDENTIAL_NAMESPACE = 'runtime-node-credential-test-fixtures'
 
 afterEach(async () => {
   for (const directory of ownedDirectories) {
@@ -448,7 +450,7 @@ test('production composition rejects inventory after durable revocation when not
     fixture.composition.webSocketServer.start()
     socket = await fixture.connect(1)
     await fixture.waitForFrame(socket, (frame) => frame.type === 'hello')
-    fixture.revokeActiveCredential()
+    await fixture.revokeActiveCredential()
     socket.send(JSON.stringify(golden.inventory))
 
     await fixture.until(
@@ -497,6 +499,8 @@ async function createFixture({
   const directory = await mkdtemp(join(tmpdir(), 'm11-runtime-gateway-'))
   ownedDirectories.add(directory)
   const path = join(directory, 'gateway.sqlite')
+  const testCredentialStore = new SqlitePersistenceProvider({ path })
+  await testCredentialStore.migrate()
   const executions = new InMemoryExecutionRepository()
   const lifecycle = new ExecutionLifecycleService(executions)
   let execution = await lifecycle.createExecution({
@@ -578,6 +582,62 @@ async function createFixture({
     workspaceId: expectation.workspaceId,
   })
   const validationPort = authority.validationPort()
+  const credentialAuthority = {
+    ...validationPort,
+    async validateCredentialFenceInTransaction(transaction, fence, scope) {
+      const record = await transaction.get(TEST_CREDENTIAL_NAMESPACE, fence.credentialId)
+      const value = record?.value
+      return (
+        value !== null &&
+        typeof value === 'object' &&
+        !Array.isArray(value) &&
+        value.credentialId === fence.credentialId &&
+        value.nodeId === scope.nodeId &&
+        value.workspaceId === scope.workspaceId &&
+        value.revocationVersion === fence.revocationVersion &&
+        value.revoked === false
+      )
+    },
+  }
+
+  async function persistCredential(claims) {
+    await testCredentialStore.transaction((transaction) =>
+      transaction.put({
+        namespace: TEST_CREDENTIAL_NAMESPACE,
+        id: claims.credentialId,
+        value: {
+          credentialId: claims.credentialId,
+          nodeId: claims.nodeId,
+          workspaceId: claims.workspaceId,
+          revocationVersion: claims.revocationVersion,
+          revoked: false,
+        },
+      })
+    )
+  }
+
+  async function revokeActiveCredential() {
+    if (activeCredentialId === undefined) throw new Error('NO_ACTIVE_CREDENTIAL')
+    authority.revokeCredential(activeCredentialId)
+    await testCredentialStore.transaction(async (transaction) => {
+      const current = await transaction.get(TEST_CREDENTIAL_NAMESPACE, activeCredentialId)
+      if (current === undefined) throw new Error('TEST_CREDENTIAL_STATE_MISSING')
+      const value = current.value
+      if (value === null || typeof value !== 'object' || Array.isArray(value))
+        throw new Error('TEST_CREDENTIAL_STATE_INVALID')
+      await transaction.put({
+        namespace: TEST_CREDENTIAL_NAMESPACE,
+        id: activeCredentialId,
+        expectedRevision: current.revision,
+        value: {
+          ...value,
+          revocationVersion: Number(value.revocationVersion) + 1,
+          revoked: true,
+        },
+      })
+    })
+  }
+
   const authenticator = new RuntimeNodeChannelAuthenticator({
     identityValidator: missRevocationNotifications
       ? { ...validationPort, subscribeRevocations: () => () => undefined }
@@ -617,6 +677,9 @@ async function createFixture({
           channelGeneration: generation,
         })
       },
+      // The SAME runtime-node credential source the channel authenticator
+      // trusts also fences runtime-command settlements (SQLite profile).
+      runtimeNodeCredentialAuthority: credentialAuthority,
       metrics,
       reachability: new RecordingRuntimeNodeReachabilityPublisher(),
       traceId: () => golden.command.traceId,
@@ -651,7 +714,7 @@ async function createFixture({
                     revokeCredentialDuringArtifactVerification &&
                     activeCredentialId !== undefined
                   ) {
-                    authority.revokeCredential(activeCredentialId)
+                    await revokeActiveCredential()
                   }
                   if (artifactDenied) throw new Error('artifact is not host-authorized')
                 },
@@ -695,10 +758,7 @@ async function createFixture({
     get metrics() {
       return metrics
     },
-    revokeActiveCredential() {
-      if (activeCredentialId === undefined) throw new Error('NO_ACTIVE_CREDENTIAL')
-      authority.revokeCredential(activeCredentialId)
-    },
+    revokeActiveCredential,
     objectStore: objectStoreStorage,
     setArtifactStoreHooks(hooks) {
       artifactStoreHooks = hooks
@@ -747,6 +807,7 @@ async function createFixture({
       generation = channelGeneration
       const issued = authority.issueCredential(device, { channelGeneration })
       activeCredentialId = issued.claims.credentialId
+      await persistCredential(issued.claims)
       const proof = device.authenticationAttempt(issued.credential, expectation.challenge)
       const socket = new WebSocket(`ws://127.0.0.1:${native.port}/runtime-gateway/v1/connect`, {
         headers: { 'x-test-node-proof': JSON.stringify(proof) },
@@ -769,6 +830,7 @@ async function createFixture({
     },
     async close() {
       for (const socket of openSockets) socket.close()
+      testCredentialStore.close()
       await composition.close()
       authenticator.close()
       objectStoreStorage.close()
