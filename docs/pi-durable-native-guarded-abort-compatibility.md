@@ -35,6 +35,23 @@ conversations. The host preparation callback returns a synchronous final guard.
 The SDK validates unsupported/missing capabilities instead of silently falling
 back to ordinary abort.
 
+Preparation receives a frozen capability facet with only `doc` and `replaceDoc`, rather than a
+native transaction. A request explicitly admits each required host document,
+its address and read/write mode through `hostDocuments`. SDK-reserved `pi.*`
+addresses are refused, including forged aliases admitted by the caller. The CP
+bridge admits only its qualification fence in read mode. Native task, input,
+conversation and entry mutation methods are unavailable during preparation.
+
+Document reads return detached, deeply frozen JSON snapshots. Read mode requires
+an existing document at the declared version and never initializes or migrates it.
+`replaceDoc`
+requires write admission and immediately copies a replacement candidate; staged
+replacements are applied only after successful preparation. The facet is revoked
+when preparation settles, including rejection, so retained references cannot
+change committed state. Native scope and receipt values remain
+detached and frozen. This boundary prevents preparation from adding an input
+that the SDK would withdraw without including it in the captured receipt.
+
 The Node SQLite implementation runs every asynchronous preparation and SQL write
 inside its transaction, then executes the final guard immediately before
 synchronous `COMMIT`, without an intervening await or callback. Guard rejection

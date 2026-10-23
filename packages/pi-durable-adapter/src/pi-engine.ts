@@ -916,6 +916,13 @@ export function createPiDurableEngine(options: PiDurableEngineOptions) {
               {
                 requestId: preparation.requestId,
                 requestDigest: preparation.requestDigest,
+                hostDocuments: [
+                  {
+                    token: QualificationFence,
+                    conversationId: candidate.root.id,
+                    mode: 'read',
+                  },
+                ],
                 metadata: {
                   targetDigest: preparation.targetDigest,
                   expiresAt: preparation.expiresAt,

@@ -166,6 +166,7 @@ function request(root, id, guard = () => {}) {
     requestId: id,
     requestDigest: digest,
     metadata: { test: 'guarded-native-abort' },
+    hostDocuments: [{ token: FenceDoc, mode: 'write' }],
     async prepare(tx, scope) {
       expect(scope.conversationId).toBe(root.id)
       expect(Object.isFrozen(scope)).toBe(true)
@@ -174,9 +175,9 @@ function request(root, id, guard = () => {}) {
       expect(Object.isFrozen(scope.conversations)).toBe(true)
       for (const task of scope.tasks) expect(Object.isFrozen(task)).toBe(true)
       const doc = await tx.doc(FenceDoc)
-      doc.admissions.push(id)
-      // Draft overlays settle before final SQL admission; retain a scalar snapshot
-      // from this serialized Session mutation, not a live draft reference.
+      await tx.replaceDoc(FenceDoc, { ...doc, admissions: [...doc.admissions, id] })
+      // Preparation receives detached snapshots; retain a scalar restriction
+      // from this serialized Session mutation for final SQL admission.
       const restricted = doc.restrictions.length !== 0
       return () => {
         if (restricted) throw new Error('FENCED')
@@ -197,6 +198,521 @@ const installFence = (root, id) =>
   )
 
 describe('explicit guarded native abort SDK compatibility on disposable Node SQLite', () => {
+  test('preparation facet exposes no native transaction capabilities', async () => {
+    await fixture(async (f) => {
+      const { taskId } = await f.seed()
+      const before = await state(f.current, taskId)
+      await expect(
+        f.current.root.commitAbort(
+          {
+            requestId: 'facet-capabilities',
+            requestDigest: digest,
+            prepare(facet) {
+              for (const name of [
+                'createTask',
+                'createSubmission',
+                'createConversation',
+                'forkConversation',
+                'appendEntry',
+                'settleSubmission',
+                'placeSubmission',
+                'setTask',
+                'retireDoc',
+                'conversation',
+                'entry',
+                'task',
+                'scanConversations',
+                'scanEntries',
+                'scanTasks',
+                'latestHeadMarker',
+                'submissionByRequest',
+                'commit',
+                'commitWith',
+                'commitGuarded',
+                'storage',
+              ])
+                expect(facet[name]).toBeUndefined()
+              expect(Object.getPrototypeOf(facet)).toBeNull()
+              expect(Object.isFrozen(facet)).toBe(true)
+              expect(Object.keys(facet).toSorted()).toEqual(['doc', 'replaceDoc'])
+              expect(Object.getPrototypeOf(facet.doc)).toBeNull()
+              expect(Object.isFrozen(facet.doc)).toBe(true)
+              expect(Object.getPrototypeOf(facet.replaceDoc)).toBeNull()
+              expect(Object.isFrozen(facet.replaceDoc)).toBe(true)
+              return () => {
+                throw new Error('FACET_VERIFIED_NO_ABORT')
+              }
+            },
+          },
+          context
+        )
+      ).rejects.toThrow('FACET_VERIFIED_NO_ABORT')
+      expect(await state(f.current, taskId)).toEqual(before)
+      expect(await f.current.root.readAbortReceipt('facet-capabilities', context)).toBeUndefined()
+    })
+  })
+
+  test('a queued input cannot be added after scope capture and silently omitted from the abort receipt', async () => {
+    await fixture(async (f) => {
+      const { taskId, submissionId } = await f.seed()
+      const before = await state(f.current, taskId)
+      await expect(
+        f.current.root.commitAbort(
+          {
+            requestId: 'late-queued-input',
+            requestDigest: digest,
+            hostDocuments: [{ token: FenceDoc, mode: 'write' }],
+            async prepare(facet, scope) {
+              expect(scope.queuedInputs.map((input) => input.id)).toEqual([submissionId])
+              const doc = await facet.doc(FenceDoc)
+              await facet.replaceDoc(FenceDoc, { ...doc, admissions: ['must-roll-back'] })
+              // This was possible with the full Tx: the new input was withdrawn by N
+              // but absent from N's captured queuedInputIds. It must now be impossible.
+              await facet.createSubmission({
+                conversationId: f.current.root.id,
+                requestId: 'created-after-capture',
+                type: 'input',
+                status: 'queued',
+              })
+              return () => {}
+            },
+          },
+          context
+        )
+      ).rejects.toThrow('createSubmission')
+      expect(await state(f.current, taskId)).toEqual(before)
+      expect(await f.current.root.readAbortReceipt('late-queued-input', context)).toBeUndefined()
+      expect(
+        await f.current.root.commit(
+          (tx) => tx.submissionByRequest(f.current.root.id, 'created-after-capture'),
+          context
+        )
+      ).toBeUndefined()
+      expect(
+        (await f.current.harness.snapshot(InboxDoc, f.current.root.id, context)).items.map(
+          (item) => item.id
+        )
+      ).toEqual([submissionId])
+      expect(f.calls).toEqual({ work: [], abort: [] })
+    })
+  })
+
+  test('host documents require an exact explicitly declared token and access mode', async () => {
+    await fixture(async (f) => {
+      const { taskId } = await f.seed()
+      const before = await state(f.current, taskId)
+      const sameAddress = defineDoc({
+        kind: FenceDoc.definition.kind,
+        scope: 'session',
+        version: 1,
+        initial: () => ({ restrictions: [], admissions: [] }),
+      })
+      for (const [id, declarations, token] of [
+        ['undeclared-host', [], FenceDoc],
+        ['forged-host-identity', [{ token: FenceDoc, mode: 'write' }], sameAddress],
+      ]) {
+        await expect(
+          f.current.root.commitAbort(
+            {
+              requestId: id,
+              requestDigest: digest,
+              hostDocuments: declarations,
+              async prepare(facet) {
+                await facet.doc(token)
+                return () => {}
+              },
+            },
+            context
+          )
+        ).rejects.toThrow()
+        expect(await state(f.current, taskId)).toEqual(before)
+        expect(await f.current.root.readAbortReceipt(id, context)).toBeUndefined()
+      }
+    })
+  })
+
+  for (const [label, token, conversationScoped] of [
+    ['genuine-inbox', InboxDoc, true],
+    [
+      'forged-inbox',
+      defineDoc({
+        kind: 'pi.inbox',
+        scope: 'conversation',
+        history: 'latest',
+        fork: 'initial',
+        version: 1,
+        initial: () => ({ items: [] }),
+      }),
+      true,
+    ],
+    [
+      'forged-receipts',
+      defineDoc({
+        kind: 'pi.guarded-abort-receipts',
+        scope: 'session',
+        version: 1,
+        initial: () => ({ receipts: [] }),
+      }),
+      false,
+    ],
+  ])
+    test(`preparation rejects reserved SDK document address ${label} even when explicitly declared`, async () => {
+      await fixture(async (f) => {
+        const { taskId } = await f.seed()
+        const before = await state(f.current, taskId)
+        let acquiredReserved = false
+        const declaration = {
+          token,
+          mode: 'write',
+          ...(conversationScoped ? { conversationId: f.current.root.id } : {}),
+        }
+        await expect(
+          f.current.root.commitAbort(
+            {
+              requestId: label,
+              requestDigest: digest,
+              hostDocuments: [declaration],
+              async prepare(facet) {
+                const value = conversationScoped
+                  ? await facet.doc(token, f.current.root.id)
+                  : await facet.doc(token)
+                acquiredReserved = true
+                if (conversationScoped) value.items.length = 0
+                else value.receipts.push({ requestId: 'forged-success' })
+                return () => {}
+              },
+            },
+            context
+          )
+        ).rejects.toThrow()
+        expect(await state(f.current, taskId)).toEqual(before)
+        expect(acquiredReserved).toBe(false)
+        expect(await f.current.root.readAbortReceipt(label, context)).toBeUndefined()
+        expect(await f.current.root.readAbortReceipt('forged-success', context)).toBeUndefined()
+        expect(f.calls).toEqual({ work: [], abort: [] })
+      })
+    })
+
+  test('duplicate canonical host addresses and getter-based definitions reject before preparation', async () => {
+    await fixture(async (f) => {
+      const { taskId } = await f.seed()
+      const before = await state(f.current, taskId)
+      const alias = defineDoc({ ...FenceDoc.definition })
+      const newerAlias = defineDoc({ ...FenceDoc.definition, version: 2 })
+      let getterReads = 0
+      const getterDefinition = { scope: 'session', version: 1, initial: () => ({}) }
+      Object.defineProperty(getterDefinition, 'kind', {
+        enumerable: true,
+        get() {
+          getterReads += 1
+          return 'pi.inbox'
+        },
+      })
+      for (const [label, hostDocuments, error] of [
+        [
+          'same-token-read-write',
+          [
+            { token: FenceDoc, mode: 'read' },
+            { token: FenceDoc, mode: 'write' },
+          ],
+          'PI_GUARDED_ABORT_DUPLICATE_HOST_DOCUMENT',
+        ],
+        [
+          'alias-read-write',
+          [
+            { token: FenceDoc, mode: 'read' },
+            { token: alias, mode: 'write' },
+          ],
+          'PI_GUARDED_ABORT_DUPLICATE_HOST_DOCUMENT',
+        ],
+        [
+          'alias-different-version',
+          [
+            { token: FenceDoc, mode: 'read' },
+            { token: newerAlias, mode: 'write' },
+          ],
+          'PI_GUARDED_ABORT_DUPLICATE_HOST_DOCUMENT',
+        ],
+        [
+          'getter-definition',
+          [{ token: { definition: getterDefinition }, mode: 'write' }],
+          'own data fields',
+        ],
+      ]) {
+        let prepared = false
+        await expect(
+          f.current.root.commitAbort(
+            {
+              requestId: label,
+              requestDigest: digest,
+              hostDocuments,
+              prepare() {
+                prepared = true
+                return () => {}
+              },
+            },
+            context
+          )
+        ).rejects.toThrow(error)
+        expect(prepared).toBe(false)
+        expect(await state(f.current, taskId)).toEqual(before)
+        expect(await f.current.root.readAbortReceipt(label, context)).toBeUndefined()
+      }
+      expect(getterReads).toBe(0)
+      expect(f.calls).toEqual({ work: [], abort: [] })
+    })
+  })
+
+  test('mutating an allowed token definition cannot redirect its captured host address to native documents', async () => {
+    await fixture(async (f) => {
+      const previous = await f.current.root.commitAbort(
+        request(f.current.root, 'retained-before-token-mutation'),
+        context
+      )
+      await f.current.root.commit((tx) => tx.doc(InboxDoc, f.current.root.id), context)
+      const inbox = await f.current.harness.snapshot(InboxDoc, f.current.root.id, context)
+      for (const reserved of ['pi.inbox', 'pi.guarded-abort-receipts']) {
+        const label = reserved === 'pi.inbox' ? 'inbox' : 'receipts'
+        const definition = {
+          kind: `cp.test.captured-host-${label}`,
+          scope: 'session',
+          version: 1,
+          initial: () => ({ nested: { pin: 'original' } }),
+        }
+        const token = defineDoc(definition)
+        const stableReader = defineDoc({ ...definition })
+        await f.current.root.commit((tx) => tx.doc(stableReader), context)
+        const receipt = await f.current.root.commitAbort(
+          {
+            requestId: `mutated-token-${label}`,
+            requestDigest: digest,
+            hostDocuments: [{ token, mode: 'write' }],
+            async prepare(facet) {
+              definition.kind = reserved
+              if (reserved === 'pi.inbox') {
+                definition.scope = 'conversation'
+                definition.history = 'latest'
+                definition.fork = 'initial'
+              }
+              expect(await facet.doc(token)).toEqual({ nested: { pin: 'original' } })
+              await facet.replaceDoc(token, { nested: { pin: 'updated-host-only' } })
+              return () => {}
+            },
+          },
+          context
+        )
+        expect(receipt).toMatchObject({
+          requestId: `mutated-token-${label}`,
+          taskIds: [],
+          queuedInputIds: [],
+        })
+        expect(await f.current.harness.snapshot(stableReader, context)).toEqual({
+          nested: { pin: 'updated-host-only' },
+        })
+        expect(await f.current.harness.snapshot(InboxDoc, f.current.root.id, context)).toEqual(
+          inbox
+        )
+        expect(
+          await f.current.root.readAbortReceipt('retained-before-token-mutation', context)
+        ).toEqual(previous)
+        expect(await f.current.root.readAbortReceipt(`mutated-token-${label}`, context)).toEqual(
+          receipt
+        )
+        expect(await f.current.root.readAbortReceipt('forged-success', context)).toBeUndefined()
+      }
+      expect(f.calls).toEqual({ work: [], abort: [] })
+    })
+  })
+
+  test('read-only host document copies and nested native scope records cannot mutate retained state', async () => {
+    await fixture(async (f) => {
+      const { taskId } = await f.seed()
+      await f.current.root.commit(async (tx) => {
+        const doc = await tx.doc(FenceDoc)
+        doc.admissions.push('retained')
+      }, context)
+      const before = await state(f.current, taskId)
+      await expect(
+        f.current.root.commitAbort(
+          {
+            requestId: 'read-only',
+            requestDigest: digest,
+            hostDocuments: [{ token: FenceDoc, mode: 'read' }],
+            async prepare(facet, scope) {
+              const doc = await facet.doc(FenceDoc)
+              expect(Object.isFrozen(doc)).toBe(true)
+              expect(Object.isFrozen(doc.admissions)).toBe(true)
+              expect(() => doc.admissions.push('forged-write')).toThrow()
+              await expect(
+                Promise.resolve().then(() =>
+                  facet.replaceDoc(FenceDoc, { ...doc, admissions: ['forged-write'] })
+                )
+              ).rejects.toThrow('PI_GUARDED_ABORT_HOST_DOCUMENT_DENIED')
+              expect(Object.isFrozen(scope.tasks[0].state)).toBe(true)
+              expect(Object.isFrozen(scope.tasks[0].state.checkpoint)).toBe(true)
+              expect(() => {
+                scope.tasks[0].state.checkpoint.label = 'forged-task'
+              }).toThrow()
+              expect(Object.isFrozen(scope.queuedInputs[0])).toBe(true)
+              expect(() => {
+                scope.queuedInputs[0].status = 'unanswered'
+              }).toThrow()
+              return () => {
+                throw new Error('READ_ONLY_VERIFIED_NO_ABORT')
+              }
+            },
+          },
+          context
+        )
+      ).rejects.toThrow('READ_ONLY_VERIFIED_NO_ABORT')
+      expect(await state(f.current, taskId)).toEqual(before)
+      expect(await f.current.root.readAbortReceipt('read-only', context)).toBeUndefined()
+    })
+  })
+
+  test('read-only host document access cannot migrate and rewrite a retained older document', async () => {
+    await fixture(async (f) => {
+      const { taskId } = await f.seed()
+      let migrations = 0
+      const v1 = defineDoc({
+        kind: 'cp.test.read-only-host-version',
+        scope: 'session',
+        version: 1,
+        initial: () => ({ nested: { pin: 'original' } }),
+      })
+      const v2 = defineDoc({
+        kind: 'cp.test.read-only-host-version',
+        scope: 'session',
+        version: 2,
+        initial: () => ({ nested: { pin: 'v2' } }),
+        migrate(value) {
+          migrations += 1
+          return { ...value, nested: { pin: 'migrated' } }
+        },
+      })
+      await f.current.root.commit((tx) => tx.doc(v1), context)
+      const before = await state(f.current, taskId)
+      await expect(
+        f.current.root.commitAbort(
+          {
+            requestId: 'read-version-conflict',
+            requestDigest: digest,
+            hostDocuments: [{ token: v2, mode: 'read' }],
+            async prepare(facet) {
+              await facet.doc(v2)
+              return () => {}
+            },
+          },
+          context
+        )
+      ).rejects.toThrow('PI_GUARDED_ABORT_HOST_DOCUMENT_VERSION_CONFLICT')
+      expect(migrations).toBe(0)
+      expect(await state(f.current, taskId)).toEqual(before)
+      expect(await f.current.harness.snapshot(v1, context)).toEqual({ nested: { pin: 'original' } })
+      expect(
+        await f.current.root.readAbortReceipt('read-version-conflict', context)
+      ).toBeUndefined()
+      const reopened = await f.reopen()
+      // The v1 reader rejects newer stored versions; this successful reread also
+      // proves that the failed read neither migrated nor rewrote retained bytes.
+      expect(await reopened.harness.snapshot(v1, context)).toEqual({ nested: { pin: 'original' } })
+      expect(migrations).toBe(0)
+      expect(await reopened.root.readAbortReceipt('read-version-conflict', context)).toBeUndefined()
+      expect(f.calls).toEqual({ work: [], abort: [] })
+    })
+  })
+
+  test('replaceDoc detaches nested caller-owned candidates before asynchronous staging', async () => {
+    await fixture(async (f) => {
+      await f.current.root.commitAbort(
+        {
+          requestId: 'detached-candidate',
+          requestDigest: digest,
+          hostDocuments: [{ token: FenceDoc, mode: 'write' }],
+          async prepare(facet) {
+            const doc = await facet.doc(FenceDoc)
+            const candidate = { ...doc, admissions: ['prepared'] }
+            const staged = facet.replaceDoc(FenceDoc, candidate)
+            candidate.admissions.push('mutated-after-call')
+            await staged
+            return () => {}
+          },
+        },
+        context
+      )
+      expect((await f.current.harness.snapshot(FenceDoc, context)).admissions).toEqual(['prepared'])
+      expect(await f.current.root.readAbortReceipt('detached-candidate', context)).toMatchObject({
+        taskIds: [],
+        queuedInputIds: [],
+      })
+    })
+  })
+
+  for (const outcome of ['resolved', 'rejected'])
+    test(`preparation ${outcome} revokes cached facade and nested host document references`, async () => {
+      await fixture(async (f) => {
+        let savedFacet
+        let nested
+        let lateChecked = false
+        const attempt = {
+          requestId: `deferred-${outcome}`,
+          requestDigest: digest,
+          hostDocuments: [{ token: FenceDoc, mode: 'write' }],
+          async prepare(facet) {
+            savedFacet = facet
+            const doc = await facet.doc(FenceDoc)
+            nested = doc.admissions
+            await facet.replaceDoc(FenceDoc, {
+              ...doc,
+              admissions: [...doc.admissions, 'prepared'],
+            })
+            if (outcome === 'rejected') throw new Error('PREPARATION_REJECTED')
+            return () => {}
+          },
+        }
+        if (outcome === 'resolved')
+          f.afterSqlPreparation(async () => {
+            expect(Object.isFrozen(nested)).toBe(true)
+            expect(() => nested.push('late-before-commit')).toThrow()
+            await expect(Promise.resolve().then(() => savedFacet.doc(FenceDoc))).rejects.toThrow(
+              'PI_GUARDED_ABORT_PREPARATION_REVOKED'
+            )
+            await expect(
+              Promise.resolve().then(() =>
+                savedFacet.replaceDoc(FenceDoc, { restrictions: [], admissions: ['late'] })
+              )
+            ).rejects.toThrow('PI_GUARDED_ABORT_PREPARATION_REVOKED')
+            lateChecked = true
+          })
+        if (outcome === 'resolved') await f.current.root.commitAbort(attempt, context)
+        else
+          await expect(f.current.root.commitAbort(attempt, context)).rejects.toThrow(
+            'PREPARATION_REJECTED'
+          )
+        f.afterSqlPreparation(undefined)
+        expect(Object.isFrozen(nested)).toBe(true)
+        expect(() => nested.push('late-after-return')).toThrow()
+        await expect(Promise.resolve().then(() => savedFacet.doc(FenceDoc))).rejects.toThrow(
+          'PI_GUARDED_ABORT_PREPARATION_REVOKED'
+        )
+        await expect(
+          Promise.resolve().then(() =>
+            savedFacet.replaceDoc(FenceDoc, { restrictions: [], admissions: ['late'] })
+          )
+        ).rejects.toThrow('PI_GUARDED_ABORT_PREPARATION_REVOKED')
+        if (outcome === 'resolved') {
+          expect(lateChecked).toBe(true)
+          expect((await f.current.harness.snapshot(FenceDoc, context)).admissions).toEqual([
+            'prepared',
+          ])
+        } else {
+          expect(await f.current.harness.snapshot(FenceDoc, context)).toBeUndefined()
+          expect(await f.current.root.readAbortReceipt(attempt.requestId, context)).toBeUndefined()
+          expect((await f.current.harness.inspect(context)).scheduling).toBe('paused')
+        }
+      })
+    })
+
   test('guard rejection rolls back task, input, host document and receipt without resuming a paused harness', async () => {
     await fixture(async (f) => {
       const { taskId } = await f.seed()

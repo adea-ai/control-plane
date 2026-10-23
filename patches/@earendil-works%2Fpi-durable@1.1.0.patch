@@ -1,9 +1,9 @@
 diff --git a/dist/harness/guarded-abort.js b/dist/harness/guarded-abort.js
 new file mode 100644
-index 0000000000000000000000000000000000000000..270db6b63727857c4db78171de317f04527bcc54
+index 0000000000000000000000000000000000000000..02c0bb57cf515b91e23e627ede30eace80068718
 --- /dev/null
 +++ b/dist/harness/guarded-abort.js
-@@ -0,0 +1,38 @@
+@@ -0,0 +1,207 @@
 +// Additive Control Plane compatibility extension to Pi Durable 1.1.0.
 +// Scope: one owning Session mutation line; no external/all-writer authority is supplied.
 +import { copyJson } from "@earendil-works/chord";
@@ -27,13 +27,13 @@ index 0000000000000000000000000000000000000000..270db6b63727857c4db78171de317f04
 +    };
 +    return freeze(result);
 +}
-+export function normalizeAbortRequest(request) {
++export function normalizeAbortRequest(request, conversationId) {
 +    if (request === null || typeof request !== "object" || Object.getPrototypeOf(request) !== Object.prototype) throw new TypeError("Invalid guarded abort request");
-+    if (Object.keys(request).some((key) => !["requestId", "requestDigest", "metadata", "prepare"].includes(key))) throw new TypeError("Unknown guarded abort request field");
++    if (Object.keys(request).some((key) => !["requestId", "requestDigest", "metadata", "hostDocuments", "prepare"].includes(key))) throw new TypeError("Unknown guarded abort request field");
 +    if (typeof request.prepare !== "function") throw new TypeError("Guarded abort requires prepare");
 +    const metadata = detached(request.metadata ?? {});
 +    if (metadata === null || Array.isArray(metadata) || typeof metadata !== "object") throw new TypeError("Guarded abort metadata must be an object");
-+    return { requestId: reference(request.requestId), requestDigest: reference(request.requestDigest), metadata, prepare: request.prepare };
++    return { requestId: reference(request.requestId), requestDigest: reference(request.requestDigest), metadata, hostDocuments: normalizeHostDocuments(request.hostDocuments ?? [], conversationId), prepare: request.prepare };
 +}
 +export function sameJson(left, right) {
 +    if (left === right) return true;
@@ -41,6 +41,175 @@ index 0000000000000000000000000000000000000000..270db6b63727857c4db78171de317f04
 +    if (Array.isArray(left) !== Array.isArray(right)) return false;
 +    const keys = Object.keys(left);
 +    return keys.length === Object.keys(right).length && keys.every((key) => Object.hasOwn(right, key) && sameJson(left[key], right[key]));
++}
++
++function ownData(object, key, required = true) {
++    const descriptor = Object.getOwnPropertyDescriptor(object, key);
++    if (descriptor === undefined && !required) return undefined;
++    if (descriptor === undefined || !("value" in descriptor)) throw new TypeError("Host document permissions require own data fields");
++    return descriptor.value;
++}
++function plain(object) {
++    return object !== null && typeof object === "object" && [null, Object.prototype].includes(Object.getPrototypeOf(object));
++}
++function normalizeHostDocuments(entries, conversationId) {
++    if (!Array.isArray(entries) || entries.length > 64) throw new TypeError("Invalid host document permissions");
++    const permissions = [];
++    const addresses = new Set();
++    const tokens = new Set();
++    for (let index = 0; index < entries.length; index++) {
++        const entry = ownData(entries, String(index));
++        if (!plain(entry) || Reflect.ownKeys(entry).some((key) => !["token", "mode", "conversationId"].includes(key))) throw new TypeError("Invalid host document permission");
++        const token = ownData(entry, "token");
++        const mode = ownData(entry, "mode");
++        const selectedConversation = ownData(entry, "conversationId", false);
++        if (!plain(token) || !["read", "write"].includes(mode)) throw new TypeError("Invalid host document permission");
++        const originalDefinition = ownData(token, "definition");
++        if (!plain(originalDefinition)) throw new TypeError("Invalid host document definition");
++        const definition = Object.create(null);
++        const fields = ["kind", "scope", "version", "history", "fork", "initial", "migrate", "checkpointWhen"];
++        for (const key of Reflect.ownKeys(originalDefinition)) {
++            if (!fields.includes(key)) throw new TypeError("Unsupported host document definition");
++            definition[key] = ownData(originalDefinition, key);
++        }
++        const kind = reference(definition.kind);
++        if (kind.startsWith("pi.")) throw new Error("PI_GUARDED_ABORT_RESERVED_DOCUMENT");
++        if (!Number.isSafeInteger(definition.version) || definition.version < 1 || typeof definition.initial !== "function") throw new TypeError("Invalid host document definition");
++        for (const key of ["migrate", "checkpointWhen"]) if (definition[key] !== undefined && typeof definition[key] !== "function") throw new TypeError("Invalid host document callback");
++        let address;
++        if (definition.scope === "session") {
++            if (selectedConversation !== undefined || definition.history !== undefined || definition.fork !== undefined) throw new TypeError("Invalid session host document address");
++            address = { kind, scope: { kind: "session" } };
++        } else if (definition.scope === "conversation") {
++            if (selectedConversation !== conversationId || !["latest", "rewindable"].includes(definition.history) || !["current", "initial", "asOf"].includes(definition.fork)) throw new TypeError("Invalid conversation host document address");
++            address = { kind, scope: { kind: "conversation", conversationId } };
++        } else throw new TypeError("Only session/current-conversation host documents are permitted");
++        const addressKey = JSON.stringify(address);
++        if (tokens.has(token) || addresses.has(addressKey)) throw new Error("PI_GUARDED_ABORT_DUPLICATE_HOST_DOCUMENT");
++        tokens.add(token);
++        addresses.add(addressKey);
++        const capturedToken = Object.freeze(Object.assign(Object.create(null), { definition: Object.freeze(definition) }));
++        permissions.push(Object.freeze({ token, capturedToken, mode, address: detached(address), conversationId: selectedConversation }));
++    }
++    return Object.freeze(permissions);
++}
++// Host candidates are pure data. In particular no getter, raw capability, borrowed
++// nested reference or caller-controlled prototype survives this copy.
++function hostJson(value, seen = new Set()) {
++    if (value === null || typeof value === "string" || typeof value === "boolean") return value;
++    if (typeof value === "number" && Number.isFinite(value)) return value;
++    if (typeof value !== "object" || value === null || seen.has(value)) throw new TypeError("Host document must contain acyclic JSON data");
++    const array = Array.isArray(value);
++    if (!array && !plain(value)) throw new TypeError("Host document must contain plain JSON data");
++    seen.add(value);
++    const result = array ? [] : Object.create(null);
++    const keys = array ? Array.from({ length: value.length }, (_, index) => String(index)) : Reflect.ownKeys(value);
++    if (array && Reflect.ownKeys(value).some((key) => key !== "length" && !keys.includes(key))) throw new TypeError("Invalid host document array");
++    for (const key of keys) {
++        if (typeof key !== "string") throw new TypeError("Host document keys must be strings");
++        const child = hostJson(ownData(value, key), seen);
++        Object.defineProperty(result, key, { value: child, enumerable: true, writable: true, configurable: true });
++    }
++    seen.delete(value);
++    return result;
++}
++function frozenHostJson(value) {
++    const copy = hostJson(value);
++    const freeze = (item) => {
++        if (item !== null && typeof item === "object") {
++            for (const child of Object.values(item)) freeze(child);
++            Object.freeze(item);
++        }
++        return item;
++    };
++    return freeze(copy);
++}
++export function createAbortPreparation(tx, permissions, storage, context) {
++    let active = true;
++    const pending = new Set();
++    const loaded = new Map();
++    const assertActive = () => {
++        if (!active) throw new Error("PI_GUARDED_ABORT_PREPARATION_REVOKED");
++    };
++    const permissionFor = (token, args, write) => {
++        const permission = permissions.find((item) => item.token === token);
++        if (permission === undefined || (write && permission.mode !== "write")) throw new Error("PI_GUARDED_ABORT_HOST_DOCUMENT_DENIED");
++        const expected = permission.address.scope.kind === "session" ? [] : [permission.conversationId];
++        if (args.length !== expected.length || args.some((value, index) => value !== expected[index])) throw new Error("PI_GUARDED_ABORT_HOST_DOCUMENT_DENIED");
++        return permission;
++    };
++    const acquire = async (permission) => {
++        let entry = loaded.get(permission);
++        if (entry === undefined) {
++            entry = {};
++            loaded.set(permission, entry);
++            entry.promise = (async () => {
++                if (permission.mode === "read") {
++                    const record = await storage.findDocument(permission.address, "current", context);
++                    assertActive();
++                    if (record === undefined) throw new Error("PI_GUARDED_ABORT_HOST_DOCUMENT_MISSING");
++                    const stored = await storage.document(record.id, "current", context);
++                    assertActive();
++                    if (stored === undefined || stored.version !== permission.capturedToken.definition.version || stored.record.kind !== permission.address.kind || stored.record.key !== undefined || !sameJson(stored.record.scope, permission.address.scope) || (permission.address.scope.kind === "conversation" && (stored.record.history !== permission.capturedToken.definition.history || stored.record.fork !== permission.capturedToken.definition.fork))) throw new Error("PI_GUARDED_ABORT_HOST_DOCUMENT_VERSION_CONFLICT");
++                    entry.snapshot = frozenHostJson(stored.value);
++                    return entry;
++                }
++                assertActive();
++                const args = permission.address.scope.kind === "session" ? [] : [permission.conversationId];
++                const draft = await tx.doc(permission.capturedToken, ...args);
++                assertActive();
++                entry.draft = draft;
++                entry.snapshot = frozenHostJson(copyJson(draft));
++                return entry;
++            })();
++        }
++        return entry.promise;
++    };
++    const track = (operation) => {
++        pending.add(operation);
++        operation.then(() => pending.delete(operation), () => pending.delete(operation));
++        // A callback that forgets to await must not produce an unhandled rejection.
++        operation.catch(() => {});
++        return operation;
++    };
++    const doc = (token, ...args) => {
++        assertActive();
++        const permission = permissionFor(token, args, false);
++        return track((async () => {
++            const entry = await acquire(permission);
++            assertActive();
++            return entry.replacement ?? entry.snapshot;
++        })());
++    };
++    const replaceDoc = (token, candidate, ...args) => {
++        assertActive();
++        const permission = permissionFor(token, args, true);
++        const replacement = frozenHostJson(candidate);
++        if (replacement === null || Array.isArray(replacement) || typeof replacement !== "object") throw new TypeError("Host document root must be an object");
++        return track((async () => {
++            const entry = await acquire(permission);
++            assertActive();
++            entry.replacement = replacement;
++        })());
++    };
++    Object.setPrototypeOf(doc, null);
++    Object.setPrototypeOf(replaceDoc, null);
++    const facet = Object.freeze(Object.assign(Object.create(null), { doc: Object.freeze(doc), replaceDoc: Object.freeze(replaceDoc) }));
++    return {
++        facet,
++        async finish(success) {
++            active = false;
++            const unfinished = [...pending];
++            await Promise.allSettled(unfinished);
++            if (success && unfinished.length !== 0) throw new Error("PI_GUARDED_ABORT_PREPARATION_PENDING");
++            if (!success) return;
++            for (const entry of loaded.values()) {
++                if (entry.replacement === undefined) continue;
++                for (const key of Object.keys(entry.draft)) delete entry.draft[key];
++                for (const key of Object.keys(entry.replacement)) entry.draft[key] = hostJson(entry.replacement[key]);
++            }
++        },
++    };
 +}
 diff --git a/dist/harness/harness.js b/dist/harness/harness.js
 index fda8aa1e318bdecd77d11ca019217d6c43cfef01..1ae24ef0dbc6676e774cccb862d0143b0f128377 100644
@@ -86,22 +255,22 @@ index c485fb9c12cceec9448762f7bc05b67d6ca916d2..fb07f5e45830c6da045ae9bd3ef74da4
 -//# sourceMappingURL=scheduler.d.ts.map
 \ No newline at end of file
 diff --git a/dist/harness/scheduler.js b/dist/harness/scheduler.js
-index 6cfe05a35de48c02e98ad07806fb74f2ee80de59..96ae5602026a2a1d72c7204f42f76a3d7fe07cd8 100644
+index 6cfe05a35de48c02e98ad07806fb74f2ee80de59..8b41177f8324c710f607fb59a16e21f9d6c7bc6e 100644
 --- a/dist/harness/scheduler.js
 +++ b/dist/harness/scheduler.js
 @@ -1,5 +1,6 @@
  import { copyJson } from "@earendil-works/chord";
  import { awaitWithContext, withAbortSignal } from "@earendil-works/chord/context";
-+import { GuardedAbortReceiptsDoc, detached, normalizeAbortRequest, reference, sameJson } from "./guarded-abort.js";
++import { GuardedAbortReceiptsDoc, createAbortPreparation, detached, normalizeAbortRequest, reference, sameJson } from "./guarded-abort.js";
  import { agentHooks } from "./agent.js";
  import { readContextFrom } from "./context.js";
  import { closedError, scanAll, Waiters } from "./util.js";
-@@ -183,6 +184,75 @@ export class TaskScheduler {
+@@ -183,6 +184,82 @@ export class TaskScheduler {
       * ordinary traversal from the conversation reaches; resolves once the scope is idle. With `background`, traversal
       * crosses background boundaries, and the wait also covers every task it reached.
       */
 +    async commitConversationAbort(conversationId, draft, context) {
-+        const request = normalizeAbortRequest(draft);
++        const request = normalizeAbortRequest(draft, conversationId);
 +        if (typeof this.#storage.commitGuarded !== "function") throw new Error("PI_GUARDED_COMMIT_UNAVAILABLE");
 +        let finalGuard;
 +        let newlyCommitted = false;
@@ -139,7 +308,14 @@ index 6cfe05a35de48c02e98ad07806fb74f2ee80de59..96ae5602026a2a1d72c7204f42f76a3d
 +                conversations.push(record);
 +            }
 +            const snapshot = detached({ conversationId, background: false, tasks, queuedInputs, conversations });
-+            finalGuard = await request.prepare(tx, snapshot);
++            const preparation = createAbortPreparation(tx, request.hostDocuments, this.#storage, context);
++            let preparedSuccessfully = false;
++            try {
++                finalGuard = await request.prepare(preparation.facet, snapshot);
++                preparedSuccessfully = true;
++            } finally {
++                await preparation.finish(preparedSuccessfully);
++            }
 +            if (typeof finalGuard !== "function") throw new TypeError("Guarded abort prepare must return a synchronous final guard");
 +            for (const record of tasks) if (!record.abortRequested) tx.setTask({ ...record, abortRequested: true });
 +            for (const id of new Set(queuedInputs.map((input) => input.conversationId))) await this.#withdrawInputs(tx, id);
@@ -172,17 +348,26 @@ index 6cfe05a35de48c02e98ad07806fb74f2ee80de59..96ae5602026a2a1d72c7204f42f76a3d
      async abortConversation(conversationId, background, context) {
          const reached = await this.#session.commitWith(async (tx) => {
              const queued = await this.#loadScopes(true);
-@@ -1269,4 +1339,3 @@ function jsonEqual(left, right) {
+@@ -1269,4 +1346,3 @@ function jsonEqual(left, right) {
          return false;
      return keys.every((key) => Object.hasOwn(right, key) && jsonEqual(left[key], right[key]));
  }
 -//# sourceMappingURL=scheduler.js.map
 \ No newline at end of file
 diff --git a/dist/harness/types.d.ts b/dist/harness/types.d.ts
-index b8c1e3749a808e9c91a8d9e0e987b0680cdcbe67..9453da5e3c18d4b12be5f6539fe6910199fb060d 100644
+index b8c1e3749a808e9c91a8d9e0e987b0680cdcbe67..a45916df3b2925959ce19d165d57a347a2e1820b 100644
 --- a/dist/harness/types.d.ts
 +++ b/dist/harness/types.d.ts
-@@ -454,7 +454,41 @@ export type ContextView = {
+@@ -1,7 +1,7 @@
+ import type { AttachedReplicatedState, Context, JsonValue } from "@earendil-works/chord";
+ import type { AssistantMessage, CacheRetention, Message, Models, ModelThinkingLevel, Static, Tool, ToolCall, ToolResultMessage, Transport, TSchema, Usage, UserMessage } from "@earendil-works/pi-ai";
+ import type { ExecutionEnv, ShellOutputSkip, ShellOutputWindow } from "../env/index.ts";
+-import type { ConversationId, ConversationOwnership, ConversationRecord, Cursor, DocumentObserver, DocumentReader, EntryDraft, EntryId, EntryQuery, EntryRecord, JsonObject, Page, Session, SubmissionId, SubmissionRecord, Task, TaskId, TaskOptions, TaskRecord, TaskState, Tx, WatchHandle } from "../types.ts";
++import type { ConversationId, ConversationDocToken, SessionDocToken, ConversationOwnership, ConversationRecord, Cursor, DocumentObserver, DocumentReader, EntryDraft, EntryId, EntryQuery, EntryRecord, JsonObject, Page, Session, SubmissionId, SubmissionRecord, Task, TaskId, TaskOptions, TaskRecord, TaskState, Tx, WatchHandle } from "../types.ts";
+ import type { TaskGraph, TaskGraphWatch } from "./task-graph.ts";
+ import type { UsageState } from "./usage.ts";
+ import type { ConversationView } from "./view.ts";
+@@ -454,7 +454,60 @@ export type ContextView = {
      readonly messages: readonly Message[];
  };
  /** Stateless handle for one conversation, bound to the Harness that returned it. Compare handles by `id`. */
@@ -204,12 +389,31 @@ index b8c1e3749a808e9c91a8d9e0e987b0680cdcbe67..9453da5e3c18d4b12be5f6539fe69101
 +    readonly queuedInputIds: readonly SubmissionId[];
 +    readonly metadata: JsonObject;
 +};
++export type AbortPreparationReadonly<T> = T extends readonly (infer U)[] ? readonly AbortPreparationReadonly<U>[] : T extends object ? { readonly [K in keyof T]: AbortPreparationReadonly<T[K]> } : T;
++export type AbortHostDocumentAccess = {
++    readonly token: SessionDocToken<JsonObject>;
++    readonly mode: "read" | "write";
++    readonly conversationId?: never;
++} | {
++    readonly token: ConversationDocToken<JsonObject>;
++    readonly mode: "read" | "write";
++    readonly conversationId: ConversationId;
++};
++/** Revocable preparation-only document facet. No native transaction methods are exposed. */
++export interface AbortPreparationFacet {
++    doc<T extends JsonObject>(token: SessionDocToken<T>): Promise<AbortPreparationReadonly<T>>;
++    doc<T extends JsonObject>(token: ConversationDocToken<T>, conversationId: ConversationId): Promise<AbortPreparationReadonly<T>>;
++    replaceDoc<T extends JsonObject>(token: SessionDocToken<T>, candidate: T): Promise<void>;
++    replaceDoc<T extends JsonObject>(token: ConversationDocToken<T>, candidate: T, conversationId: ConversationId): Promise<void>;
++}
 +export type GuardedAbortRequest = {
++    /** Explicit host documents only. pi.* addresses, task/family docs, unadmitted aliases and duplicate resolved addresses are refused. Default: none. */
++    readonly hostDocuments?: readonly AbortHostDocumentAccess[];
 +    readonly requestId: string;
 +    readonly requestDigest: string;
 +    readonly metadata?: JsonObject;
-+    /** Runs before native writes on the mutation line. Return a synchronous final guard using detached scalars (Tx drafts are revoked before it runs); no outside effect may rely on this preparation. */
-+    readonly prepare: (tx: Tx, scope: AbortScopeSnapshot) => (() => void) | Promise<() => void>;
++    /** Runs before native writes on the mutation line. Return a synchronous final guard using detached scalars (the facet is revoked before it runs; snapshots stay deeply readonly); no outside effect may rely on this preparation. */
++    readonly prepare: (preparation: AbortPreparationFacet, scope: AbortScopeSnapshot) => (() => void) | Promise<() => void>;
 +};
  export interface Conversation {
 +    /** Node guarded-storage capability required; no write means no final guard invocation. */
@@ -224,14 +428,14 @@ index b8c1e3749a808e9c91a8d9e0e987b0680cdcbe67..9453da5e3c18d4b12be5f6539fe69101
      readonly id: ConversationId;
      /** Resolved with the current registry snapshot and settings. */
      agent(context: Context): Promise<Agent>;
-@@ -597,4 +631,3 @@ export interface CompactionHooks {
+@@ -597,4 +650,3 @@ export interface CompactionHooks {
          readonly summary: string;
      }>;
  }
 -//# sourceMappingURL=types.d.ts.map
 \ No newline at end of file
 diff --git a/dist/index.d.ts b/dist/index.d.ts
-index 3ac769a57ec284452ad9a380f39eb429e9d2c7e9..ec573050b95c393b349d092f34a3d9a4506dd1a8 100644
+index 3ac769a57ec284452ad9a380f39eb429e9d2c7e9..e068e3489701832ed5737e883315ce0c03e3e436 100644
 --- a/dist/index.d.ts
 +++ b/dist/index.d.ts
 @@ -13,7 +13,7 @@ export { ProviderDoc, type ProviderState } from "./harness/provider.ts";
@@ -239,7 +443,7 @@ index 3ac769a57ec284452ad9a380f39eb429e9d2c7e9..ec573050b95c393b349d092f34a3d9a4
  export type { TaskGraph, TaskGraphNode, TaskGraphState, TaskGraphWatch } from "./harness/task-graph.ts";
  export { ToolTask, type ToolTaskCheckpoint, type ToolTaskInput, type ToolTaskResult } from "./harness/tool.ts";
 -export type { Agent, AgentChange, AgentState, AnyTask, CompactionHooks, CompactionPolicy, CompactionReason, CompactionResult, ContextView, Conversation, ConversationAbortOptions, ConversationCreateOptions, ConversationHandle, ConversationInit, ConversationRetryPolicy, ConversationStreamOptions, ConversationWatch, EnvTarget, Extension, GenerationHooks, HarnessInspection, HarnessOptions, HarnessSettings, HookApi, HookRegistration, HookResult, HooksOf, InputSubmissionDraft, ModelRef, ProgressPolicy, PromptInput, PromptSection, QueueMode, Registry, RegistryReader, RegistrySnapshot, Settings, SettledSubmissionRecord, SettledTask, Submission, SubmissionDraft, TaskInspection, ToolControl, ToolDiagnostic, ToolExecutionApi, ToolExecutionMode, ToolExecutionResult, ToolHooks, ToolRegistration, UserInput, Wrap, } from "./harness/types.ts";
-+export type { AbortScopeSnapshot, AbortCommitReceipt, GuardedAbortRequest, Agent, AgentChange, AgentState, AnyTask, CompactionHooks, CompactionPolicy, CompactionReason, CompactionResult, ContextView, Conversation, ConversationAbortOptions, ConversationCreateOptions, ConversationHandle, ConversationInit, ConversationRetryPolicy, ConversationStreamOptions, ConversationWatch, EnvTarget, Extension, GenerationHooks, HarnessInspection, HarnessOptions, HarnessSettings, HookApi, HookRegistration, HookResult, HooksOf, InputSubmissionDraft, ModelRef, ProgressPolicy, PromptInput, PromptSection, QueueMode, Registry, RegistryReader, RegistrySnapshot, Settings, SettledSubmissionRecord, SettledTask, Submission, SubmissionDraft, TaskInspection, ToolControl, ToolDiagnostic, ToolExecutionApi, ToolExecutionMode, ToolExecutionResult, ToolHooks, ToolRegistration, UserInput, Wrap, } from "./harness/types.ts";
++export type { AbortScopeSnapshot, AbortCommitReceipt, AbortPreparationReadonly, AbortHostDocumentAccess, AbortPreparationFacet, GuardedAbortRequest, Agent, AgentChange, AgentState, AnyTask, CompactionHooks, CompactionPolicy, CompactionReason, CompactionResult, ContextView, Conversation, ConversationAbortOptions, ConversationCreateOptions, ConversationHandle, ConversationInit, ConversationRetryPolicy, ConversationStreamOptions, ConversationWatch, EnvTarget, Extension, GenerationHooks, HarnessInspection, HarnessOptions, HarnessSettings, HookApi, HookRegistration, HookResult, HooksOf, InputSubmissionDraft, ModelRef, ProgressPolicy, PromptInput, PromptSection, QueueMode, Registry, RegistryReader, RegistrySnapshot, Settings, SettledSubmissionRecord, SettledTask, Submission, SubmissionDraft, TaskInspection, ToolControl, ToolDiagnostic, ToolExecutionApi, ToolExecutionMode, ToolExecutionResult, ToolHooks, ToolRegistration, UserInput, Wrap, } from "./harness/types.ts";
  export { UsageDoc, type UsageState } from "./harness/usage.ts";
  export type { ConversationView } from "./harness/view.ts";
  export { createSession } from "./session/session.ts";
