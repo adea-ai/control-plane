@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.106.11](https://github.com/adea-ai/control-plane/compare/workspace-v1.106.10...workspace-v1.106.11) (2026-10-23)
+
+
+### Bug Fixes
+
+* **ci:** retry the npm bulk advisory audit only on a confirmed transient 503 ([#1249](https://github.com/adea-ai/control-plane/issues/1249)) ([4c9d41b](https://github.com/adea-ai/control-plane/commit/4c9d41be40da81fd5ca7e3ad364158865a10c013))
+
+
+### Tests
+
+* **control-api:** prove the immutable configuration binding and the approval replay for CP [#932](https://github.com/adea-ai/control-plane/issues/932) ([#1226](https://github.com/adea-ai/control-plane/issues/1226)) ([b513d54](https://github.com/adea-ai/control-plane/commit/b513d547cfa03b30e8ebea29752546dca13144ca))
+
 ## [1.106.10](https://github.com/adea-ai/control-plane/compare/workspace-v1.106.9...workspace-v1.106.10) (2026-10-22)
 
 
