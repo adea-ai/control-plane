@@ -1,5 +1,166 @@
 # Changelog
 
+## [1.108.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.107.0...workspace-v1.108.0) (2026-10-23)
+
+
+### Features
+
+* **acp-adapter:** add the production secure ACP remote wire and device agent ([#1023](https://github.com/adea-ai/control-plane/issues/1023)) ([#1238](https://github.com/adea-ai/control-plane/issues/1238)) ([52c3b36](https://github.com/adea-ai/control-plane/commit/52c3b36bccd04e3419b28945e8cfc97342b8612a))
+* **skills:** qualify the skill library with contracts and cold-task evidence ([#196](https://github.com/adea-ai/control-plane/issues/196)) ([#1216](https://github.com/adea-ai/control-plane/issues/1216)) ([11d7cea](https://github.com/adea-ai/control-plane/commit/11d7cea83f4bc9fb49acd2e6a3de400c76da037d))
+
+
+### Bug Fixes
+
+* **scripts:** report why the PostgreSQL readiness probe failed ([#1247](https://github.com/adea-ai/control-plane/issues/1247)) ([c0c28ef](https://github.com/adea-ai/control-plane/commit/c0c28ef5a11fc30b39468fd81658f4e7329e9ae3))
+
+## [1.107.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.106.12...workspace-v1.107.0) (2026-10-23)
+
+
+### Features
+
+* **context:** qualify decision context consumers ([#558](https://github.com/adea-ai/control-plane/issues/558)) ([#1218](https://github.com/adea-ai/control-plane/issues/1218)) ([77b93eb](https://github.com/adea-ai/control-plane/commit/77b93eb77603b462a01094b6916479318c844018))
+
+## [1.106.12](https://github.com/adea-ai/control-plane/compare/workspace-v1.106.11...workspace-v1.106.12) (2026-10-23)
+
+
+### Tests
+
+* **sqlite-persistence:** cover the child budget admission under an OS crash ([#187](https://github.com/adea-ai/control-plane/issues/187)) ([#1241](https://github.com/adea-ai/control-plane/issues/1241)) ([6d23065](https://github.com/adea-ai/control-plane/commit/6d23065e1778e27236d0cddb0b018a82cb2d34c4))
+
+## [1.106.11](https://github.com/adea-ai/control-plane/compare/workspace-v1.106.10...workspace-v1.106.11) (2026-10-23)
+
+
+### Bug Fixes
+
+* **ci:** retry the npm bulk advisory audit only on a confirmed transient 503 ([#1249](https://github.com/adea-ai/control-plane/issues/1249)) ([4c9d41b](https://github.com/adea-ai/control-plane/commit/4c9d41be40da81fd5ca7e3ad364158865a10c013))
+
+
+### Tests
+
+* **control-api:** prove the immutable configuration binding and the approval replay for CP [#932](https://github.com/adea-ai/control-plane/issues/932) ([#1226](https://github.com/adea-ai/control-plane/issues/1226)) ([b513d54](https://github.com/adea-ai/control-plane/commit/b513d547cfa03b30e8ebea29752546dca13144ca))
+
+## [1.106.10](https://github.com/adea-ai/control-plane/compare/workspace-v1.106.9...workspace-v1.106.10) (2026-10-22)
+
+
+### Bug Fixes
+
+* **ci:** report sanitized production schema gate failures ([#1264](https://github.com/adea-ai/control-plane/issues/1264)) ([91a014e](https://github.com/adea-ai/control-plane/commit/91a014e578d869eb80a9e9628e95958198a363df))
+
+## [1.106.9](https://github.com/adea-ai/control-plane/compare/workspace-v1.106.8...workspace-v1.106.9) (2026-10-22)
+
+
+### Tests
+
+* **#1018:** prove the concurrent retry and a client reconnect on PostgreSQL ([#1252](https://github.com/adea-ai/control-plane/issues/1252)) ([9789445](https://github.com/adea-ai/control-plane/commit/9789445e7f73dbe5ad3d06bee5873be54ad750fc))
+
+## [1.106.8](https://github.com/adea-ai/control-plane/compare/workspace-v1.106.7...workspace-v1.106.8) (2026-10-22)
+
+
+### Bug Fixes
+
+* **ci:** build migration dependencies without obsolete filter forwarding ([bd77f7d](https://github.com/adea-ai/control-plane/commit/bd77f7d8b20801439a25abfd8f43bf69681c0ff3))
+* **ci:** build promotion migration dependencies without obsolete filter ([#1261](https://github.com/adea-ai/control-plane/issues/1261)) ([bd77f7d](https://github.com/adea-ai/control-plane/commit/bd77f7d8b20801439a25abfd8f43bf69681c0ff3))
+
+## [1.106.7](https://github.com/adea-ai/control-plane/compare/workspace-v1.106.6...workspace-v1.106.7) (2026-10-22)
+
+
+### Maintenance
+
+* **railway:** finish production PostgreSQL reference cleanup ([#1259](https://github.com/adea-ai/control-plane/issues/1259)) ([bc15dfb](https://github.com/adea-ai/control-plane/commit/bc15dfbe7ef59723acb3d0da438515f7ea30417d))
+
+## [1.106.6](https://github.com/adea-ai/control-plane/compare/workspace-v1.106.5...workspace-v1.106.6) (2026-10-22)
+
+
+### Bug Fixes
+
+* **railway:** verify production PostgreSQL identity and scoped migrations ([#1256](https://github.com/adea-ai/control-plane/issues/1256)) ([86b7515](https://github.com/adea-ai/control-plane/commit/86b751520c569106644c518dd5fd0819056cd169))
+
+## [1.106.5](https://github.com/adea-ai/control-plane/compare/workspace-v1.106.4...workspace-v1.106.5) (2026-10-22)
+
+
+### Bug Fixes
+
+* **pi-durable:** fence cancellation retries and uncertain effects ([#935](https://github.com/adea-ai/control-plane/issues/935)) ([#1246](https://github.com/adea-ai/control-plane/issues/1246)) ([62d530f](https://github.com/adea-ai/control-plane/commit/62d530f5a4c012e978f38e6880181b8f5fbfebe5))
+
+
+### Maintenance
+
+* pin Bun 1.4.4 and use native SDK consumer checking ([#1255](https://github.com/adea-ai/control-plane/issues/1255)) ([176d2d6](https://github.com/adea-ai/control-plane/commit/176d2d61571ef89263e017ddb911b4315aa07234))
+
+## [1.106.4](https://github.com/adea-ai/control-plane/compare/workspace-v1.106.3...workspace-v1.106.4) (2026-10-22)
+
+
+### Tests
+
+* **release:** prove the unchanged-ready-release validation policy locally (CP [#916](https://github.com/adea-ai/control-plane/issues/916)) ([#1232](https://github.com/adea-ai/control-plane/issues/1232)) ([98ecb7c](https://github.com/adea-ai/control-plane/commit/98ecb7cbf3e6c99ff1a9f8bb288aec810edf89f9))
+
+## [1.106.3](https://github.com/adea-ai/control-plane/compare/workspace-v1.106.2...workspace-v1.106.3) (2026-10-22)
+
+
+### Tests
+
+* **toolchain:** record per-repository adoption evidence ([#1233](https://github.com/adea-ai/control-plane/issues/1233)) ([#1234](https://github.com/adea-ai/control-plane/issues/1234)) ([8f6c921](https://github.com/adea-ai/control-plane/commit/8f6c921dba2cee0dd97cb200880f1e15e1e265ee))
+
+## [1.106.2](https://github.com/adea-ai/control-plane/compare/workspace-v1.106.1...workspace-v1.106.2) (2026-10-22)
+
+
+### Tests
+
+* **deployment:** qualify retention scheduler cadence ([#194](https://github.com/adea-ai/control-plane/issues/194)) ([#1242](https://github.com/adea-ai/control-plane/issues/1242)) ([dc66373](https://github.com/adea-ai/control-plane/commit/dc66373d50b64af2182425533ca1dc9f9e437f6b))
+* **local:** stabilize operations measurement lifecycle ([#1217](https://github.com/adea-ai/control-plane/issues/1217)) ([7f42d34](https://github.com/adea-ai/control-plane/commit/7f42d347800f1a83b9bddcf8bb7f5cccf9486bd6))
+
+## [1.106.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.106.0...workspace-v1.106.1) (2026-10-22)
+
+
+### Bug Fixes
+
+* **lint:** fail closed on digest guard scan roots and traversal errors ([590f8f8](https://github.com/adea-ai/control-plane/commit/590f8f8b76f96ad476fa8d9363901d8828dcbd3b)), closes [#612](https://github.com/adea-ai/control-plane/issues/612)
+* m612-digest-guard-fail-closed-root ([#1243](https://github.com/adea-ai/control-plane/issues/1243)) ([590f8f8](https://github.com/adea-ai/control-plane/commit/590f8f8b76f96ad476fa8d9363901d8828dcbd3b))
+* runtime-gateway-start-authority-marker ([#1245](https://github.com/adea-ai/control-plane/issues/1245)) ([f6e012b](https://github.com/adea-ai/control-plane/commit/f6e012b4906cafe515d086ace93c8956acb143bc))
+* **testing:** print the authority marker the startup test looks for ([f6e012b](https://github.com/adea-ai/control-plane/commit/f6e012b4906cafe515d086ace93c8956acb143bc))
+
+
+### Tests
+
+* m612-sqlite-receipt-byte-provenance ([#1244](https://github.com/adea-ai/control-plane/issues/1244)) ([75e91e6](https://github.com/adea-ai/control-plane/commit/75e91e6952e77fa929a56ea954270997d8a101d3))
+* **sqlite:** pin historical receipt bytes for the SQLite lane ([75e91e6](https://github.com/adea-ai/control-plane/commit/75e91e6952e77fa929a56ea954270997d8a101d3)), closes [#612](https://github.com/adea-ai/control-plane/issues/612)
+
+## [1.106.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.105.8...workspace-v1.106.0) (2026-10-22)
+
+
+### Features
+
+* **child-progress:** recover authorized reference and cost evidence ([#1019](https://github.com/adea-ai/control-plane/issues/1019)) ([#1236](https://github.com/adea-ai/control-plane/issues/1236)) ([a996dc1](https://github.com/adea-ai/control-plane/commit/a996dc19d588610757ba270ad7b9876e406d1f8b))
+
+## [1.105.8](https://github.com/adea-ai/control-plane/compare/workspace-v1.105.7...workspace-v1.105.8) (2026-10-21)
+
+
+### Bug Fixes
+
+* **control-api:** refuse the funding disclosure when the funding host is absent ([019b5fe](https://github.com/adea-ai/control-plane/commit/019b5fec91525a9adc152ea8bc605113c34865cf))
+* **control-api:** refuse the funding disclosure when the funding host is absent (CP [#931](https://github.com/adea-ai/control-plane/issues/931)) ([#1229](https://github.com/adea-ai/control-plane/issues/1229)) ([019b5fe](https://github.com/adea-ai/control-plane/commit/019b5fec91525a9adc152ea8bc605113c34865cf))
+
+
+### Tests
+
+* **model-gateway:** prove the BYO eligibility rules independently ([f1bd75c](https://github.com/adea-ai/control-plane/commit/f1bd75c5877f31b809c42b8aa43e2d5b08e3ad14))
+* **model-gateway:** prove the BYO eligibility rules independently (CP [#931](https://github.com/adea-ai/control-plane/issues/931)) ([#1225](https://github.com/adea-ai/control-plane/issues/1225)) ([f1bd75c](https://github.com/adea-ai/control-plane/commit/f1bd75c5877f31b809c42b8aa43e2d5b08e3ad14))
+* **sqlite-persistence:** prove the three delivery kinds deduplicate independently (CP [#1024](https://github.com/adea-ai/control-plane/issues/1024)) ([#1231](https://github.com/adea-ai/control-plane/issues/1231)) ([f2e5cce](https://github.com/adea-ai/control-plane/commit/f2e5ccebf01732c7643ce06f21212da8f6f880bb))
+
+## [1.105.7](https://github.com/adea-ai/control-plane/compare/workspace-v1.105.6...workspace-v1.105.7) (2026-10-21)
+
+
+### Bug Fixes
+
+* **testing:** load the isolated postgres fixture from an owned temporary file ([#1212](https://github.com/adea-ai/control-plane/issues/1212)) ([df37ca8](https://github.com/adea-ai/control-plane/commit/df37ca85a616d04e8fc9dfd3d68094f6d19ddf67))
+
+## [1.105.6](https://github.com/adea-ai/control-plane/compare/workspace-v1.105.5...workspace-v1.105.6) (2026-10-21)
+
+
+### Tests
+
+* **railway:** qualify the production source plan offline ([#1211](https://github.com/adea-ai/control-plane/issues/1211)) ([2e68492](https://github.com/adea-ai/control-plane/commit/2e68492edbace6414cd7e6903d89e43848996163))
+
 ## [1.105.5](https://github.com/adea-ai/control-plane/compare/workspace-v1.105.4...workspace-v1.105.5) (2026-10-21)
 
 
@@ -328,7 +489,7 @@
 
 ### Bug Fixes
 
-* **database:** handle absent app schema in Neon probe ([#1105](https://github.com/adea-ai/control-plane/issues/1105)) ([d0f8aa6](https://github.com/adea-ai/control-plane/commit/d0f8aa650d07d6a831ec4a652ec8236c74d2828b))
+* **database:** handle absent app schema in PostgreSQL probe ([#1105](https://github.com/adea-ai/control-plane/issues/1105)) ([d0f8aa6](https://github.com/adea-ai/control-plane/commit/d0f8aa650d07d6a831ec4a652ec8236c74d2828b))
 
 ## [1.94.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.93.1...workspace-v1.94.0) (2026-10-12)
 
@@ -340,7 +501,7 @@
 
 ### Performance
 
-* **ci:** bound trusted-main Neon verification ([#1103](https://github.com/adea-ai/control-plane/issues/1103)) ([66ef7d8](https://github.com/adea-ai/control-plane/commit/66ef7d835dc64b8442467af612d4acfc4eb9526f))
+* **ci:** bound trusted-main PostgreSQL verification ([#1103](https://github.com/adea-ai/control-plane/issues/1103)) ([66ef7d8](https://github.com/adea-ai/control-plane/commit/66ef7d835dc64b8442467af612d4acfc4eb9526f))
 
 ## [1.93.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.93.0...workspace-v1.93.1) (2026-10-12)
 
@@ -361,7 +522,7 @@
 ### Bug Fixes
 
 * **ci:** apply bounded Postgres pulls to Hosted Compose ([#1100](https://github.com/adea-ai/control-plane/issues/1100)) ([f2081ae](https://github.com/adea-ai/control-plane/commit/f2081ae9219a95defb72fb19cf31947e25c1b26d))
-* **ci:** isolate image pulls and rebalance Neon shards ([3f5f8d5](https://github.com/adea-ai/control-plane/commit/3f5f8d5577b215d6d4c249b282de371a7fa0f532))
+* **ci:** isolate image pulls and rebalance PostgreSQL shards ([3f5f8d5](https://github.com/adea-ai/control-plane/commit/3f5f8d5577b215d6d4c249b282de371a7fa0f532))
 * **ci:** pre-pull Postgres for Hosted Compose acceptance ([f2081ae](https://github.com/adea-ai/control-plane/commit/f2081ae9219a95defb72fb19cf31947e25c1b26d))
 
 ## [1.92.2](https://github.com/adea-ai/control-plane/compare/workspace-v1.92.1...workspace-v1.92.2) (2026-10-11)
@@ -683,7 +844,7 @@
 
 ### Bug Fixes
 
-* **ci:** balance Neon budget admission across existing shards ([#923](https://github.com/adea-ai/control-plane/issues/923)) ([5b17844](https://github.com/adea-ai/control-plane/commit/5b17844194bc20bacd20c76739e81dec90c0b050))
+* **ci:** balance PostgreSQL budget admission across existing shards ([#923](https://github.com/adea-ai/control-plane/issues/923)) ([5b17844](https://github.com/adea-ai/control-plane/commit/5b17844194bc20bacd20c76739e81dec90c0b050))
 
 ## [1.73.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.72.4...workspace-v1.73.0) (2026-10-07)
 
@@ -697,21 +858,21 @@
 
 ### Bug Fixes
 
-* **ci:** qualify hosted graph on trusted Neon lane ([#919](https://github.com/adea-ai/control-plane/issues/919)) ([86191aa](https://github.com/adea-ai/control-plane/commit/86191aa6a78e6f0b643c6e84cee589665c0f8329))
+* **ci:** qualify hosted graph on trusted PostgreSQL lane ([#919](https://github.com/adea-ai/control-plane/issues/919)) ([86191aa](https://github.com/adea-ai/control-plane/commit/86191aa6a78e6f0b643c6e84cee589665c0f8329))
 
 ## [1.72.3](https://github.com/adea-ai/control-plane/compare/workspace-v1.72.2...workspace-v1.72.3) (2026-10-07)
 
 
 ### Bug Fixes
 
-* **ci:** rebalance Neon integration from terminal run timings ([#917](https://github.com/adea-ai/control-plane/issues/917)) ([f693e11](https://github.com/adea-ai/control-plane/commit/f693e1153b00e1c5af539ec76818b8fc263d6d95))
+* **ci:** rebalance PostgreSQL integration from terminal run timings ([#917](https://github.com/adea-ai/control-plane/issues/917)) ([f693e11](https://github.com/adea-ai/control-plane/commit/f693e1153b00e1c5af539ec76818b8fc263d6d95))
 
 ## [1.72.2](https://github.com/adea-ai/control-plane/compare/workspace-v1.72.1...workspace-v1.72.2) (2026-10-07)
 
 
 ### Bug Fixes
 
-* **ci:** reconcile unacknowledged Neon branch creation ([#914](https://github.com/adea-ai/control-plane/issues/914)) ([e29560b](https://github.com/adea-ai/control-plane/commit/e29560b8072502d9df38b4ea2e5de32f9e5a251c))
+* **ci:** reconcile unacknowledged database sandbox creation ([#914](https://github.com/adea-ai/control-plane/issues/914)) ([e29560b](https://github.com/adea-ai/control-plane/commit/e29560b8072502d9df38b4ea2e5de32f9e5a251c))
 * **deps:** update external non-major dependencies ([#898](https://github.com/adea-ai/control-plane/issues/898)) ([46a1464](https://github.com/adea-ai/control-plane/commit/46a1464b82fb611adcf05729be522dfb4f142211))
 
 ## [1.72.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.72.0...workspace-v1.72.1) (2026-10-07)
@@ -741,8 +902,8 @@
 * **ci:** adopt v1.44.8 release REST fallback ([#903](https://github.com/adea-ai/control-plane/issues/903)) ([ca61d31](https://github.com/adea-ai/control-plane/commit/ca61d31c9abe66213421b8da2c0e0cb9918ff6eb))
 * **ci:** adopt v1.44.9 draft-aware release REST fallback ([#904](https://github.com/adea-ai/control-plane/issues/904)) ([02981f4](https://github.com/adea-ai/control-plane/commit/02981f4e43c2261dbdd362716bfdfcfb7b1fba6d))
 * **ci:** clean owned hosted compose fixtures ([#897](https://github.com/adea-ai/control-plane/issues/897)) ([7bb52a9](https://github.com/adea-ai/control-plane/commit/7bb52a9da0967c5af9c0a51eee3efaa38d035f90))
-* **ci:** require completed Neon verification baseline ([dce9301](https://github.com/adea-ai/control-plane/commit/dce930155e71977ccdf18141ec7cbb141b26db33))
-* **ci:** require completed Neon verification before skipping ([#883](https://github.com/adea-ai/control-plane/issues/883)) ([dce9301](https://github.com/adea-ai/control-plane/commit/dce930155e71977ccdf18141ec7cbb141b26db33))
+* **ci:** require completed PostgreSQL verification baseline ([dce9301](https://github.com/adea-ai/control-plane/commit/dce930155e71977ccdf18141ec7cbb141b26db33))
+* **ci:** require completed PostgreSQL verification before skipping ([#883](https://github.com/adea-ai/control-plane/issues/883)) ([dce9301](https://github.com/adea-ai/control-plane/commit/dce930155e71977ccdf18141ec7cbb141b26db33))
 * **ci:** run control-plane lanes on a standard runner and adopt v1.44.4 ([#899](https://github.com/adea-ai/control-plane/issues/899)) ([3545b99](https://github.com/adea-ai/control-plane/commit/3545b99a06828d7a67ca47d5510443d5813c3bbb))
 * **ci:** run release-please with the workflow token ([#901](https://github.com/adea-ai/control-plane/issues/901)) ([fe902cc](https://github.com/adea-ai/control-plane/commit/fe902cc2ecea7f5d7cead8c7ee0479253aa42341))
 * compose memory writes with current effect authority ([#891](https://github.com/adea-ai/control-plane/issues/891)) ([1757bc0](https://github.com/adea-ai/control-plane/commit/1757bc09c54ebd48b879e641ca1544930ffd072b))
@@ -752,13 +913,13 @@
 * **memory:** preserve proposal source ownership during retention ([#889](https://github.com/adea-ai/control-plane/issues/889)) ([2203507](https://github.com/adea-ai/control-plane/commit/2203507cfef2c6e7397938103425b4a93827ba95))
 * **memory:** preserve the exact approved write intent ([#890](https://github.com/adea-ai/control-plane/issues/890)) ([ef3cfb5](https://github.com/adea-ai/control-plane/commit/ef3cfb5b002f7b6304c8b33b46b22a98c5e6d59e))
 * reserve and fence standard runtime attempt authority ([#896](https://github.com/adea-ai/control-plane/issues/896)) ([031c1df](https://github.com/adea-ai/control-plane/commit/031c1dfc5f6530877c9a7d6b00ea540d1933bb0c))
-* retry transient Neon cleanup lookup failures ([#892](https://github.com/adea-ai/control-plane/issues/892)) ([dd459c3](https://github.com/adea-ai/control-plane/commit/dd459c3f422af0c8059e9dbfc672dee80164980e))
+* retry transient PostgreSQL cleanup lookup failures ([#892](https://github.com/adea-ai/control-plane/issues/892)) ([dd459c3](https://github.com/adea-ai/control-plane/commit/dd459c3f422af0c8059e9dbfc672dee80164980e))
 
 
 ### Tests
 
-* **ci:** balance Neon budget admission across existing shards ([#895](https://github.com/adea-ai/control-plane/issues/895)) ([0c07f3f](https://github.com/adea-ai/control-plane/commit/0c07f3fa168b67b7b778bebddec94f7afcde9278))
-* **ci:** balance the expanded Neon foundation suite ([#888](https://github.com/adea-ai/control-plane/issues/888)) ([6682bee](https://github.com/adea-ai/control-plane/commit/6682beefdbfeb467f89e94bda5a92dec5a79c357))
+* **ci:** balance PostgreSQL budget admission across existing shards ([#895](https://github.com/adea-ai/control-plane/issues/895)) ([0c07f3f](https://github.com/adea-ai/control-plane/commit/0c07f3fa168b67b7b778bebddec94f7afcde9278))
+* **ci:** balance the expanded PostgreSQL foundation suite ([#888](https://github.com/adea-ai/control-plane/issues/888)) ([6682bee](https://github.com/adea-ai/control-plane/commit/6682beefdbfeb467f89e94bda5a92dec5a79c357))
 * **database:** isolate operator fixture lifecycle ([#887](https://github.com/adea-ai/control-plane/issues/887)) ([9a4da6f](https://github.com/adea-ai/control-plane/commit/9a4da6f0bd28fc208c5b683e79f5d46310f0f807))
 * verify memory recovery after hard process loss ([#893](https://github.com/adea-ai/control-plane/issues/893)) ([cb68d59](https://github.com/adea-ai/control-plane/commit/cb68d5914cd5f34489706bbdcf887c487f3faf28))
 
@@ -772,7 +933,7 @@
 
 ### Performance
 
-* **ci:** skip the trusted-main Neon verify without migration-relevant changes ([#878](https://github.com/adea-ai/control-plane/issues/878)) ([7a64147](https://github.com/adea-ai/control-plane/commit/7a641470652b1b5a80103a09d77bfbec46967097))
+* **ci:** skip the trusted-main PostgreSQL verify without migration-relevant changes ([#878](https://github.com/adea-ai/control-plane/issues/878)) ([7a64147](https://github.com/adea-ai/control-plane/commit/7a641470652b1b5a80103a09d77bfbec46967097))
 
 ## [1.71.2](https://github.com/adea-ai/control-plane/compare/workspace-v1.71.1...workspace-v1.71.2) (2026-10-03)
 
@@ -890,7 +1051,7 @@
 
 ### Bug Fixes
 
-* **ci:** scale explicit integration test budgets for the remote Neon lane ([#847](https://github.com/adea-ai/control-plane/issues/847)) ([887db8a](https://github.com/adea-ai/control-plane/commit/887db8a518800246465a1ebd801d222af45386f2))
+* **ci:** scale explicit integration test budgets for the remote PostgreSQL lane ([#847](https://github.com/adea-ai/control-plane/issues/847)) ([887db8a](https://github.com/adea-ai/control-plane/commit/887db8a518800246465a1ebd801d222af45386f2))
 
 ## [1.65.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.64.8...workspace-v1.65.0) (2026-10-02)
 
@@ -938,14 +1099,14 @@
 
 ### Bug Fixes
 
-* **ci:** survive Neon pooler drops in the sharded integration lane ([#834](https://github.com/adea-ai/control-plane/issues/834)) ([0e0e2f5](https://github.com/adea-ai/control-plane/commit/0e0e2f52873220a60fc5d58b5238b911f55e8505))
+* **ci:** survive PostgreSQL pooler drops in the sharded integration lane ([#834](https://github.com/adea-ai/control-plane/issues/834)) ([0e0e2f5](https://github.com/adea-ai/control-plane/commit/0e0e2f52873220a60fc5d58b5238b911f55e8505))
 
 ## [1.64.3](https://github.com/adea-ai/control-plane/compare/workspace-v1.64.2...workspace-v1.64.3) (2026-10-02)
 
 
 ### Bug Fixes
 
-* **ci:** retry the Neon integration slice once inside the verify step ([#832](https://github.com/adea-ai/control-plane/issues/832)) ([6d5aea4](https://github.com/adea-ai/control-plane/commit/6d5aea45d4c6c829e62dd4eb6e1322b45aacb6b7))
+* **ci:** retry the PostgreSQL integration slice once inside the verify step ([#832](https://github.com/adea-ai/control-plane/issues/832)) ([6d5aea4](https://github.com/adea-ai/control-plane/commit/6d5aea45d4c6c829e62dd4eb6e1322b45aacb6b7))
 
 ## [1.64.2](https://github.com/adea-ai/control-plane/compare/workspace-v1.64.1...workspace-v1.64.2) (2026-10-02)
 
@@ -973,7 +1134,7 @@
 
 ### Features
 
-* **ci:** shard the trusted-main Neon verification into per-branch matrix legs ([#821](https://github.com/adea-ai/control-plane/issues/821)) ([965de43](https://github.com/adea-ai/control-plane/commit/965de43c8ecebf1bea7f1d40e6930f0b4bc62392))
+* **ci:** shard the trusted-main PostgreSQL verification into per-branch matrix legs ([#821](https://github.com/adea-ai/control-plane/issues/821)) ([965de43](https://github.com/adea-ai/control-plane/commit/965de43c8ecebf1bea7f1d40e6930f0b4bc62392))
 
 
 ### Maintenance
@@ -1025,8 +1186,8 @@
 
 ### Bug Fixes
 
-* make the Neon main-verification concurrency group actually dedupe ([a25e84e](https://github.com/adea-ai/control-plane/commit/a25e84ebcbba03ae45b0e4d3a137f77a1fdbfe60))
-* neon-verify-concurrency-group ([#804](https://github.com/adea-ai/control-plane/issues/804)) ([a25e84e](https://github.com/adea-ai/control-plane/commit/a25e84ebcbba03ae45b0e4d3a137f77a1fdbfe60))
+* make the PostgreSQL main-verification concurrency group actually dedupe ([a25e84e](https://github.com/adea-ai/control-plane/commit/a25e84ebcbba03ae45b0e4d3a137f77a1fdbfe60))
+* postgres-verify-concurrency-group ([#804](https://github.com/adea-ai/control-plane/issues/804)) ([a25e84e](https://github.com/adea-ai/control-plane/commit/a25e84ebcbba03ae45b0e4d3a137f77a1fdbfe60))
 
 
 ### Maintenance
@@ -1082,7 +1243,7 @@
 
 ### Bug Fixes
 
-* **database:** preserve Neon integration session credentials and scoped cleanup ([#787](https://github.com/adea-ai/control-plane/issues/787)) ([f078c0b](https://github.com/adea-ai/control-plane/commit/f078c0b6c25544d6ca771d64e0613ef65bd3f328))
+* **database:** preserve PostgreSQL integration session credentials and scoped cleanup ([#787](https://github.com/adea-ai/control-plane/issues/787)) ([f078c0b](https://github.com/adea-ai/control-plane/commit/f078c0b6c25544d6ca771d64e0613ef65bd3f328))
 
 ## [1.59.13](https://github.com/adea-ai/control-plane/compare/workspace-v1.59.12...workspace-v1.59.13) (2026-09-30)
 
@@ -1213,7 +1374,7 @@
 
 ### Bug Fixes
 
-* **ci:** isolate PR database validation from Neon credentials ([#750](https://github.com/adea-ai/control-plane/issues/750)) ([0dd1304](https://github.com/adea-ai/control-plane/commit/0dd13046b23fcc9e29761eadfe6abfd0882cd7ce))
+* **ci:** isolate PR database validation from PostgreSQL credentials ([#750](https://github.com/adea-ai/control-plane/issues/750)) ([0dd1304](https://github.com/adea-ai/control-plane/commit/0dd13046b23fcc9e29761eadfe6abfd0882cd7ce))
 
 ## [1.59.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.59.0...workspace-v1.59.1) (2026-09-28)
 
@@ -2290,7 +2451,7 @@
 
 ### Maintenance
 
-* **infra:** align Neon branch names with Railway environment names ([#368](https://github.com/adea-ai/control-plane/issues/368)) ([fb698a2](https://github.com/adea-ai/control-plane/commit/fb698a2f86d2cf6a3e5b9ceaf0938c55d573c204))
+* **infra:** align database sandbox names with Railway environment names ([#368](https://github.com/adea-ai/control-plane/issues/368)) ([fb698a2](https://github.com/adea-ai/control-plane/commit/fb698a2f86d2cf6a3e5b9ceaf0938c55d573c204))
 
 ## [1.8.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.8.0...workspace-v1.8.1) (2026-09-05)
 
@@ -2411,7 +2572,7 @@
 
 ### Documentation
 
-* reconcile Railway/Neon/R2/Restate and portable deployment architecture ([a024316](https://github.com/0xPlayerOne/control-plane/commit/a02431649b0ba446466ce47e0ec24a430731cce7))
+* reconcile Railway/PostgreSQL/R2/Restate and portable deployment architecture ([a024316](https://github.com/0xPlayerOne/control-plane/commit/a02431649b0ba446466ce47e0ec24a430731cce7))
 
 
 ### Maintenance

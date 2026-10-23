@@ -683,19 +683,31 @@ export function refreshPriorMilestoneAudits(ledger, issues, additionalGapIssues 
     [9, 'M9'],
     [12, 'M10'],
   ])
+  const audits = new Map(ledger.priorMilestoneAudits.map((row) => [row.issue, row]))
+  // Reviewed display titles keep repository presentation current; issue identity,
+  // milestone, closure and inventory membership still come from live GitHub metadata.
+  for (const audit of audits.values()) {
+    if (
+      audit.displayTitle !== undefined &&
+      (typeof audit.displayTitle !== 'string' ||
+        !audit.displayTitle.trim() ||
+        audit.displayTitle.length > 300 ||
+        /[\r\n\0]/.test(audit.displayTitle))
+    )
+      throw new Error('Invalid audited issue display title')
+  }
   const inventory = issues
     .filter(
       (issue) => isCanonicalControlPlaneIssue(issue) && priorMilestones.has(issue.milestone?.number)
     )
     .map((issue) => ({
       issue: issue.number,
-      title: issue.title,
+      title: audits.get(issue.number)?.displayTitle ?? issue.title,
       milestone: priorMilestones.get(issue.milestone.number),
       closedAt: issue.closedAt,
       url: issue.url,
     }))
     .toSorted((left, right) => left.issue - right.issue)
-  const audits = new Map(ledger.priorMilestoneAudits.map((row) => [row.issue, row]))
   const missing = inventory.filter(({ issue }) => !audits.has(issue))
   const removed = [...audits.keys()].filter(
     (issue) => !inventory.some((entry) => entry.issue === issue)

@@ -37,12 +37,12 @@ describe('M9 live cloud certification harness', () => {
     const rawEnvironment = {
       M9_CONTROL_API_URL: 'https://control-api.example.invalid',
       M9_SERVICE_AUTH_ISSUER: 'https://certification.example.invalid',
-      M9_SERVICE_AUTH_KEY_ID: 'm11-staging-test',
-      M9_SERVICE_AUTH_PRIVATE_KEY_FILE: '/tmp/m11-staging-key.pem',
+      M9_SERVICE_AUTH_KEY_ID: 'm11-sandbox-test',
+      M9_SERVICE_AUTH_PRIVATE_KEY_FILE: '/tmp/m11-sandbox-key.pem',
       DATABASE_URL: 'postgresql://app:fake-secret@example.invalid/database',
       R2_ENDPOINT: 'https://objects.example.invalid',
       R2_BUCKET: 'control-plane',
-      R2_PREFIX: 'staging/',
+      R2_PREFIX: 'sandbox/',
       R2_ACCESS_KEY_ID: 'test-access-key',
       R2_SECRET_ACCESS_KEY: 'fake-secret',
     }
@@ -56,7 +56,7 @@ describe('M9 live cloud certification harness', () => {
         return store
       })
     ).toBe(store)
-    expect(storeConfiguration).toMatchObject({ bucket: 'control-plane', prefix: 'staging/' })
+    expect(storeConfiguration).toMatchObject({ bucket: 'control-plane', prefix: 'sandbox/' })
 
     const withoutPrefix = { ...rawEnvironment }
     delete withoutPrefix.R2_PREFIX
@@ -180,7 +180,7 @@ describe('M9 live cloud certification harness', () => {
     const credential = createSignedServiceCredential({
       privateKey,
       issuer: 'https://m9-certification.control-plane.invalid',
-      keyId: 'm9-staging-2026-08',
+      keyId: 'm9-sandbox-2026-08',
       runSuffix,
       now,
     })
@@ -197,13 +197,13 @@ describe('M9 live cloud certification harness', () => {
     expect(JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'))).toMatchObject({
       audience: 'control-plane',
       issuer: 'https://m9-certification.control-plane.invalid',
-      keyId: 'm9-staging-2026-08',
+      keyId: 'm9-sandbox-2026-08',
       scopes: ['execution:accept'],
     })
     expect(credential).not.toContain('PRIVATE KEY')
   })
 
-  test('proves terminal Neon state, retained R2 integrity, and idempotent API replay', async () => {
+  test('proves terminal PostgreSQL state, retained R2 integrity, and idempotent API replay', async () => {
     const plan = createCertificationPlan({ runSuffix, compiledAt: now.toISOString() })
     const request = createCertificationRequest({ plan, runSuffix, now })
     const executionId = `exe_${runSuffix}`
@@ -215,7 +215,7 @@ describe('M9 live cloud certification harness', () => {
         plan,
         request,
         credential: 'signed-secret-value',
-        objectPrefix: 'staging/',
+        objectPrefix: 'sandbox/',
         pollIntervalMs: 0,
         timeoutMs: 1_000,
       },
@@ -272,7 +272,7 @@ describe('M9 live cloud certification harness', () => {
       executionState: 'completed',
       attemptCount: 1,
       replayed: true,
-      objectPrefix: 'staging/',
+      objectPrefix: 'sandbox/',
     })
     expect(JSON.stringify(evidence)).not.toContain('signed-secret-value')
   })

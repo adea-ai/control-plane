@@ -1,227 +1,24 @@
-# Infrastructure and deployment baseline
+# Infrastructure
 
-The accepted first-party **Cloud** Control Plane target is **Railway compute + Neon PostgreSQL + Cloudflare R2 + Restate**. M9 established that production-shaped profile. The product has exactly three deployment profiles: Cloud, Hosted, and Local. M10 then ports the same Control Plane core and execution semantics to Local desktop and Hosted/VPS deployment profiles.
+The supported profiles are Cloud, Hosted/VPS, and Local.
 
-M9 replaced the earlier AWS/ECS/Terraform implementation with the active Railway/Neon/R2 Cloud
-profile. AWS is not a supported deployment option or compatibility layer; the Cloud, Hosted/VPS, and Local options share
-application semantics while using different infrastructure adapters.
+The first-party Cloud deployment uses Railway compute, Railway PostgreSQL and Cloudflare R2. Adea application compute is Cloudflare Workers, with the existing Hyperdrive pooler connecting to Railway PostgreSQL. A database service is not evidence of an Adea Railway application deployment.
 
-Each Railway service declares a dependency-aware Turborepo build filter (for example,
-`bun run build --filter=@control-plane/workflow-worker...`). The trailing dependency closure is
-required because Railway builds from a clean checkout and workspace package imports must be compiled
-before the selected service.
+## Production resources
 
-## Milestone ownership
+Railway project `18c6a1fd-6b4b-421e-9ec9-fd1550ce9a3f` has production environment `52f5b0ac-2af0-4792-aa56-30d80e5db31e`. PostgreSQL service `67fdd979-8a5b-4c02-b4c5-799a2e5cb3f0` hosts database `railway`. Private runtime connections use `postgres.railway.internal:5432`; external migration verification uses the existing `altaria.proxy.rlwy.net:44407` TCP proxy with verified CA and peer identity. Do not create another proxy.
 
-- **M9.7 #215, Railway service builds:** replaced the AWS/ECS-first build/deploy baseline with reproducible Railway service configuration.
-- **M9.8 #216, Restate managed-cloud migration:** replaced Temporal in the active Railway cloud path and defined the Restate service/runtime topology.
-- **M9.9 #217, managed dependencies/configuration:** wired Neon, the existing Control Plane R2 bucket, service authentication, Railway private networking, secrets/configuration, health/readiness, and explicit database migration.
-- **M9.10–M9.13 #210–#213, canonical behavior:** froze public contracts, Profile/Skill behavior, ContextProvider behavior, and operational defaults before portability work.
-- **M9.6 #73, cloud activation gate:** completed the live Railway staging deployment and verification after the implementation/configuration work.
-- **M10, Local & Hosted Portability:** substitutes persistence, storage, secrets, process supervision, topology, and runtime transport adapters while preserving the accepted M9 semantics.
+Control API service `9167a33b-af0f-4780-8614-a5a161697c9c` is the production application target. Its database URL must use `control_plane_app` over the private endpoint. Migrations use `control_plane_migrator`; its privileges cover only `public` and `drizzle`. Adea’s `app` and `auth` schemas are isolated behind separate runtime identities and `adea_prod_migration`. See [the production contract](railway-production-database-cutover.md).
 
-## Managed-cloud provider map
+## Runtime and deployment
 
-| Capability                              | Accepted M9 provider/boundary                     | Rule                                                                                                                                                                           |
-| --------------------------------------- | ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Compute                                 | Railway                                           | Repository-owned/reproducible service configuration; dashboard-only settings are not sufficient release evidence.                                                              |
-| Relational state                        | Separate Control Plane Neon PostgreSQL            | Drizzle migrations are explicit; Adea uses a different Neon project/database.                                                                                                  |
-| Object storage                          | Cloudflare R2 through `ObjectStore`               | Current Control Plane bucket is `ctrl-plane` with Wrangler binding `ctrl_plane`; physical identifiers remain deployment configuration and never enter public/domain contracts. |
-| Durable workflows                       | Restate through `WorkflowRuntime`                 | Temporal is superseded for the release path; Restate-specific types stay out of public/domain contracts.                                                                       |
-| Service configuration/bootstrap secrets | Railway service/shared variables                  | Values are never committed; configuration is validated at startup.                                                                                                             |
-| Dynamic connector/provider credentials  | Provider-neutral credential-vault/secret boundary | Railway environment variables are not a substitute for user-scoped dynamic credential storage. M9.9 documented the active provider implementation behind the port.             |
-| Internal networking                     | Railway private networking where applicable       | Only explicitly required authenticated endpoints receive public ingress.                                                                                                       |
-| Coordination/cache                      | Replaceable and only where measured need exists   | Never authoritative for durable correctness.                                                                                                                                   |
+`.railway/railway.ts` accepts production only. The active production topology promotes the Control API. Durable-workflow components remain separately qualified sandbox infrastructure, not automatically deployed production resources. Production promotion verifies immutable source identity, private runtime bindings and schema readiness. Configuration and successful liveness do not establish application acceptance.
 
-## Current external-resource state
+Persistent preproduction environments are absent. Use disposable local/CI sandboxes with synthetic data, credentials and isolated object prefixes. Never direct sandbox tests or preview code to production. R2 remains private, accessed through the ObjectStore/Artifact boundary; retain scoped operational credentials and authoritative integrity checks.
 
-The 2026-09-29 12:21 UTC Railway readback is recorded in [M11.10 evidence](evidence/m11-railway-readback-2026-09-29.md). It supersedes the prior standby snapshot for current Railway deployment status; it does not certify an M11 profile or production availability.
+## Secrets and TLS
 
-- A Railway `control-plane` project with isolated staging and production environments exists. The active Cloud application topology is `control-api` plus `workflow-worker`, with a separately pinned Restate runtime.
-- Production `control-api` and `workflow-worker` deployments last reported `SUCCESS` at 08:39 UTC; runtime logs re-read at 12:41 UTC identify commit `61700f346663fbb9fb62d1fc27c859362ae2d4f1`. This predates current `main` (`96d8224ac9ef9b2f57d544f04e5358ac617da044`); it is not evidence that current `main` is deployed or accepted.
-- Production Restate reported `SUCCESS` on Restate 1.7.7, with one replica and a 500 MB `/restate-data` volume. The Control API has a configured `/ready` healthcheck and public Railway domain; `workflow-worker` is private.
-- The API runtime logs record a direct `/ready` HTTP 200 at 08:39:17 UTC, immediately after deployment. Hourly retention sweeps still warn that command-inbox and execution-event eligibility is required; this remains an operational gap.
-- Staging had no successful active deployment in the readback: API/worker historical status was failed (2026-09-16), Restate's last success was 2026-08-28, and later attempts through 2026-09-28 were removed. Staging remains on-demand; keep compute stopped between qualification runs and retain its Restate volume.
-- The existing `neon_auth` tables in the Control Plane Neon project are not Control Plane identity authority and must not become an application dependency. The Cloudflare R2 bucket and Wrangler binding remain the configured managed-cloud storage resources.
-- Staging's M9.6 Neon, R2, Restate, restart, and bounded-concurrency results remain historical evidence. Neither that evidence nor these live deployment statuses constitute current M11 profile acceptance.
-
-Configuration shape or resource existence is not deployment evidence. M9.6 requires an actual successful staging deployment, migrations, health/readiness, representative durable execution, restart/recovery, rollback/forward repair, R2 operations, and measured operational evidence.
-
-## Railway service composition
-
-The active Cloud application services are:
-
-- `control-api`: public authenticated API plus health/readiness;
-- `workflow-worker`: private Restate service endpoint.
-
-The private `restate` server is a separately pinned infrastructure runtime, not a Control Plane
-application build target.
-
-**Production activation shape (2026-10-02 cost posture):** production runs **`control-api`
-only** — it is the one cloud dependency the local-first MVP has (the web/mobile marketplace
-catalog proxy), and the production execution runtime is `disabled`, so `workflow-worker` and
-`restate` previously ran as health-passing placeholders. Their definitions remain in
-`.railway/railway.ts` for staging qualification runs, but they are excluded from the production
-`resources` list, and promotion builds and deploys control-api alone
-(`scripts/promote-railway-images.mjs` and the migration gate validate the control-api target
-only). Reactivating the cloud runtime in production is a reviewed change that restores the
-production resources, the promotion targets, and a **fresh Restate identity**: the production
-`restate-data` volume is deleted with the service, and
-`scripts/provision-restate-identity.mjs` re-issues the keypair that must match the worker's
-`RESTATE_REQUEST_IDENTITY_PUBLIC_KEY`.
-
-Production polls `/health` (liveness and build metadata) as its platform healthcheck; `/ready`
-additionally runs the bounded PostgreSQL probe and is verified once per promotion by the
-"Verify production readiness after deploy" step. This keeps the Neon production compute on
-autosuspend between catalog requests instead of awake around the clock.
-
-`runtime-worker`, `runtime-gateway`, and `tool-gateway` are not Cloud services. Their former process
-topology is not a compatibility target: runtime execution and tool capabilities must be composed
-through the accepted Cloud, Hosted, or Local profile instead of restoring placeholder Railway
-services. A process that marks ready and exits is not a service.
-
-`workflow-worker` is the Restate HTTP endpoint for the `execution-lifecycle` workflow. Its endpoint contract is versioned in `infrastructure/railway/restate.json`; M9.9 established the live Restate registration and dependency wiring.
-
-The worker probes Neon before readiness and composes durable execution/attempt activities from the
-PostgreSQL repositories. Railway staging selects the explicit Cloud certification runtime. That
-runtime receives the exact accepted plan identity through Restate, writes a deterministic terminal
-result under the `m9/certification/` R2 prefix, and verifies the stored body and metadata through
-`get` and `head` before reporting completion. Replay checks the same object and fails closed on a
-conflict. Railway production selects `disabled`, so its worker can pass health and registration while
-runtime activities return `CLOUD_RUNTIME_DISABLED` without R2 access; certification traffic cannot
-be enabled in the production environment by accident.
-
-The certification runtime proves the M9 Railway + Restate + Neon + R2 lifecycle; it is not a mock Pi
-provider and does not claim that the later Adea `agent_hq_cloud` product runtime is certified.
-An injected concrete runtime activity port replaces it when that product capability is implemented.
-
-The endpoint validates Restate native request identity with the environment-specific public key.
-The matching ED25519 private key is stored only on the Restate data volume and referenced by file;
-it is never committed or copied to application services. `control-api` owns the private port-8080
-ingress URL. The worker does not receive an ingress URL or a fabricated self-hosted bearer token.
-
-The Railway staging Restate runtime is a private single node pinned to Restate 1.7.7 by immutable
-multi-platform image digest. Railway must mount a persistent volume at `/restate-data` and preserve
-the configured `control-plane-staging-1` node name across restarts. Restate ingress (8080), Admin API
-(9070), and fabric (5122) remain private; only the Admin API `/health` route is used for service
-health. This single-node shape is the M9 staging baseline, not a claim of high availability.
-
-The per-service variable and credential-role contract is versioned in `infrastructure/railway/environment.json`. It contains names, classifications, and provider-neutral purposes only; secret values remain in Railway's secret boundary.
-
-`.railway/railway.ts` is the executable Railway Infrastructure as Code definition. It owns the
-project graph, sources, build/start commands, health checks, restart behavior, private endpoints,
-and Restate volume attachment. Secret values remain provider-managed through `preserve()`; planning
-must never use the CLI option that reveals variable values. The deprecated per-service
-`railway.json`/`railway.toml` format is not used.
-
-The definition represents the explicit one-replica **activation** shape because Railway's
-Infrastructure as Code schema does not accept zero replicas. Staging is on-demand: use the guarded
-command versioned in `scripts/railway-standby.mjs` to remove active and reactivatable deployment
-revisions between qualification runs while retaining the Restate volume. Production is
-reconciled to the control-api-only `resources` list by the same plan/apply flow; the 2026-10-02
-apply removed the production `workflow-worker`/`restate` instances and their volume
-(`--confirm-destructive`), so any future production IaC apply stays consistent with the standby
-posture instead of reactivating them. Production availability still requires the reviewed
-release, secrets, migrations, dependency readiness, direct health/readiness, smoke, recovery,
-and rollback gates.
-
-M9.7 established dependency-aware, reproducible monorepo builds for Railway. The existing
-`infrastructure/containers` build pipeline remains available for Hosted/server composition. AWS/ECS-
-specific image platform assumptions, ECR publication requirements, task definitions, Terraform
-roots, IAM roles, CloudWatch/SNS wiring, and ECS rollout mechanics are not part of the first-party
-deployment contract.
-
-## Neon PostgreSQL
-
-The Control Plane cloud database is external to Railway and independently owned.
-Railway does not share a connection string between environments: `staging` maps
-to the Neon `staging` branch and `production` maps to Neon `production`. Neon
-branches are named after the Railway environments they serve; Git deploys from
-`main`. The mapping is
-versioned in `infrastructure/railway/environment.json`; connection strings and
-credentials remain Railway-managed secrets.
-
-Requirements:
-
-1. Use the existing dedicated Control Plane Neon project/database, separate from Adea.
-2. Apply repository-owned Drizzle migrations through an explicit migration job/pre-deploy step; ordinary service startup must not silently migrate production.
-3. Maintain separate runtime and migration/admin authority. Only services that need relational persistence receive runtime access.
-4. Validate schema compatibility before accepting traffic.
-5. Exercise reconnect, forward repair, backup/PITR or equivalent recovery, and restore procedures in staging.
-6. Keep provider/database identifiers out of public/domain contracts.
-7. Treat any unrelated `neon_auth` schema as non-authoritative; leave inert or remove safely only through an explicit M9 decision.
-
-The design requires incompatible schema/configuration to fail closed. In Cloud, `/ready` checks
-process readiness and runs a bounded PostgreSQL `SELECT 1`; it does not inspect table or index
-definitions. The production promotion gate provides a separate targeted predeploy control: it checks
-the tagged migration-history prefix, applies migrations, then checks the complete history, runtime
-grants/role restrictions, and selected retention-clock columns before changing Railway image sources.
-That gate does not perform a general physical-schema comparison, so the broader schema-readiness
-requirement is not implemented by PostgreSQL `/ready`.
-
-The repository's local PostgreSQL Compose fixtures remain useful for integration tests and server-profile development. They are **not** the M10 product Local persistence profile, which uses embedded SQLite behind `PersistenceProvider`.
-
-## Cloudflare R2
-
-The existing **`ctrl-plane`** bucket is the current Control Plane-owned managed-cloud ObjectStore resource. Its Wrangler binding is **`ctrl_plane`**. Those names are operator/deployment configuration only; Control Plane public/domain contracts continue to use provider-neutral ObjectStore/Artifact references.
-
-M9.9 completed the following Cloud storage gates:
-
-1. verified bucket and account access using the authenticated Wrangler CLI;
-2. documented staging-versus-production object isolation before production data exists;
-3. configured least-privilege R2/S3-compatible credentials for only the Railway services that require object access;
-4. configured endpoint/bucket/environment mapping through server-only deployment configuration;
-5. defined lifecycle/retention and omitted CORS because no browser-direct access is required;
-6. performed synthetic write/read/delete checks and the same integrity checks through the Control Plane `ObjectStore` adapter from Railway staging;
-7. recorded a sanitized resource/configuration manifest without account tokens, access-key secrets, or raw credentials.
-
-**Product storage ownership remains separate.** Adea may use the same Cloudflare account/provider, but it uses a separate Adea-owned bucket or environment-isolated bucket set and separate credentials. Adea must not reuse the Control Plane `ctrl-plane` bucket or its broad credentials as Artifact authority.
-
-Local and Hosted profiles introduced in M10 use filesystem or user-controlled S3-compatible storage by default. Switching `ObjectStore` must not change Artifact identity or public contracts.
-
-## Restate
-
-Restate is the canonical durable workflow runtime for the cloud and hosted profiles; the local profile runs the same workflow contracts on the embedded SQLite queue (#548).
-
-- M9.8 completed the **Railway cloud** migration from Temporal to Restate, including networking, health, persistence, restart/redeploy, observability, and in-flight execution behavior.
-- M10.1 packaged the accepted Restate workflow implementation for Local and Hosted profiles.
-- CP1 (#548) made the local profile Restate-free: `apps/local-control-plane` composes
-  `EmbeddedWorkflowRuntime` + `WorkflowJobStore` over SQLite (leased claims, at-least-once replay,
-  durable interaction and cancellation records), while `hosted-simple` keeps the bundled Restate
-  child.
-
-The execution lifecycle races user cancellation and the absolute execution deadline against every
-active runtime or graph activity. Terminal control dispatches an idempotent cancellation activity,
-then persists `cancelled` or `timed_out`; it also rechecks control immediately before persisting a
-normal terminal result. Runtime and graph adapters must therefore expose attempt-bound cancellation
-rather than relying on a late completion to resolve the race.
-
-Do not make M10 responsible for getting cloud Restate working for the first time.
-
-## Configuration and secrets
-
-All service bootstrap configuration is typed and validated. Staging/production values are supplied by Railway configuration and approved external providers; secret values never belong in source, images, logs, issue bodies, or generated docs.
-
-Separate **service/bootstrap secrets** from **dynamic user/provider credentials**. Railway variables are appropriate for deployment configuration such as database endpoints, service credentials, Restate configuration, R2 credentials, and the encryption-key reference used by the vault. User-scoped connector/provider credentials are encrypted by `NeonEncryptedSecretProvider` and persisted through `PostgresEncryptedSecretStore`; they cannot be modeled as one environment variable per user credential.
-
-M10 adds Local and Hosted `SecretsProvider` adapters without changing secret-reference/rotation/revocation semantics.
-
-## Deployment, migration, and rollback
-
-The accepted managed-cloud release flow is:
-
-1. Build each release image once from the complete workspace, scan that image, generate its SBOM, publish it to GHCR, and attest the resulting immutable registry digest.
-2. Configure Railway with that exact `image@sha256:…` reference and require its successful deployment record to report the same source reference and digest; a same-source rebuild is not equivalent promotion evidence.
-3. Validate required Railway variables and external dependency configuration without exposing values.
-4. Run the explicit Neon migration step with separately scoped migration authority.
-5. Deploy the required service topology and Restate runtime.
-6. Verify liveness/readiness through intended public/private paths.
-7. Run a representative durable execution and R2 ObjectStore operations.
-8. Exercise service/Restate/database reconnect and failed-deploy rollback/forward repair.
-9. Run the M9 observability/security/recovery/load evidence against the real staging environment.
-10. Record exact commit, configuration versions, migrations, service versions, R2/Neon resource-purpose mapping, resource/cost measurements, and rollback target without credentials.
-
-A failed schema migration blocks application rollout. Applied production migrations are repaired forward unless an explicitly reviewed restore procedure is required.
+Keep secret values in supported provider/GitHub secret storage and supply them through secure stdin. Preserve independently rotated operational credentials. Service images package the authenticated public CA and configure `NODE_EXTRA_CA_CERTS` before startup. Database clients retain certificate-chain and hostname verification. Hyperdrive uses verify-full with the uploaded CA, and database query caching remains disabled for authentication, session and permission checks.
 
 ## Local and Hosted profiles
 

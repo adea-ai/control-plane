@@ -37,10 +37,10 @@ test is registered in the repository test runner.
 
 The PostgreSQL implementation uses Drizzle migration 0041, a unique scoped
 operation key, and a version predicate on updates. Projected columns are checked
-against the validated JSON record on every read. The initial real-Neon integration
+against the validated JSON record on every read. The initial real-PostgreSQL integration
 test passed with 11 assertions, including racing allocations, conflicting payloads,
 workspace isolation, concurrent CAS, and terminal-state fencing. Its owned isolated
-database was disposed; staging and production were not modified. With pending
+database was disposed; sandbox and production were not modified. With pending
 queries added, all 32 PostgreSQL integration tests passed with 407 assertions,
 including the 17-assertion context-command test. The owned database was again
 disposed. Eight domain/SQLite tests passed with 67 assertions. Full repository
@@ -59,8 +59,8 @@ inserted earlier IDs. No dispatcher is wired yet.
 Apply the additive Drizzle migration before using the PostgreSQL repository.
 Rollback can stop using the new repository while retaining its table and records;
 do not drop command history as an application rollback step. SQLite's namespaces
-are new and have not been used by a deployed composition. Real-Neon testing here
-used an isolated database on the staging-derived PR preview, not production data
+are new and have not been used by a deployed composition. Real-PostgreSQL testing here
+used an isolated database on the sandbox-derived PR preview, not production data
 or a production rollout.
 
 ## Remaining work

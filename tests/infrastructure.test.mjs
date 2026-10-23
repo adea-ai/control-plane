@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
+import { runInNewContext } from 'node:vm'
 import { URL } from 'node:url'
 import { test } from 'bun:test'
 
@@ -37,14 +38,14 @@ test('pins a durable private Restate runtime for Railway cloud', async () => {
     version: '1.7.7',
     image:
       'docker.restate.dev/restatedev/restate:1.7.7@sha256:dd1695b61c9de877d24bf9afe8a0ac5fb0f66d175c1bc397975d2252bd784eb2',
-    nodeName: 'control-plane-staging-1',
+    nodeName: 'control-plane-production-1',
     dataMount: '/restate-data',
     healthPath: '/health',
     privatePorts: { ingress: 8080, admin: 9070, fabric: 5122 },
     public: false,
     environment: {
-      RESTATE_CLUSTER_NAME: 'control-plane-staging',
-      RESTATE_NODE_NAME: 'control-plane-staging-1',
+      RESTATE_CLUSTER_NAME: 'control-plane-production',
+      RESTATE_NODE_NAME: 'control-plane-production-1',
       RESTATE_AUTO_PROVISION: 'true',
       RESTATE_ROCKSDB_TOTAL_MEMORY_SIZE: '384 MiB',
       RESTATE_WORKER__INVOKER__REQUEST_IDENTITY_PRIVATE_KEY_PEM_FILE:
@@ -62,7 +63,7 @@ test('owns the active Railway project graph as code without committed secrets', 
   assert.match(source, /service\('restate'/)
   assert.match(source, /volume\('restate-data'/)
   assert.match(source, /docker\.restate\.dev\/restatedev\/restate:1\.7\.7@sha256:/)
-  assert.match(source, /healthcheckPath: production \? '\/health' : '\/ready'/)
+  assert.match(source, /healthcheckPath: '\/health'/)
   assert.match(source, /memoryBytes: 1_073_741_824/)
   assert.match(source, /['"]\/restate-data['"]: restateData/)
   assert.match(source, /DATABASE_URL: preserve\(\)/)
@@ -91,31 +92,29 @@ test('owns the active Railway project graph as code without committed secrets', 
   )
 })
 
-test('maps Railway staging and production to isolated Neon branches', async () => {
+test('maps only production to the reviewed Railway PostgreSQL contract and rejects implicit nonproduction environments', async () => {
   const environment = JSON.parse(
     await readRepositoryFile('infrastructure/railway/environment.json')
   )
   const source = await readRepositoryFile('.railway/railway.ts')
-
   assert.deepEqual(environment.environments, {
-    staging: {
-      railwayEnvironment: 'staging',
-      applicationEnvironment: 'staging',
-      sourceBranch: 'main',
-      neon: { provider: 'neon', project: 'control-plane', branch: 'staging' },
-    },
     production: {
       railwayEnvironment: 'production',
       applicationEnvironment: 'production',
       sourceBranch: 'main',
-      neon: { provider: 'neon', project: 'control-plane', branch: 'production' },
+      database: { provider: 'railway-postgres', targetContract: 'production-database.json' },
     },
   })
+  assert.equal(environment.database.provider, 'railway-postgres')
+  assert.match(source, /if \(!context\.isEnvironment\('production'\)\)/)
+  assert.ok(
+    source.indexOf("if (!context.isEnvironment('production'))") <
+      source.indexOf("service('@control-plane/control-api'")
+  )
   assert.match(source, /const sourceBranch = 'main'/)
-  assert.equal((source.match(/branch: sourceBranch/g) ?? []).length, 2)
 })
 
-test('keeps production down to the MVP dependency set and staging on-demand', async () => {
+test('keeps the production MVP posture without a persistent nonproduction policy', async () => {
   const policy = JSON.parse(await readRepositoryFile('infrastructure/railway/cost-policy.json'))
   const source = await readRepositoryFile('.railway/railway.ts')
 
@@ -140,27 +139,7 @@ test('keeps production down to the MVP dependency set and staging on-demand', as
       restate: { configuredReplicas: 1, runningReplicas: 0, serverless: false },
     }
   )
-  assert.equal(policy.environments.staging.availability, 'configured-on-demand-reference')
-  assert.equal(policy.environments.staging.sourceConnected, false)
-  assert.equal(policy.environments.staging.activationBranch, 'main')
-  assert.equal(policy.environments.staging.standbyAction, 'remove-active-deployment')
-  assert.deepEqual(
-    Object.fromEntries(
-      Object.entries(policy.environments.staging.services).map(([name, value]) => [
-        name,
-        {
-          configuredReplicas: value.configuredReplicas,
-          runningReplicas: value.runningReplicas,
-          serverless: value.serverless,
-        },
-      ])
-    ),
-    {
-      'control-api': { configuredReplicas: 1, runningReplicas: 0, serverless: false },
-      'workflow-worker': { configuredReplicas: 1, runningReplicas: 0, serverless: false },
-      restate: { configuredReplicas: 1, runningReplicas: 0, serverless: false },
-    }
-  )
+  assert.deepEqual(Object.keys(policy.environments), ['production'])
   assert.match(source, /const desiredReplicas = 1/)
   assert.equal((source.match(/numReplicas: desiredReplicas/g) ?? []).length, 3)
   assert.equal((source.match(/sleepApplication: false/g) ?? []).length, 3)
@@ -169,7 +148,7 @@ test('keeps production down to the MVP dependency set and staging on-demand', as
   assert.match(source, /source: controlApiSource/)
   assert.doesNotMatch(source, /production \? undefined : github/)
   // Production activation shape: control-api only, so the disabled runtime
-  // placeholders hold no compute. Staging keeps the full qualification set.
+  // placeholders hold no compute. Disposable sandboxes own the qualification set.
   assert.match(
     source,
     /resources: production \? \[controlApi\] : \[controlApi, workflowWorker, restate, restateData\]/
@@ -187,12 +166,12 @@ test('plans a deterministic Railway standby transition without deleting services
     railwayRepoTriggersArguments,
   } = await import('../scripts/railway-standby.mjs')
   assert.throws(() => railwayClearSourceArguments('service-id'), /service and environment IDs/)
-  assert.deepEqual(railwayClearSourceArguments('service-id', 'staging-id'), [
+  assert.deepEqual(railwayClearSourceArguments('service-id', 'sandbox-id'), [
     'api',
     '--raw-var',
     'serviceId=service-id',
     '--raw-var',
-    'environmentId=staging-id',
+    'environmentId=sandbox-id',
     '--compact',
     'mutation ClearSource($serviceId: String!, $environmentId: String!) { serviceInstanceUpdate(serviceId: $serviceId, environmentId: $environmentId, input: { source: { repo: null } }) }',
   ])
@@ -207,14 +186,14 @@ test('plans a deterministic Railway standby transition without deleting services
   assert.doesNotThrow(() =>
     assertDisconnectScope(disconnect, [{ id: 'shared-api', source: { repo: null } }])
   )
-  assert.throws(() => main(['--environment', 'staging']), /explicit --project/)
+  assert.throws(() => main(['--environment', 'production']), /explicit --project/)
   const sourceOnly = planStandbyActions({
-    environment: 'staging',
+    environment: 'production',
     services: [
       {
         id: 'shared-api',
         name: '@control-plane/control-api',
-        source: { repo: 'staging/repo' },
+        source: { repo: 'sandbox/repo' },
         repoTriggerCount: 0,
       },
       { id: 'worker', name: '@control-plane/workflow-worker' },
@@ -248,19 +227,19 @@ test('plans a deterministic Railway standby transition without deleting services
   ])
 
   assert.throws(
-    () => main(['--environment', 'production', '--apply', '--confirm', 'staging']),
+    () => main(['--environment', 'production', '--apply', '--confirm', 'sandbox']),
     /requires --confirm to exactly match/
   )
   assert.throws(
     () =>
       planStandbyActions({
-        environment: 'staging',
+        environment: 'production',
         services: [{ id: 'obsolete', name: '@control-plane/runtime-worker' }],
       }),
     /Unexpected Railway service/
   )
   assert.throws(
-    () => planStandbyActions({ environment: 'staging', services: [] }),
+    () => planStandbyActions({ environment: 'production', services: [] }),
     /Missing expected Railway service.*control-api.*workflow-worker.*restate/
   )
   assert.throws(
@@ -277,7 +256,7 @@ test('plans a deterministic Railway standby transition without deleting services
 
   assert.deepEqual(
     planStandbyActions({
-      environment: 'staging',
+      environment: 'production',
       services: [
         {
           id: 'control-service',
@@ -314,7 +293,7 @@ test('plans a deterministic Railway standby transition without deleting services
     [
       {
         type: 'disconnect-source',
-        environment: 'staging',
+        environment: 'production',
         serviceId: 'control-service',
         serviceName: '@control-plane/control-api',
       },
@@ -325,7 +304,7 @@ test('plans a deterministic Railway standby transition without deleting services
       },
       {
         type: 'disconnect-source',
-        environment: 'staging',
+        environment: 'production',
         serviceId: 'worker-service',
         serviceName: '@control-plane/workflow-worker',
       },
@@ -489,7 +468,7 @@ test('packages the hosted simple profile as one hardened user-owned composition'
   assert.match(compose, /APP_NAME:\s*hosted-control-plane/)
   assert.doesNotMatch(postgresBlock, /\n\s+ports:/)
   assert.doesNotMatch(restateBlock, /\n\s+ports:/)
-  assert.match(dockerfile, /^FROM oven\/bun:1\.4\.3@sha256:[a-f0-9]{64}/m)
+  assert.match(dockerfile, /^FROM oven\/bun:1\.4\.4@sha256:[a-f0-9]{64}/m)
   assert.match(dockerfile, /ARG APP_NAME=local-control-plane/)
   assert.match(dockerfile, /bun install --frozen-lockfile --production --ignore-scripts/)
   assert.doesNotMatch(dockerfile, /COPY --from=build --chown=bun:bun \/workspace \/workspace/)
@@ -535,4 +514,46 @@ test('does not retain the former AWS deployment tree', async () => {
   await assert.rejects(
     readRepositoryFile('infrastructure/terraform/environments/production/main.tf')
   )
+})
+
+test('production validation requires portable PostgreSQL qualification', async () => {
+  const workflow = await readRepositoryFile('.github/workflows/postgres-pull-request.yml')
+  for (const command of [
+    'bun run db:check',
+    'fresh-schema-bootstrap.integration.test.mjs',
+    'pool-teardown.integration.test.mjs',
+    'cp1-embedded-durable-execution.test.mjs',
+    'run-hosted-graph-qualification.sh',
+    'docker compose down --volumes',
+  ])
+    assert.ok(workflow.includes(command), command)
+  assert.doesNotMatch(workflow, /\$\{\{\s*secrets\./)
+  const validation = await readRepositoryFile('.github/workflows/validation.yml')
+  assert.match(validation, /uses: \.\/\.github\/workflows\/postgres-pull-request\.yml/)
+  assert.match(validation, /needs: \[mode, validation_runtime, postgres_qualification\]/)
+})
+
+test('production IaC refuses every other environment before constructing any resource', async () => {
+  const source = (await readRepositoryFile('.railway/railway.ts'))
+    .replace(/^import .*\n/gm, '')
+    .replace('export default defineRailway', 'globalThis.author = defineRailway')
+  const context = {
+    defineRailway: (author) => author,
+    service() {
+      assert.fail('no resource construction is allowed')
+    },
+    volume() {
+      assert.fail('no volume construction is allowed')
+    },
+    github() {
+      assert.fail('no source construction is allowed')
+    },
+  }
+  runInNewContext(source, context)
+  for (const environment of ['test', 'development', 'preview-123', '', undefined]) {
+    assert.throws(
+      () => context.author({ isEnvironment: (name) => name === environment }),
+      /Only the production environment is managed here/
+    )
+  }
 })

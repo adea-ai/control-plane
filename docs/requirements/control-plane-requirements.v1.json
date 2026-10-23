@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "candidate": {
     "commit": "d3e449471d02f791c52196ea296a5a8a653a4dd4",
-    "ref": "staging",
+    "ref": "sandbox",
     "recordedAt": "2026-08-30T17:50:10Z",
     "toolchain": {
       "node": "24.18.0",
@@ -714,12 +714,12 @@
   "deploymentProfiles": [
     {
       "id": "cloud",
-      "composition": "Railway + Neon PostgreSQL + Cloudflare R2 + Restate + remote RuntimeTransport",
+      "composition": "Railway + PostgreSQL PostgreSQL + Cloudflare R2 + Restate + remote RuntimeTransport",
       "classification": "partially_verified",
       "owner": "managed-cloud",
       "observedAt": "2026-09-07",
       "commit": "a76f27453e558525a05089e3c88085153a63a528",
-      "result": "Merged M11 candidate passed bounded deterministic Railway staging acceptance, terminal Neon state, R2 integrity, and replay after Restate rediscovery; managed Pi, production, current-candidate capacity, and timed disaster recovery were not certified.",
+      "result": "Merged M11 candidate passed bounded deterministic Railway sandbox acceptance, terminal PostgreSQL state, R2 integrity, and replay after Restate rediscovery; managed Pi, production, current-candidate capacity, and timed disaster recovery were not certified.",
       "evidence": [
         {
           "kind": "environment",
@@ -736,7 +736,7 @@
         "issue": 194,
         "severity": "high",
         "owner": "managed-cloud",
-        "disposition": "Extend bounded staging evidence to the full frozen M11 runtime and recovery matrix; certify production readiness, capacity, and timed recovery."
+        "disposition": "Extend bounded sandbox evidence to the full frozen M11 runtime and recovery matrix; certify production readiness, capacity, and timed recovery."
       }
     },
     {
@@ -986,14 +986,14 @@
         {
           "kind": "document",
           "path": "infrastructure/railway/environment.json",
-          "name": "staging sets R2_PREFIX=staging/, production unprefixed"
+          "name": "sandbox sets R2_PREFIX=sandbox/, production unprefixed"
         }
       ],
       "gap": {
         "issue": 190,
         "severity": "high",
         "owner": "artifact-integration",
-        "disposition": "In-repo, environment-isolated key prefixes are validated at configuration load and applied to every object address across staging/production per the Railway manifest, and the ObjectStore bucket holds only Control Plane artifacts (no Agent HQ authority delegation path exists). Remaining: live deployment evidence that staging and production use distinct credentials and that a staging-credential read against production keys is denied, plus lifecycle-control evidence on the deployed buckets — these require the deployed pair and cannot be produced in-repo."
+        "disposition": "In-repo, environment-isolated key prefixes are validated at configuration load and applied to every object address across sandbox/production per the Railway manifest, and the ObjectStore bucket holds only Control Plane artifacts (no Agent HQ authority delegation path exists). Remaining: live deployment evidence that sandbox and production use distinct credentials and that a sandbox-credential read against production keys is denied, plus lifecycle-control evidence on the deployed buckets \u2014 these require the deployed pair and cannot be produced in-repo."
       }
     },
     {
@@ -1184,7 +1184,7 @@
         "issue": 190,
         "severity": "high",
         "owner": "artifact-integration",
-        "disposition": "Remote Control Plane state references artifacts and grants only through opaque validated identifiers (art_ ULIDs, grant:<opaque> refs; path-shaped references are rejected at the boundary), and no Control Plane schema stores absolute local paths. Remaining: the trusted-execution-host half — the RuntimeNode host mapping opaque local_reference_id values to canonical paths inside the approved grant — is the M12 desktop host surface and cannot be implemented or probed standalone."
+        "disposition": "Remote Control Plane state references artifacts and grants only through opaque validated identifiers (art_ ULIDs, grant:<opaque> refs; path-shaped references are rejected at the boundary), and no Control Plane schema stores absolute local paths. Remaining: the trusted-execution-host half \u2014 the RuntimeNode host mapping opaque local_reference_id values to canonical paths inside the approved grant \u2014 is the M12 desktop host surface and cannot be implemented or probed standalone."
       }
     },
     {
@@ -1271,7 +1271,7 @@
         "issue": 194,
         "severity": "high",
         "owner": "artifact-integration",
-        "disposition": "Adjudicated 2026-09-20 against main: no cloud Artifact promotion flow exists in the candidate (packages/object-store has no promotion path; tests/container-promotion.test.mjs covers container images, not Artifacts; tests/m9-cloud-certification.test.mjs 'proves terminal Neon state, retained R2 integrity, and idempotent API replay' exercises certification fixtures through injected fakes, and scripts/certify-m9-cloud.mjs is operator-run, not a CI lane). Local/Self-hosted references remain authoritative by construction. Promotion failure/cancel semantics arrive with the M12 promotion consumer surface. Owner artifact-integration; M12-gated, not silently dropped."
+        "disposition": "Adjudicated 2026-09-20 against main: no cloud Artifact promotion flow exists in the candidate (packages/object-store has no promotion path; tests/container-promotion.test.mjs covers container images, not Artifacts; tests/m9-cloud-certification.test.mjs 'proves terminal PostgreSQL state, retained R2 integrity, and idempotent API replay' exercises certification fixtures through injected fakes, and scripts/certify-m9-cloud.mjs is operator-run, not a CI lane). Local/Self-hosted references remain authoritative by construction. Promotion failure/cancel semantics arrive with the M12 promotion consumer surface. Owner artifact-integration; M12-gated, not silently dropped."
       }
     },
     {
@@ -1324,7 +1324,7 @@
       "id": "CP-ART-019",
       "sourceId": "artifact-storage-spec",
       "heading": "Environment isolation (section 14)",
-      "requirement": "Preview and staging Artifact stores or prefixes and credentials remain separate from production and cannot read production Artifacts.",
+      "requirement": "Preview and sandbox Artifact stores or prefixes and credentials remain separate from production and cannot read production Artifacts.",
       "normativeState": "accepted",
       "classification": "partially_verified",
       "owner": "artifact-integration",
@@ -1356,14 +1356,14 @@
         {
           "kind": "document",
           "path": "infrastructure/railway/environment.json",
-          "name": "staging prefixed, production unprefixed"
+          "name": "sandbox prefixed, production unprefixed"
         }
       ],
       "gap": {
         "issue": 190,
         "severity": "high",
         "owner": "artifact-integration",
-        "disposition": "The in-repo half is complete and tested: validated per-environment R2 key prefixes are applied to every physical object address while callers see unprefixed keys, wired through the managed-cloud configuration and the Railway manifest (staging prefixed, production unprefixed). Remaining operator verification: live distinct credentials per environment and a cross-environment read-denial check on the deployed staging/production pair."
+        "disposition": "The in-repo half is complete and tested: validated per-environment R2 key prefixes are applied to every physical object address while callers see unprefixed keys, wired through the managed-cloud configuration and the Railway manifest (sandbox prefixed, production unprefixed). Remaining operator verification: live distinct credentials per environment and a cross-environment read-denial check on the deployed sandbox/production pair."
       }
     },
     {
@@ -1389,7 +1389,7 @@
         {
           "kind": "document",
           "path": "scripts/certify-m9-cloud.mjs",
-          "scope": "Certification artifact fixture sets an explicit retentionExpiresAt (30 days) — the only explicit artifact retention in the candidate."
+          "scope": "Certification artifact fixture sets an explicit retentionExpiresAt (30 days) \u2014 the only explicit artifact retention in the candidate."
         }
       ],
       "gap": {
@@ -1440,7 +1440,7 @@
         {
           "kind": "test",
           "path": "packages/object-store/src/index.test.mjs",
-          "scope": "'fails closed when provider content does not match the stored checksum' — the digest-verification primitive a future migration would reuse; no dual-read/dual-write migration flow exists."
+          "scope": "'fails closed when provider content does not match the stored checksum' \u2014 the digest-verification primitive a future migration would reuse; no dual-read/dual-write migration flow exists."
         }
       ],
       "gap": {
@@ -1543,7 +1543,7 @@
         {
           "kind": "test",
           "path": "tests/m9-production-hardening.test.mjs",
-          "scope": "'injects failures at the durable command acceptance boundary and recovers exactly once' — before-accept injection persists nothing; after-accept injection replays."
+          "scope": "'injects failures at the durable command acceptance boundary and recovers exactly once' \u2014 before-accept injection persists nothing; after-accept injection replays."
         },
         {
           "kind": "test",
@@ -1601,12 +1601,12 @@
         {
           "kind": "test",
           "path": "tests/m11-standalone-e2e.test.mjs",
-          "scope": "'SDK response settles a real Restate interaction and replays a lost HTTP ACK without another runtime input' — authenticated reply loss over real HTTP+Restate."
+          "scope": "'SDK response settles a real Restate interaction and replays a lost HTTP ACK without another runtime input' \u2014 authenticated reply loss over real HTTP+Restate."
         },
         {
           "kind": "test",
           "path": "tests/cp1-embedded-durable-execution.test.mjs",
-          "scope": "Profile conformance matrix (cloud, hosted-server, local, hosted-simple) runs the same acceptance/workflow contract cases; pull requests run Postgres legs against local Compose PostgreSQL without repository secrets, and trusted-main CI repeats them against an ephemeral Neon preview when required Neon inputs are configured."
+          "scope": "Profile conformance matrix (cloud, hosted-server, local, hosted-simple) runs the same acceptance/workflow contract cases; pull requests run Postgres legs against local Compose PostgreSQL without repository secrets, and trusted-main CI repeats them against an ephemeral PostgreSQL preview when required PostgreSQL inputs are configured."
         }
       ]
     },
@@ -1669,7 +1669,7 @@
         "issue": 194,
         "severity": "high",
         "owner": "durable-execution",
-        "disposition": "Reconciled 2026-09-22 after #636: the ≥30-day inbox retention floor remains enforced at acceptance, but SQLite and PostgreSQL inbox/event deletion now fail closed with eligibility-required errors before storage access. The earlier claim of physical expiry sweeping is superseded, not current acceptance evidence. Remaining: explicit protected logical-execution retention, indexed eligibility with holds/references/replay protection, authorized physical deletion, and frozen-candidate recovery/profile evidence. Scheduler tests and expiry indexes alone do not satisfy these gates; monitor retained-data growth while deletion is disabled."
+        "disposition": "Reconciled 2026-09-22 after #636: the \u226530-day inbox retention floor remains enforced at acceptance, but SQLite and PostgreSQL inbox/event deletion now fail closed with eligibility-required errors before storage access. The earlier claim of physical expiry sweeping is superseded, not current acceptance evidence. Remaining: explicit protected logical-execution retention, indexed eligibility with holds/references/replay protection, authorized physical deletion, and frozen-candidate recovery/profile evidence. Scheduler tests and expiry indexes alone do not satisfy these gates; monitor retained-data growth while deletion is disabled."
       }
     },
     {
@@ -1700,7 +1700,7 @@
         {
           "kind": "test",
           "path": "packages/database/src/integration.test.mjs",
-          "scope": "'persists lifecycle transitions and multiple runtime attempts with optimistic concurrency' — new attempt identities under the same execution."
+          "scope": "'persists lifecycle transitions and multiple runtime attempts with optimistic concurrency' \u2014 new attempt identities under the same execution."
         },
         {
           "kind": "test",
@@ -1710,14 +1710,14 @@
         {
           "kind": "test",
           "path": "packages/runtime-sdk/src/routing.test.mjs",
-          "scope": "'ranks only eligible candidates and returns explainable alternatives'; 'is invariant to candidate order and breaks exact ties by connection ID' — explainable deterministic routing at selection."
+          "scope": "'ranks only eligible candidates and returns explainable alternatives'; 'is invariant to candidate order and breaks exact ties by connection ID' \u2014 explainable deterministic routing at selection."
         }
       ],
       "gap": {
         "issue": 194,
         "severity": "high",
         "owner": "durable-execution",
-        "disposition": "Adjudicated 2026-09-20: retries retain execution identity with per-attempt identities (Postgres optimistic-concurrency attempts, embedded-runtime later-attempt retries); transport duplicates neither duplicate effects nor billable attempts (usage-ledger idempotent dedupe, effect-key reuse in workflow-worker/managed-pi/ACP redelivery). Remaining: explicit attempt reassignment that records routing rationale is not a modeled operation — routing decisions are explainable at selection time only; reassignment identity is tracked separately under CP-RNODE-020. Owner durable-execution."
+        "disposition": "Adjudicated 2026-09-20: retries retain execution identity with per-attempt identities (Postgres optimistic-concurrency attempts, embedded-runtime later-attempt retries); transport duplicates neither duplicate effects nor billable attempts (usage-ledger idempotent dedupe, effect-key reuse in workflow-worker/managed-pi/ACP redelivery). Remaining: explicit attempt reassignment that records routing rationale is not a modeled operation \u2014 routing decisions are explainable at selection time only; reassignment identity is tracked separately under CP-RNODE-020. Owner durable-execution."
       }
     },
     {
@@ -1775,12 +1775,12 @@
         {
           "kind": "test",
           "path": "tests/m3-durable-execution.test.mjs",
-          "scope": "'moves stale work into explicit idempotent reconciliation' (stale_heartbeat → wait_for_runtime, replay-identical)."
+          "scope": "'moves stale work into explicit idempotent reconciliation' (stale_heartbeat \u2192 wait_for_runtime, replay-identical)."
         },
         {
           "kind": "test",
           "path": "tests/m11-reconciliation-parity.test.mjs",
-          "scope": "'the pinned semantic outcomes hold for both implementations' — lost-ACK never fabricates a terminal claim on Postgres or SQLite (#518/#520 characterization)."
+          "scope": "'the pinned semantic outcomes hold for both implementations' \u2014 lost-ACK never fabricates a terminal claim on Postgres or SQLite (#518/#520 characterization)."
         },
         {
           "kind": "test",
@@ -1823,12 +1823,12 @@
         {
           "kind": "test",
           "path": "tests/m3-durable-execution.test.mjs",
-          "scope": "'makes cancellation/terminal races and expired interactions deterministic' — concurrent cancelled-vs-completed transitions under the same expected version resolve with exactly one winner."
+          "scope": "'makes cancellation/terminal races and expired interactions deterministic' \u2014 concurrent cancelled-vs-completed transitions under the same expected version resolve with exactly one winner."
         },
         {
           "kind": "test",
           "path": "packages/domain/src/interactions.test.mjs",
-          "scope": "'terminal execution result wins deterministically over later cancellation' — resolved terminal state is retained and later responses reject."
+          "scope": "'terminal execution result wins deterministically over later cancellation' \u2014 resolved terminal state is retained and later responses reject."
         },
         {
           "kind": "test",
@@ -1949,7 +1949,7 @@
         {
           "kind": "test",
           "path": "tests/m11-graph-composition.test.mjs",
-          "scope": "'Local and Hosted Simple resume graph approval from their own SQLite database after reconstruction' — graph nodes resume from the durable pinned package rather than substituting state."
+          "scope": "'Local and Hosted Simple resume graph approval from their own SQLite database after reconstruction' \u2014 graph nodes resume from the durable pinned package rather than substituting state."
         }
       ]
     },
@@ -2055,7 +2055,7 @@
         {
           "kind": "test",
           "path": "packages/memory-writeback/src/index.test.mjs",
-          "scope": "'keeps proposals non-canonical and deduplicates duplicate delivery' — retrieval-side write proposals never touch canonical memory."
+          "scope": "'keeps proposals non-canonical and deduplicates duplicate delivery' \u2014 retrieval-side write proposals never touch canonical memory."
         }
       ]
     },
@@ -2104,7 +2104,7 @@
         {
           "kind": "test",
           "path": "packages/memory-writeback/src/index.test.mjs",
-          "scope": "'rejects absent and read-only providers while ordinary execution remains independent' (advertised-capability gate); 'commits with one stable idempotent effect and reconciles timeout-after-effect'; 'durably records rejection and ambiguous non-effects for reconciliation' (reconciliation_required, writeCount stays 1 — no blind repetition); 'reconciles an ambiguous idempotent write through status without replaying the effect'; 'keeps unknown and unavailable status reconciliation parked without replay'."
+          "scope": "'rejects absent and read-only providers while ordinary execution remains independent' (advertised-capability gate); 'commits with one stable idempotent effect and reconciles timeout-after-effect'; 'durably records rejection and ambiguous non-effects for reconciliation' (reconciliation_required, writeCount stays 1 \u2014 no blind repetition); 'reconciles an ambiguous idempotent write through status without replaying the effect'; 'keeps unknown and unavailable status reconciliation parked without replay'."
         },
         {
           "kind": "test",
@@ -2171,17 +2171,17 @@
         {
           "kind": "test",
           "path": "packages/sqlite-persistence/src/repositories.test.mjs",
-          "scope": "'serializes concurrent acceptance and replays it after a full reopen' — CommandInbox as inspectable SQLite authority."
+          "scope": "'serializes concurrent acceptance and replays it after a full reopen' \u2014 CommandInbox as inspectable SQLite authority."
         },
         {
           "kind": "test",
           "path": "packages/database/src/integration.test.mjs",
-          "scope": "'recovers a committed command after the accepting process exits before replying'; 'commits execution transitions and ordered outbox events atomically' — PostgreSQL authority for Hosted server/cloud."
+          "scope": "'recovers a committed command after the accepting process exits before replying'; 'commits execution transitions and ordered outbox events atomically' \u2014 PostgreSQL authority for Hosted server/cloud."
         },
         {
           "kind": "test",
           "path": "tests/cp1-embedded-durable-execution.test.mjs",
-          "scope": "'completes an accepted execution through the embedded queue with no Restate'; 'SQLite profiles run the workflow contract cases identically'; the Postgres conformance matrix ('matches the cloud Postgres baseline...') runs against local Compose PostgreSQL for pull requests and an ephemeral Neon preview on trusted-main CI when required Neon inputs are configured — records, not Restate history, are the queried authority."
+          "scope": "'completes an accepted execution through the embedded queue with no Restate'; 'SQLite profiles run the workflow contract cases identically'; the Postgres conformance matrix ('matches the cloud Postgres baseline...') runs against local Compose PostgreSQL for pull requests and an ephemeral PostgreSQL preview on trusted-main CI when required PostgreSQL inputs are configured \u2014 records, not Restate history, are the queried authority."
         },
         {
           "kind": "test",
@@ -2208,12 +2208,12 @@
         {
           "kind": "test",
           "path": "packages/context/src/provider.test.mjs",
-          "scope": "'never broadens scope and applies pinned failure behavior' — required+fail rejects PROVIDER_UNAVAILABLE, required+await_input resolves awaiting_input; 'preserves the no-provider execution path when disabled or unconfigured'."
+          "scope": "'never broadens scope and applies pinned failure behavior' \u2014 required+fail rejects PROVIDER_UNAVAILABLE, required+await_input resolves awaiting_input; 'preserves the no-provider execution path when disabled or unconfigured'."
         },
         {
           "kind": "test",
           "path": "packages/contracts/src/context-providers.ts",
-          "scope": "failureBehavior enum ['continue_without','fail','await_input'] with .default('continue_without') — preferred default; compositions (apps/local-control-plane/src/composition.ts, apps/hosted-control-plane/src/composition.ts) pin continue_without."
+          "scope": "failureBehavior enum ['continue_without','fail','await_input'] with .default('continue_without') \u2014 preferred default; compositions (apps/local-control-plane/src/composition.ts, apps/hosted-control-plane/src/composition.ts) pin continue_without."
         },
         {
           "kind": "test",
@@ -2223,7 +2223,7 @@
         {
           "kind": "test",
           "path": "packages/context/src/authority.test.mjs",
-          "scope": "'degrades to the no-provider path when the provider policy is disabled'; 'derives the provider request solely from the grant, registration and policy' — await_input only enters via an explicit pinned policy."
+          "scope": "'degrades to the no-provider path when the provider policy is disabled'; 'derives the provider request solely from the grant, registration and policy' \u2014 await_input only enters via an explicit pinned policy."
         }
       ]
     },
@@ -2272,17 +2272,17 @@
         {
           "kind": "test",
           "path": "packages/context/src/provider.test.mjs",
-          "scope": "'selects by scope, policy, location, capability, health, and budget'; 'rejects stale, over-budget, and scope-mismatched output and substitutes deterministically'; 'provides two fake profiles and a reusable conformance harness' — runContextProviderConformance asserts {bounded, deterministic, scopePreserved}."
+          "scope": "'selects by scope, policy, location, capability, health, and budget'; 'rejects stale, over-budget, and scope-mismatched output and substitutes deterministically'; 'provides two fake profiles and a reusable conformance harness' \u2014 runContextProviderConformance asserts {bounded, deterministic, scopePreserved}."
         },
         {
           "kind": "test",
           "path": "packages/cortana-context-adapter/src/index.test.mjs",
-          "scope": "'cancels timed-out requests and passes provider conformance' — the real Cortana adapter passes the same deterministic-selection conformance."
+          "scope": "'cancels timed-out requests and passes provider conformance' \u2014 the real Cortana adapter passes the same deterministic-selection conformance."
         },
         {
           "kind": "test",
           "path": "packages/runtime-sdk/src/routing.test.mjs",
-          "scope": "'is invariant to candidate order and breaks exact ties by connection ID' — deterministic, order-invariant selection."
+          "scope": "'is invariant to candidate order and breaks exact ties by connection ID' \u2014 deterministic, order-invariant selection."
         }
       ]
     },
@@ -2314,7 +2314,7 @@
         {
           "kind": "test",
           "path": "packages/domain/src/context-command.test.mjs",
-          "scope": "'creates a bounded context-read record without fabricated runtime identities'; 'rejects inconsistent chronology, delivery, terminal metadata, and oversized commands' — workspace/mapped scope, capability, budget and policy snapshot are schema-pinned on the durable read command."
+          "scope": "'creates a bounded context-read record without fabricated runtime identities'; 'rejects inconsistent chronology, delivery, terminal metadata, and oversized commands' \u2014 workspace/mapped scope, capability, budget and policy snapshot are schema-pinned on the durable read command."
         }
       ]
     },
@@ -2374,7 +2374,7 @@
         {
           "kind": "test",
           "path": "packages/context/src/provider.test.mjs",
-          "scope": "'provides two fake profiles and a reusable conformance harness' — runContextProviderConformance {bounded:true, deterministic:true, scopePreserved:true} is the substitution contract."
+          "scope": "'provides two fake profiles and a reusable conformance harness' \u2014 runContextProviderConformance {bounded:true, deterministic:true, scopePreserved:true} is the substitution contract."
         },
         {
           "kind": "test",
@@ -2384,12 +2384,12 @@
         {
           "kind": "test",
           "path": "tests/m11-context-composition.test.mjs",
-          "scope": "'composed gateway and node deliver a context command end to end from administration-provisioned stores' — the same Task/Execution transport contract with the real adapter."
+          "scope": "'composed gateway and node deliver a context command end to end from administration-provisioned stores' \u2014 the same Task/Execution transport contract with the real adapter."
         },
         {
           "kind": "test",
           "path": "packages/context/src/index.test.mjs",
-          "scope": "'persists a no-provider package using authoritative state and decisions'; 'composes provider contributions without mutating ProjectState authority' — no-provider path yields the same ContextPackage/ExecutionPlan shapes."
+          "scope": "'persists a no-provider package using authoritative state and decisions'; 'composes provider contributions without mutating ProjectState authority' \u2014 no-provider path yields the same ContextPackage/ExecutionPlan shapes."
         }
       ]
     },
@@ -2411,7 +2411,7 @@
         {
           "kind": "test",
           "path": "tests/m11-reconciliation-parity.test.mjs",
-          "scope": "'the pinned semantic outcomes hold for both implementations' — a terminal runtime claim without its result reference is treated as unknown and never adopted; absent runtime record never yields completed."
+          "scope": "'the pinned semantic outcomes hold for both implementations' \u2014 a terminal runtime claim without its result reference is treated as unknown and never adopted; absent runtime record never yields completed."
         },
         {
           "kind": "test",
@@ -2421,14 +2421,14 @@
         {
           "kind": "test",
           "path": "tests/m10-operability.test.mjs",
-          "scope": "'publishes checkpoint, incident, rollback, and host-loss operator contracts' — operator-facing incident contract documentation."
+          "scope": "'publishes checkpoint, incident, rollback, and host-loss operator contracts' \u2014 operator-facing incident contract documentation."
         }
       ],
       "gap": {
         "issue": 194,
         "severity": "high",
         "owner": "durable-execution",
-        "disposition": "Adjudicated 2026-09-20: partial. The authoritative-resolution half is proven: the Control Plane record wins, runtime terminal claims without recorded references are never adopted, lost-ACK outcomes are recovered exactly once, and disagreements park in reconciliation_required with manual-intervention metrics and operator incident contracts. Remaining: no first-class incident record type for terminal-state disagreement and no explicit administrative override path exist in the candidate — override semantics are currently operator-runbook level (docs/operations.md). Owner durable-execution."
+        "disposition": "Adjudicated 2026-09-20: partial. The authoritative-resolution half is proven: the Control Plane record wins, runtime terminal claims without recorded references are never adopted, lost-ACK outcomes are recovered exactly once, and disagreements park in reconciliation_required with manual-intervention metrics and operator incident contracts. Remaining: no first-class incident record type for terminal-state disagreement and no explicit administrative override path exist in the candidate \u2014 override semantics are currently operator-runbook level (docs/operations.md). Owner durable-execution."
       }
     },
     {
@@ -2561,7 +2561,7 @@
         {
           "kind": "test",
           "path": "packages/database/src/integration.test.mjs",
-          "scope": "'atomically retains the first context authoring result and rolls back failed command writes' — authoring recovery rebuilds or rejects without side effects."
+          "scope": "'atomically retains the first context authoring result and rolls back failed command writes' \u2014 authoring recovery rebuilds or rejects without side effects."
         }
       ]
     },
@@ -2591,7 +2591,7 @@
         {
           "kind": "test",
           "path": "apps/workflow-worker/src/execution-workflow.test.mjs",
-          "scope": "'persists bounded runtime failure metadata' — bounded failure metadata persists through the execution path (adjacent to, but not the context-provider gateway result path)."
+          "scope": "'persists bounded runtime failure metadata' \u2014 bounded failure metadata persists through the execution path (adjacent to, but not the context-provider gateway result path)."
         },
         {
           "kind": "test",
@@ -2624,7 +2624,7 @@
         {
           "kind": "test",
           "path": "packages/context/src/provider.test.mjs",
-          "scope": "'never broadens scope and applies pinned failure behavior' (required provider failure rejects PROVIDER_UNAVAILABLE — never silently degrades to none); 'rejects stale, over-budget, and scope-mismatched output and substitutes deterministically'; 'rejects forged digests, token underclaims, and UTF-8 byte overflow before caching'; 'preserves the no-provider execution path when disabled or unconfigured' (omission only when policy permits)."
+          "scope": "'never broadens scope and applies pinned failure behavior' (required provider failure rejects PROVIDER_UNAVAILABLE \u2014 never silently degrades to none); 'rejects stale, over-budget, and scope-mismatched output and substitutes deterministically'; 'rejects forged digests, token underclaims, and UTF-8 byte overflow before caching'; 'preserves the no-provider execution path when disabled or unconfigured' (omission only when policy permits)."
         },
         {
           "kind": "test",
@@ -2659,19 +2659,19 @@
         {
           "kind": "test",
           "path": "apps/runtime-gateway/src/runtime-event-ingestion.test.mjs",
-          "scope": "'persists progress once and classifies duplicate, conflicting, and out-of-order frames' — normalized events carry frame trace correlation end to end."
+          "scope": "'persists progress once and classifies duplicate, conflicting, and out-of-order frames' \u2014 normalized events carry frame trace correlation end to end."
         },
         {
           "kind": "test",
           "path": "tests/m9-production-hardening.test.mjs",
-          "scope": "'correlates the critical execution path without recording a secret canary' — the full span chain (execution.root → plan.compile → workflow.run → runtime.route → model.call → tool.authorize → sandbox.execute → usage.settle → execution.cleanup) correlates under one identity."
+          "scope": "'correlates the critical execution path without recording a secret canary' \u2014 the full span chain (execution.root \u2192 plan.compile \u2192 workflow.run \u2192 runtime.route \u2192 model.call \u2192 tool.authorize \u2192 sandbox.execute \u2192 usage.settle \u2192 execution.cleanup) correlates under one identity."
         }
       ],
       "gap": {
         "issue": 194,
         "severity": "high",
         "owner": "observability",
-        "disposition": "Adjudicated 2026-09-20: still partial on main. Durable runtime command records carry first-class correlation (trace/request/project/task/agent) persisted through PostgreSQL JSONB (migration 0046) and SQLite, with continuity assertions tying the durable command to the accepted execution's correlation (packages/database/src/integration.test.mjs 'persists runtime command delivery state across gateway repository restarts'; packages/domain/src/runtime-command.ts derive-from-envelope), provider reads carry operation identity/deadlines, and the critical path correlates in spans. Remaining: the live dispatch producer still derives the trace from the execution, not the accepted request — apps/workflow-worker/src/managed-pi-remote-command.ts builds traceId as identifier('trc', input.executionId), so the original request trace is not yet threaded into the runtime dispatch envelope. Owner observability."
+        "disposition": "Adjudicated 2026-09-20: still partial on main. Durable runtime command records carry first-class correlation (trace/request/project/task/agent) persisted through PostgreSQL JSONB (migration 0046) and SQLite, with continuity assertions tying the durable command to the accepted execution's correlation (packages/database/src/integration.test.mjs 'persists runtime command delivery state across gateway repository restarts'; packages/domain/src/runtime-command.ts derive-from-envelope), provider reads carry operation identity/deadlines, and the critical path correlates in spans. Remaining: the live dispatch producer still derives the trace from the execution, not the accepted request \u2014 apps/workflow-worker/src/managed-pi-remote-command.ts builds traceId as identifier('trc', input.executionId), so the original request trace is not yet threaded into the runtime dispatch envelope. Owner observability."
       }
     },
     {
@@ -2692,7 +2692,7 @@
         {
           "kind": "test",
           "path": "packages/telemetry/src/consistency.ts",
-          "scope": "Cataloged consistency metrics: control.command_inbox.duplicate.count, control.command_inbox.conflict.count, context.provider_resolution.count (outcomes included/degraded/omitted/awaiting_input/disabled × reasons PROVIDER_SELECTED/CACHE_HIT/POLICY_DISABLED/NO_ELIGIBLE_PROVIDER/PROVIDER_UNAVAILABLE/PROVIDER_REVOKED/PROVIDER_SCOPE_MISMATCH/PROVIDER_OUTPUT_INVALID/PROVIDER_OUTPUT_STALE/PROVIDER_BUDGET_EXCEEDED), memory.write.decision.count (approved/denied/expired), control.event.quarantine.count, execution.reconciliation.count, execution.manual_intervention.count — bounded labels by construction."
+          "scope": "Cataloged consistency metrics: control.command_inbox.duplicate.count, control.command_inbox.conflict.count, context.provider_resolution.count (outcomes included/degraded/omitted/awaiting_input/disabled \u00d7 reasons PROVIDER_SELECTED/CACHE_HIT/POLICY_DISABLED/NO_ELIGIBLE_PROVIDER/PROVIDER_UNAVAILABLE/PROVIDER_REVOKED/PROVIDER_SCOPE_MISMATCH/PROVIDER_OUTPUT_INVALID/PROVIDER_OUTPUT_STALE/PROVIDER_BUDGET_EXCEEDED), memory.write.decision.count (approved/denied/expired), control.event.quarantine.count, execution.reconciliation.count, execution.manual_intervention.count \u2014 bounded labels by construction."
         },
         {
           "kind": "test",
@@ -2702,7 +2702,7 @@
         {
           "kind": "test",
           "path": "tests/m11-consistency-metric-wiring.test.mjs",
-          "scope": "'the composed gateway emits bounded consistency metrics during a delivery and read scenario' — end-to-end emission through the composed gateway."
+          "scope": "'the composed gateway emits bounded consistency metrics during a delivery and read scenario' \u2014 end-to-end emission through the composed gateway."
         },
         {
           "kind": "test",
@@ -2714,7 +2714,7 @@
         "issue": 194,
         "severity": "high",
         "owner": "observability",
-        "disposition": "Adjudicated 2026-09-20: partial, substantially improved. Covered series: inbox duplicates and payload conflicts, provider selection/omission/degradation (with staleness/scope/budget/revocation reasons), memory-write approval/denial/expiry, dead letters (quarantine with reason categories), reconciliation repairs and manual intervention — all cataloged, bounded-label, exporter-isolated, wired via createConsistencyMetricEmitter into all four compositions and proven end-to-end through the composed gateway in CI. Remaining vs the requirement: no dedicated series for provider latency/error/timeout, contribution rebuild/rejection counters, memory-write duplicate/reconciliation counters, or sequence-gap detection. Owner observability."
+        "disposition": "Adjudicated 2026-09-20: partial, substantially improved. Covered series: inbox duplicates and payload conflicts, provider selection/omission/degradation (with staleness/scope/budget/revocation reasons), memory-write approval/denial/expiry, dead letters (quarantine with reason categories), reconciliation repairs and manual intervention \u2014 all cataloged, bounded-label, exporter-isolated, wired via createConsistencyMetricEmitter into all four compositions and proven end-to-end through the composed gateway in CI. Remaining vs the requirement: no dedicated series for provider latency/error/timeout, contribution rebuild/rejection counters, memory-write duplicate/reconciliation counters, or sequence-gap detection. Owner observability."
       }
     },
     {
@@ -2745,17 +2745,17 @@
         {
           "kind": "test",
           "path": "scripts/m9-evidence-matrices.mjs",
-          "scope": "Secret-canary sink matrix (logs, traces, events, errors, checkpoints, model_context, public_api, pi_durable_admissions, pi_durable_progress, pi_durable_sessions, pi_lead_preparations) — every sink bound to a named test; executed by bun run test:secret-canaries."
+          "scope": "Secret-canary sink matrix (logs, traces, events, errors, checkpoints, model_context, public_api, pi_durable_admissions, pi_durable_progress, pi_durable_sessions, pi_lead_preparations) \u2014 every sink bound to a named test; executed by bun run test:secret-canaries."
         },
         {
           "kind": "test",
           "path": "tests/m10-operability.test.mjs",
-          "scope": "'binds encrypted relay recovery and telemetry to content-safe durable identities' — HPKE docs, content-redaction-v1 conformance fixture, operations doc 'must not require plaintext sensitive execution content'."
+          "scope": "'binds encrypted relay recovery and telemetry to content-safe durable identities' \u2014 HPKE docs, content-redaction-v1 conformance fixture, operations doc 'must not require plaintext sensitive execution content'."
         },
         {
           "kind": "test",
           "path": "packages/remote-control-relay/src/index.test.mjs",
-          "scope": "'stores ciphertext-only records and redelivers until acknowledged'; 'accepts concurrent duplicate delivery exactly once and zeroes plaintext afterward'; 'loads and validates private key material only through SecretsProvider leases'; 'does not expose deterministic ephemeral key material through the production API' — HPKE plaintext/keys never in durable records or telemetry."
+          "scope": "'stores ciphertext-only records and redelivers until acknowledged'; 'accepts concurrent duplicate delivery exactly once and zeroes plaintext afterward'; 'loads and validates private key material only through SecretsProvider leases'; 'does not expose deterministic ephemeral key material through the production API' \u2014 HPKE plaintext/keys never in durable records or telemetry."
         }
       ]
     },
@@ -3319,7 +3319,7 @@
         "issue": 190,
         "severity": "high",
         "owner": "runtime-security",
-        "disposition": "Redaction is implemented and probed for reusable tokens, provider credentials, private-key material, environment secrets, loopback endpoints, database/filesystem paths, and file-content-bearing diagnostics across structured logs, traces, errors, and Sentry, and relay records hold ciphertext envelopes plus bounded routing metadata only. Remaining: the M12 desktop diagnostic classes — local-content keys/plaintext, provider evidence/native memory, raw file content, and sensitive native command fields on the RuntimeNode host — which have no standalone surface on main to redact or probe."
+        "disposition": "Redaction is implemented and probed for reusable tokens, provider credentials, private-key material, environment secrets, loopback endpoints, database/filesystem paths, and file-content-bearing diagnostics across structured logs, traces, errors, and Sentry, and relay records hold ciphertext envelopes plus bounded routing metadata only. Remaining: the M12 desktop diagnostic classes \u2014 local-content keys/plaintext, provider evidence/native memory, raw file content, and sensitive native command fields on the RuntimeNode host \u2014 which have no standalone surface on main to redact or probe."
       }
     },
     {
@@ -3426,7 +3426,7 @@
         "issue": 190,
         "severity": "high",
         "owner": "runtime-security",
-        "disposition": "HostSecureHandleSecretsProvider with bounded zeroizing leases is implemented and unit-tested, and executors receive only opaque handles (the relay loads private key material exclusively through SecretsProvider leases with rotation and immediate revocation). Remaining: a concrete OS-secure host resolver (keychain/credential-manager integration) and supported packaged-Local composition wiring — confirmed absent from packages/secrets on main — plus packaging evidence, so no in-repo proof that secret values land in OS-secure storage exists."
+        "disposition": "HostSecureHandleSecretsProvider with bounded zeroizing leases is implemented and unit-tested, and executors receive only opaque handles (the relay loads private key material exclusively through SecretsProvider leases with rotation and immediate revocation). Remaining: a concrete OS-secure host resolver (keychain/credential-manager integration) and supported packaged-Local composition wiring \u2014 confirmed absent from packages/secrets on main \u2014 plus packaging evidence, so no in-repo proof that secret values land in OS-secure storage exists."
       }
     },
     {
@@ -3548,7 +3548,7 @@
         "issue": 190,
         "severity": "high",
         "owner": "runtime-security",
-        "disposition": "Revocation demonstrably blocks new requests at both the execution host (revoked grant reports unavailable and dispatches zero commands) and authoring (administration revoke denies previously-authorized principals), and the revoke operation is metadata-only by construction — no code path deletes provider-owned data. Remaining: an explicit adversarial probe asserting provider-owned data survives revocation on the host/driver composition (e.g., re-grant restores access to the same data with nothing deleted); the desktop-side local provider data lifecycle is M12 surface."
+        "disposition": "Revocation demonstrably blocks new requests at both the execution host (revoked grant reports unavailable and dispatches zero commands) and authoring (administration revoke denies previously-authorized principals), and the revoke operation is metadata-only by construction \u2014 no code path deletes provider-owned data. Remaining: an explicit adversarial probe asserting provider-owned data survives revocation on the host/driver composition (e.g., re-grant restores access to the same data with nothing deleted); the desktop-side local provider data lifecycle is M12 surface."
       }
     },
     {
@@ -3753,7 +3753,7 @@
         "issue": 195,
         "severity": "high",
         "owner": "product-architecture",
-        "disposition": "Current canonical Control Plane PRD revision 46 was reviewed on 2026-09-30; file modification is 2026-09-29 and exact exported-text SHA-256 is recorded in docs/requirements/control-plane-source-inventory.md. The source's internal Last reviewed marker remains 2026-08-28. Sections 8.1–8.3 (P00078–P00092) retain their bounded atomic extraction; the other current source clauses and current implementation/control mapping remain incomplete under #195. Section 9's Restate bundle wording needs an explicit qualifier against the later default-Local embedded SQLite/optional-Restate baseline. The historical revision-40/revision-43 comparison remains historical metadata evidence; candidate evidence and classification stay unchanged."
+        "disposition": "Current canonical Control Plane PRD revision 46 was reviewed on 2026-09-30; file modification is 2026-09-29 and exact exported-text SHA-256 is recorded in docs/requirements/control-plane-source-inventory.md. The source's internal Last reviewed marker remains 2026-08-28. Sections 8.1\u20138.3 (P00078\u2013P00092) retain their bounded atomic extraction; the other current source clauses and current implementation/control mapping remain incomplete under #195. Section 9's Restate bundle wording needs an explicit qualifier against the later default-Local embedded SQLite/optional-Restate baseline. The historical revision-40/revision-43 comparison remains historical metadata evidence; candidate evidence and classification stay unchanged."
       }
     },
     {
@@ -5564,7 +5564,7 @@
         "issue": 195,
         "severity": "medium",
         "owner": "catalog",
-        "disposition": "Unchanged: no field-by-field mapping of the textual spec's profile fields and per-field merge modes to the split catalog/policy schemas exists in-repo. The schemas have no per-field merge-mode concept at all (no mergeStrategy/mergeMode in packages/domain/src/catalog-models.ts or execution-constraints.ts); docs/profiles-and-skills.md documents only the constraint-layer composition rule (lower precedence may narrow, never broaden). The Agent & Skill Specification got only a banned-pattern 'clean' scan + date refresh in #195 tranche 5 — a drift scan is not a field mapping."
+        "disposition": "Unchanged: no field-by-field mapping of the textual spec's profile fields and per-field merge modes to the split catalog/policy schemas exists in-repo. The schemas have no per-field merge-mode concept at all (no mergeStrategy/mergeMode in packages/domain/src/catalog-models.ts or execution-constraints.ts); docs/profiles-and-skills.md documents only the constraint-layer composition rule (lower precedence may narrow, never broaden). The Agent & Skill Specification got only a banned-pattern 'clean' scan + date refresh in #195 tranche 5 \u2014 a drift scan is not a field mapping."
       }
     },
     {
@@ -5948,7 +5948,7 @@
       "id": "CP-EVAL-004",
       "sourceId": "evaluation-plan",
       "heading": "Initial Evaluation Harness",
-      "requirement": "Maintain a versioned 24–32 task corpus across software, research, writing, and planning with anti-overdelegation cases.",
+      "requirement": "Maintain a versioned 24\u201332 task corpus across software, research, writing, and planning with anti-overdelegation cases.",
       "normativeState": "planned",
       "classification": "partially_verified",
       "owner": "evaluation",
@@ -6295,7 +6295,7 @@
           "path": "docs/infrastructure.md"
         }
       ],
-      "assessment": "The original AWS, ECS, and Terraform-oriented deployment baseline is no longer accepted; M9 replaced it with Railway, Neon, R2, and Restate, while M10 added Local and Hosted profiles.",
+      "assessment": "The original AWS, ECS, and Terraform-oriented deployment baseline is no longer accepted; M9 replaced it with Railway, PostgreSQL, R2, and Restate, while M10 added Local and Hosted profiles.",
       "supersession": {
         "issue": 195,
         "severity": "medium",
@@ -7443,7 +7443,7 @@
           "path": "packages/production-readiness/src/load-testing.test.mjs"
         }
       ],
-      "assessment": "Synthetic 2,000-operation profiles, telemetry overhead, a five-request live staging sample, resource snapshots, and a short cost projection exist, but they do not establish sustained production scale, saturation, autoscaling, or reliable monthly cost baselines.",
+      "assessment": "Synthetic 2,000-operation profiles, telemetry overhead, a five-request live sandbox sample, resource snapshots, and a short cost projection exist, but they do not establish sustained production scale, saturation, autoscaling, or reliable monthly cost baselines.",
       "gap": {
         "issue": 197,
         "severity": "high",
@@ -7454,7 +7454,7 @@
     {
       "id": "M9-ISSUE-73",
       "issue": 73,
-      "title": "M9.6: Activate Railway staging and certify the managed-cloud deployment",
+      "title": "M9.6: Activate Railway sandbox and certify the managed-cloud deployment",
       "milestone": "M9",
       "classification": "verified",
       "owner": "managed-cloud",
@@ -7465,7 +7465,8 @@
           "path": "docs/evidence/m9-cloud-certification-2026-08-28.md"
         }
       ],
-      "assessment": "The recorded staging candidate completed authenticated acceptance, Neon persistence, Restate workflow execution and restart, R2 integrity, replay, health, bounded concurrency, and security checks; this verification is staging-only and does not certify production, Agent HQ, Local, or Hosted."
+      "assessment": "The recorded sandbox candidate completed authenticated acceptance, PostgreSQL persistence, Restate workflow execution and restart, R2 integrity, replay, health, bounded concurrency, and security checks; this verification is sandbox-only and does not certify production, Agent HQ, Local, or Hosted.",
+      "displayTitle": "M9.6: Activate Railway sandbox and certify the managed-cloud deployment"
     },
     {
       "id": "M7-ISSUE-125",
@@ -7661,7 +7662,7 @@
           "path": "tests/m10-portability-conformance.test.mjs"
         }
       ],
-      "assessment": "The versioned report compares four named profiles and exercises concrete SQLite plus Hosted PostgreSQL paths, but its Cloud adapter labels in-memory repositories and logical case functions as PostgreSQL-Neon and R2 rather than running against the accepted Railway, Neon, R2, and Restate candidate; several required runtime, tool, model, sandbox, delegation, and restart scenarios are not production-shaped.",
+      "assessment": "The versioned report compares four named profiles and exercises concrete SQLite plus Hosted PostgreSQL paths, but its Cloud adapter labels in-memory repositories and logical case functions as PostgreSQL-PostgreSQL and R2 rather than running against the accepted Railway, PostgreSQL, R2, and Restate candidate; several required runtime, tool, model, sandbox, delegation, and restart scenarios are not production-shaped.",
       "gap": {
         "issue": 188,
         "severity": "critical",
@@ -7683,7 +7684,7 @@
           "path": "packages/profile-portability/src/index.test.mjs"
         }
       ],
-      "assessment": "Current tests cover deterministic manifests, digests, safe subsets, active-work blocking, secret canaries, dry-run planning, conflicts, capability and secret preflight, transactional apply, idempotent replay, artifact rollback, and concrete SQLite and PostgreSQL ports; live Neon execution is a separate release lane."
+      "assessment": "Current tests cover deterministic manifests, digests, safe subsets, active-work blocking, secret canaries, dry-run planning, conflicts, capability and secret preflight, transactional apply, idempotent replay, artifact rollback, and concrete SQLite and PostgreSQL ports; live PostgreSQL execution is a separate release lane."
     },
     {
       "id": "M10-ISSUE-209",
@@ -7809,7 +7810,7 @@
           "path": "docs/evidence/m9-cloud-certification-2026-08-28.md"
         }
       ],
-      "assessment": "Repository-owned dependency-aware Railway builds and the accepted Control API plus workflow-worker topology are statically verified and were exercised by fresh live staging builds."
+      "assessment": "Repository-owned dependency-aware Railway builds and the accepted Control API plus workflow-worker topology are statically verified and were exercised by fresh live sandbox builds."
     },
     {
       "id": "M9-ISSUE-216",
@@ -7834,7 +7835,7 @@
     {
       "id": "M9-ISSUE-217",
       "issue": 217,
-      "title": "M9.9: Wire Railway, Neon, R2, secrets, networking, and health contracts",
+      "title": "M9.9: Wire Railway, PostgreSQL, R2, secrets, networking, and health contracts",
       "milestone": "M9",
       "classification": "verified",
       "owner": "managed-cloud-composition",
@@ -7849,7 +7850,8 @@
           "path": "packages/config/src/managed-cloud.test.mjs"
         }
       ],
-      "assessment": "Typed dependency ownership, private networking, signed service auth, Neon roles and migration, R2 integrity, Restate identity, health, readiness, and redaction were exercised in staging; production remains unactivated."
+      "assessment": "Typed dependency ownership, private networking, signed service auth, PostgreSQL roles and migration, R2 integrity, Restate identity, health, readiness, and redaction were exercised in sandbox; production remains unactivated.",
+      "displayTitle": "M9.9: Wire Railway, PostgreSQL, R2, secrets, networking, and health contracts"
     },
     {
       "id": "M9-ISSUE-246",
@@ -7949,12 +7951,12 @@
           "path": "apps/control-api/src/application.test.mjs"
         }
       ],
-      "assessment": "Current tests verify Ed25519 signatures, issuer, audience, key ID, algorithm, expiry, revocation, scope, credential class, and redacted failures; live staging rejected absent and malformed credentials."
+      "assessment": "Current tests verify Ed25519 signatures, issuer, audience, key ID, algorithm, expiry, revocation, scope, credential class, and redacted failures; live sandbox rejected absent and malformed credentials."
     },
     {
       "id": "M9-ISSUE-260",
       "issue": 260,
-      "title": "M9: compose Neon-backed Cloud control-api startup",
+      "title": "M9: compose PostgreSQL-backed Cloud control-api startup",
       "milestone": "M9",
       "classification": "verified",
       "owner": "managed-cloud-composition",
@@ -7965,7 +7967,8 @@
           "path": "apps/control-api/src/application.test.mjs"
         }
       ],
-      "assessment": "Cloud startup constructs durable PostgreSQL repositories and signed authentication, probes the database before readiness, closes resources on shutdown, and fails without in-memory fallback when dependencies are unavailable."
+      "assessment": "Cloud startup constructs durable PostgreSQL repositories and signed authentication, probes the database before readiness, closes resources on shutdown, and fails without in-memory fallback when dependencies are unavailable.",
+      "displayTitle": "M9: compose PostgreSQL-backed Cloud control-api startup"
     },
     {
       "id": "M9-ISSUE-263",
@@ -7985,12 +7988,12 @@
           "path": "docs/evidence/m9-cloud-certification-2026-08-28.md"
         }
       ],
-      "assessment": "Current tests and live staging evidence cover authenticated durable acceptance, stable execution identity, Restate submission, deterministic replay, payload conflict, and reconciliation-required handling after uncertain dispatch."
+      "assessment": "Current tests and live sandbox evidence cover authenticated durable acceptance, stable execution identity, Restate submission, deterministic replay, payload conflict, and reconciliation-required handling after uncertain dispatch."
     },
     {
       "id": "M9-ISSUE-266",
       "issue": 266,
-      "title": "M9.14: Finalize cost-minimized Railway staging and production standby",
+      "title": "M9.14: Finalize cost-minimized Railway sandbox and production standby",
       "milestone": "M9",
       "classification": "verified",
       "owner": "cloud-operations",
@@ -8001,7 +8004,8 @@
           "path": "docs/evidence/m9-cloud-standby-2026-08-29.md"
         }
       ],
-      "assessment": "Live closeout evidence records fresh builds, guarded source disconnection, zero running compute, retained staging Restate volume, preserved Neon and R2 state, cost controls, and explicit reactivation boundaries; production remains deliberately unavailable and uncertified."
+      "assessment": "Live closeout evidence records fresh builds, guarded source disconnection, zero running compute, retained sandbox Restate volume, preserved PostgreSQL and R2 state, cost controls, and explicit reactivation boundaries; production remains deliberately unavailable and uncertified.",
+      "displayTitle": "M9.14: Finalize cost-minimized Railway sandbox and production standby"
     }
   ],
   "contradictions": [
@@ -8016,7 +8020,7 @@
       "id": "CONTRA-002",
       "topic": "AWS and pnpm versus Railway and Bun",
       "sources": ["Control Plane TDD Appendix C", "ADR-027", "AGENTS.md", "docs/infrastructure.md"],
-      "resolution": "Bun 1.4 and Railway/Neon/R2 are current first-party choices; the live TDD and ADR-027 now record the tooling reconciliation and partial supersession, while portable adapters preserve Hosted alternatives. Full #195 source inventory and marketplace reconciliation remain open.",
+      "resolution": "Bun 1.4 and Railway/PostgreSQL/R2 are current first-party choices; the live TDD and ADR-027 now record the tooling reconciliation and partial supersession, while portable adapters preserve Hosted alternatives. Full #195 source inventory and marketplace reconciliation remain open.",
       "issue": 195
     },
     {
@@ -8600,7 +8604,7 @@
     },
     {
       "issue": 73,
-      "title": "M9.6: Activate Railway staging and certify the managed-cloud deployment",
+      "title": "M9.6: Activate Railway sandbox and certify the managed-cloud deployment",
       "milestone": "M9",
       "closedAt": "2026-08-28T23:33:15Z",
       "url": "https://github.com/adea-ai/control-plane/issues/73"
@@ -8747,7 +8751,7 @@
     },
     {
       "issue": 217,
-      "title": "M9.9: Wire Railway, Neon, R2, secrets, networking, and health contracts",
+      "title": "M9.9: Wire Railway, PostgreSQL, R2, secrets, networking, and health contracts",
       "milestone": "M9",
       "closedAt": "2026-08-28T08:57:34Z",
       "url": "https://github.com/adea-ai/control-plane/issues/217"
@@ -8796,7 +8800,7 @@
     },
     {
       "issue": 260,
-      "title": "M9: compose Neon-backed Cloud control-api startup",
+      "title": "M9: compose PostgreSQL-backed Cloud control-api startup",
       "milestone": "M9",
       "closedAt": "2026-08-28T19:06:00Z",
       "url": "https://github.com/adea-ai/control-plane/issues/260"
@@ -8810,7 +8814,7 @@
     },
     {
       "issue": 266,
-      "title": "M9.14: Finalize cost-minimized Railway staging and production standby",
+      "title": "M9.14: Finalize cost-minimized Railway sandbox and production standby",
       "milestone": "M9",
       "closedAt": "2026-08-29T02:47:46Z",
       "url": "https://github.com/adea-ai/control-plane/issues/266"

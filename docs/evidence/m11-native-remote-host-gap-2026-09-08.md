@@ -34,7 +34,7 @@ claim of an exploitable vulnerability or an authorization failure.
 ## Verified boundaries
 
 - `apps/runtime-worker/src/start.ts` calls `start()` without a hosted worker.
-- `apps/runtime-worker/src/index.ts` requires `hostedManagedPiWorker` in staging
+- `apps/runtime-worker/src/index.ts` requires `hostedManagedPiWorker` in sandbox
   and production and throws `HOSTED_MANAGED_PI_WORKER_REQUIRED` when absent.
 - `HostedManagedPiWorker` delegates readiness, scaling observations, and cleanup
   to an injected `RuntimeHostProvider`; it does not provision a host itself.
@@ -49,7 +49,7 @@ claim of an exploitable vulnerability or an authorization failure.
   responses. It does not start the production runtime worker or native ACP.
 
 The focused runtime-worker startup suite passes all three tests. It verifies
-staging/production refusal without a host, cleanup after readiness failure, and
+sandbox/production refusal without a host, cleanup after readiness failure, and
 draining an injected worker. Injected readiness in those tests is not a live
 host-readiness claim.
 

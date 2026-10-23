@@ -76,6 +76,12 @@ function harness(options = {}) {
       async assertCurrent(request, boundary) {
         boundaries.push(boundary)
         if (options.failBoundary === boundary) throw new Error('TEST_AUTHORITY_DENIED')
+        if (
+          options.failBoundaryOnCall === boundary &&
+          boundaries.filter((value) => value === boundary).length ===
+            options.failBoundaryOnCallNumber
+        )
+          throw new Error('TEST_AUTHORITY_DENIED')
       },
     },
     store,
@@ -111,7 +117,7 @@ test('retains one frozen snapshot and one decision, validates every boundary, di
     state: 'succeeded',
     value: { id: TARGET },
   })
-  expect(run.boundaries).toEqual(['admission', 'approval', 'effect'])
+  expect(run.boundaries).toEqual(['admission', 'approval', 'approval', 'effect', 'publication'])
   expect(run.snapshots).toHaveLength(1)
   expect(run.snapshots[0].frozen).toBe(true)
   expect(run.snapshots[0].request).toEqual(request)
@@ -243,6 +249,81 @@ test('a decision that does not bind the exact request digest never reaches Adea'
     state: 'refused',
   })
   expect(run.counts).toEqual({ calls: 0, issued: 1 })
+})
+
+test('a decision is never issued over an approval revoked in the claim window', async () => {
+  const request = { ...baseRequest, approval }
+  const counts = { calls: 0, issued: 0 }
+  // The first approval check passes; the approval is revoked before the decision
+  // is issued, so the issuance re-read refuses and no decision is minted.
+  const run = harness({ counts, failBoundaryOnCall: 'approval', failBoundaryOnCallNumber: 2 })
+  expect(await run.caller.execute(request)).toEqual({
+    code: 'authority_unavailable',
+    state: 'refused',
+  })
+  expect(counts).toEqual({ calls: 0, issued: 0 })
+  const retained = [...run.store.records.values()][0]
+  expect(retained?.state).toBe('settled')
+  expect(retained?.decision).toBeUndefined()
+})
+
+test('an authority revoked during the dispatch does not expose the retained outcome', async () => {
+  const request = { ...baseRequest, approval }
+  const counts = { calls: 0, issued: 0 }
+  const options = { counts }
+  // The authority is revoked while the external call is in flight.
+  options.dispatchGate = {
+    promise: (async () => {
+      options.failBoundary = 'publication'
+    })(),
+  }
+  const run = harness(options)
+  expect(await run.caller.execute(request)).toEqual({
+    code: 'authority_unavailable',
+    state: 'refused',
+  })
+  // The effect happened and the evidence is retained: the denial exposes no
+  // outcome and rewrites no record.
+  const retained = [...run.store.records.values()][0]
+  expect(retained?.state).toBe('settled')
+  expect(retained?.outcome).toEqual({ state: 'succeeded', value: { id: TARGET } })
+})
+
+test('the replay of a retained outcome is refused when the publication authority is revoked', async () => {
+  const request = { ...baseRequest, approval }
+  const store = memoryStore()
+  const counts = { calls: 0, issued: 0 }
+  const first = harness({ store, counts })
+  expect(await first.caller.execute(request)).toEqual({
+    state: 'succeeded',
+    value: { id: TARGET },
+  })
+  const reopened = harness({ store, counts, failBoundary: 'publication' })
+  expect(await reopened.caller.execute(request)).toEqual({
+    code: 'authority_unavailable',
+    state: 'refused',
+  })
+  // No fresh decision and no second physical call.
+  expect(counts).toEqual({ calls: 1, issued: 1 })
+})
+
+test('an unresolved effect is still reported when the publication authority is revoked', async () => {
+  const request = { ...baseRequest, approval }
+  const store = memoryStore()
+  const counts = { calls: 0, issued: 0 }
+  const first = harness({ store, counts, transportThrows: true })
+  expect(await first.caller.execute(request)).toEqual({
+    code: 'PI_MANAGEMENT_EFFECT_UNKNOWN',
+    state: 'reconciliation_required',
+  })
+  const reopened = harness({ store, counts, failBoundary: 'publication' })
+  // A revoked authority must not hide the uncertainty: reconciliation stays the
+  // operator's to do.
+  expect(await reopened.caller.execute(request)).toEqual({
+    code: 'PI_MANAGEMENT_EFFECT_UNKNOWN',
+    state: 'reconciliation_required',
+  })
+  expect(counts).toEqual({ calls: 1, issued: 1 })
 })
 
 test('an authority failure refuses before any decision, claim or dispatch', async () => {
