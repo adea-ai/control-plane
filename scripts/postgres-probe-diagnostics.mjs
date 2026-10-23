@@ -321,10 +321,10 @@ function readUriCredential(source, search, start) {
 }
 
 /**
- * Reads complete ordinary connection-string credential values in a bounded
- * text range. The values can overlap query-credential spans: treating those
- * grammars independently would expose ampersand suffixes from the ordinary
- * value after the URI query scanner redacted an embedded parameter.
+ * Reads complete ordinary connection-string credential values across the
+ * diagnostic text. The values can overlap URI spans or cross an apparent URI
+ * boundary: treating those grammars independently would expose the tail of a
+ * value after another scanner redacted an embedded parameter.
  */
 function readOrdinaryCredentialSpans(source, start, end, uriQueryKeyStarts) {
   const spans = []
@@ -342,12 +342,15 @@ function readOrdinaryCredentialSpans(source, start, end, uriQueryKeyStarts) {
         source[afterKey] === '='
       ) {
         const valueStart = skipWhitespace(source, afterKey + 1)
-        if (valueStart < end) {
-          const valueEnd = Math.min(readValueEnd(source, valueStart), end)
-          spans.push({ start: valueStart, end: valueEnd, resume: valueEnd })
-          index = valueEnd
-          continue
-        }
+        const valueEnd = Math.min(readValueEnd(source, valueStart), end)
+        spans.push({
+          start: index,
+          end: valueEnd,
+          resume: valueEnd,
+          prefix: `${key}${source.slice(keyEnd, afterKey)}=`,
+        })
+        index = valueEnd
+        continue
       }
       index = keyEnd
       continue
@@ -405,60 +408,35 @@ function mergeRedactionSpans(spans) {
 export function sanitizeProbeOutput(text, limit = PROBE_EXCERPT_LIMIT) {
   if (text === undefined || text === null) return ''
   const source = String(text)
-  const pieces = []
   const uriSearch = createUriSearch(source)
+  const uriSpans = []
+  const uriQueryKeyStarts = new Set()
   let index = 0
   while (index < source.length) {
     const scheme = uriSchemeAt(source, index)
     if (scheme !== null) {
       const credential = readUriCredential(source, uriSearch, index + scheme.length + 3)
       if (credential.matched) {
-        const uriQueryKeyStarts = new Set(
-          credential.spans
-            .filter((span) => span.queryKeyStart !== undefined)
-            .map((span) => span.queryKeyStart)
-        )
-        const ordinarySpans = readOrdinaryCredentialSpans(
-          source,
-          index,
-          credential.limit,
-          uriQueryKeyStarts
-        )
-        const spans = mergeRedactionSpans([...credential.spans, ...ordinarySpans])
-        const end = Math.max(credential.end, ...spans.map((span) => span.resume))
-        let cursor = index
-        for (const span of spans) {
-          pieces.push(source.slice(cursor, span.start))
-          pieces.push('<redacted>')
-          pieces.push(source.slice(span.end, span.resume))
-          cursor = span.resume
+        uriSpans.push(...credential.spans)
+        for (const span of credential.spans) {
+          if (span.queryKeyStart !== undefined) uriQueryKeyStarts.add(span.queryKeyStart)
         }
-        pieces.push(source.slice(cursor, end))
-        index = end
-        continue
       }
-      // The URI holds no password, so it is ordinary text and the scan
-      // continues inside it: a credential that follows it is still found.
     }
-    if (KEY_CHARACTER.test(source[index])) {
-      const keyEnd = readKeyEnd(source, index)
-      const key = source.slice(index, keyEnd)
-      let afterKey = keyEnd
-      while (afterKey < source.length && isWhitespace(source[afterKey])) afterKey += 1
-      if (isCredentialKey(key) && source[afterKey] === '=') {
-        const valueStart = skipWhitespace(source, afterKey + 1)
-        const valueEnd = readValueEnd(source, valueStart)
-        pieces.push(`${key}${source.slice(keyEnd, afterKey)}=<redacted>`)
-        index = valueEnd
-        continue
-      }
-      pieces.push(key)
-      index = keyEnd
-      continue
-    }
-    pieces.push(source[index])
     index += 1
   }
+  const ordinarySpans = readOrdinaryCredentialSpans(source, 0, source.length, uriQueryKeyStarts)
+  const spans = mergeRedactionSpans([...uriSpans, ...ordinarySpans])
+  const pieces = []
+  let cursor = 0
+  for (const span of spans) {
+    pieces.push(source.slice(cursor, span.start))
+    if (span.prefix !== undefined) pieces.push(span.prefix)
+    pieces.push('<redacted>')
+    pieces.push(source.slice(span.end, span.resume))
+    cursor = span.resume
+  }
+  pieces.push(source.slice(cursor))
   // A long opaque token is redacted too: it is a single run of characters, so
   // the rule costs one pass.
   return pieces
