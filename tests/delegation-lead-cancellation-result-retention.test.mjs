@@ -20,12 +20,13 @@ import { SqliteDelegationEventPublisher } from '../packages/sqlite-persistence/s
 
 // CP #1024 (service-level only): how `DelegationService` handles a lead stop that arrives AFTER a
 // child's terminal result is already retained, over the real SQLite repositories and a real
-// database close/reopen. `cancelChildren` republishes the retained completion and must never
-// overwrite it with a cancellation.
+// database close/reopen. A lead stop must never overwrite the retained completion with a
+// cancellation, and must not publish a second completion event for a result that is already
+// published.
 //
 // Two cases, each distinct:
-//  1. The completion was already PUBLISHED. The test preserves that published result across the
-//     lead stop and the restart.
+//  1. The completion was already PUBLISHED. The test preserves that published receipt across the
+//     lead stop and the restart and shows no duplicate completion event is produced.
 //  2. A crash left the completion publication PENDING (result and lifecycle transition committed).
 //     The test shows the lead stop after restart repairs that pending publication.
 //
@@ -124,8 +125,8 @@ test('a lead stop after an already-published completion keeps that result throug
     await fixture.service.recordChildProgress(completion)
     await expectRetainedCompletion(stores)
 
-    // The lead stops after the result is retained: the cascade republishes the
-    // completion and returns without cancelling anything.
+    // The lead stops after the result is retained and already published: the cascade preserves
+    // that receipt (no duplicate event, no cancellation) and cancels nothing.
     expect(await fixture.service.cancelChildren(leadStop)).toEqual([])
     await expectRetainedCompletion(stores)
 
