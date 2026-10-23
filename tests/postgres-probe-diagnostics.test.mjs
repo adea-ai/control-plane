@@ -384,6 +384,16 @@ test('ordinary credential assignments between URI redactions are sanitized', () 
       'postgresql://<redacted>@host/db?sslmode=require password=<redacted>&token=<redacted>&password=<redacted>',
       ['pw', 'PLAIN_SECRET', 'TOKEN_SECRET', 'OTHER_SECRET'],
     ],
+    [
+      'postgresql://u:pw@host/db?sslmode=require password=prefix&LEAK_SUFFIX&token=TOKEN_SECRET',
+      'postgresql://<redacted>@host/db?sslmode=require password=<redacted>&token=<redacted>',
+      ['pw', 'prefix', 'LEAK_SUFFIX', 'TOKEN_SECRET'],
+    ],
+    [
+      "postgresql://u:pw@host/db?sslmode=require password='prefix&LEAK_SUFFIX'&token=TOKEN_SECRET",
+      'postgresql://<redacted>@host/db?sslmode=require password=<redacted>&token=<redacted>',
+      ['pw', 'prefix', 'LEAK_SUFFIX', 'TOKEN_SECRET'],
+    ],
   ]
   for (const [input, expected, secrets] of cases) {
     const sanitized = sanitizeProbeOutput(input)

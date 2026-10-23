@@ -295,6 +295,7 @@ function readUriCredential(source, search, start) {
     limit
   )
   if (question !== -1) {
+    let parameterSeparator = question
     let parameterStart = question + 1
     while (parameterStart < limit) {
       const ampersand = nextUriTextWithin(search, '&', parameterStart, limit)
@@ -303,10 +304,16 @@ function readUriCredential(source, search, start) {
       if (equals !== -1 && equals < parameterEnd) {
         const key = decodeUriKey(source.slice(parameterStart, equals))
         if (isCredentialKey(key)) {
-          spans.push({ start: equals + 1, end: parameterEnd, resume: parameterEnd })
+          spans.push({
+            start: equals + 1,
+            end: parameterEnd,
+            resume: parameterEnd,
+            querySeparator: parameterSeparator,
+          })
         }
       }
       if (parameterEnd >= limit) break
+      parameterSeparator = parameterEnd
       parameterStart = parameterEnd + 1
     }
   }
@@ -321,7 +328,7 @@ function readUriCredential(source, search, start) {
  * still appear between those spans in diagnostic text, so those gaps must be
  * scanned before they are copied into the result.
  */
-function sanitizeOrdinaryRange(source, start, end) {
+function sanitizeOrdinaryRange(source, start, end, querySeparator = null) {
   const pieces = []
   let index = start
   while (index < end) {
@@ -333,11 +340,11 @@ function sanitizeOrdinaryRange(source, start, end) {
       if (isCredentialKey(key) && afterKey < end && source[afterKey] === '=') {
         const valueStart = skipWhitespace(source, afterKey + 1)
         if (valueStart < end) {
-          let valueEnd = Math.min(readValueEnd(source, valueStart), end)
-          if (valueEnd === end) {
-            const ampersand = source.indexOf('&', valueStart)
-            if (ampersand !== -1 && ampersand < end) valueEnd = ampersand
-          }
+          const valueEnd = Math.min(
+            readValueEnd(source, valueStart),
+            end,
+            querySeparator !== null && querySeparator > valueStart ? querySeparator : end
+          )
           pieces.push(`${key}${source.slice(keyEnd, afterKey)}=<redacted>`)
           index = valueEnd
           continue
@@ -395,7 +402,7 @@ export function sanitizeProbeOutput(text, limit = PROBE_EXCERPT_LIMIT) {
       if (credential.matched) {
         let cursor = index
         for (const span of credential.spans) {
-          pieces.push(sanitizeOrdinaryRange(source, cursor, span.start))
+          pieces.push(sanitizeOrdinaryRange(source, cursor, span.start, span.querySeparator))
           pieces.push('<redacted>')
           pieces.push(source.slice(span.end, span.resume))
           cursor = span.resume
