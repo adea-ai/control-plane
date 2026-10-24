@@ -4,6 +4,7 @@ import {
   AcpAdapter,
   AcpDriver,
   AcpGatewayClient,
+  qualifiedNativeRouteFixture,
   ReferenceAcpDriver,
   ReferenceAcpGatewayTransport,
 } from '@control-plane/acp-adapter'
@@ -166,6 +167,9 @@ export function createAcpFixture(manifest, options = {}) {
     ['nses_01JABCDEF0123456789ABCDEFG', 'ses_01JABCDEF0123456789ABCDEFG'],
   ])
   const runtimeClient = new AcpGatewayClient({
+    // The route's claims come from deployment evidence, never from the native
+    // driver's own advertisement.
+    nativeRoute: qualifiedNativeRouteFixture(),
     transport,
     ...ids,
     executionId: 'exe_01JBBCDEF0123456789ABCDEFG',

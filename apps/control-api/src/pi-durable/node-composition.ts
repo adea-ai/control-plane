@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import {
   createNodePiDurableRuntime,
+  createPiDurableLocalUpgradeManifest,
   createPiDurableUsageAuthority,
   type NodePiDurableCompositionOptions,
   type PiDurableUsageAuthorityOptions,
@@ -21,9 +22,13 @@ import type { PiDurableChildProgressScanner } from './child-progress-scanner.js'
 import { SqlitePiLeadRunningLifecycle } from './lead-running-lifecycle.js'
 import { SqlitePiLeadTerminalSettlement } from './lead-terminal-settlement.js'
 import { PiChildTerminalSettlement, type ChildSettlementStep } from './child-terminal-settlement.js'
+import { createPiChildTimelineDelivery } from './child-timeline-delivery.js'
 import type { ChildUsageOutcomesFor } from './child-usage-outcomes.js'
 import { assertExecutionPlanIntegrity } from '@control-plane/execution-plan'
 import type { DelegationService } from '@control-plane/orchestration'
+
+/** Default bound for the close drain. A wedged recovery is reported, never waited on forever. */
+export const DEFAULT_DRAIN_TIMEOUT_MS = 30_000
 
 export interface NodePiDurableLeadCompositionOptions {
   readonly onAdapterReady?: NodePiDurableCompositionOptions['onAdapterReady']
@@ -32,8 +37,8 @@ export interface NodePiDurableLeadCompositionOptions {
   readonly usage: PiDurableUsageAuthorityOptions
   readonly provider: NodePiDurableCompositionOptions['resolveProvider']
   readonly reconcileInference: NodePiDurableCompositionOptions['reconcileInference']
-  // Test seam: the restart proof injects the engine so it can hold a native dispatch open.
   readonly engineFactory?: NodePiDurableCompositionOptions['engineFactory']
+  /** Server-owned transaction/lease coordinator. Omit until product and CP owners share its CAS. */
   readonly verifyApproval?: NodePiDurableCompositionOptions['verifyApproval']
   readonly parentInbox?: NodePiDurableCompositionOptions['parentInbox']
   readonly consumeParentInbox?: NodePiDurableCompositionOptions['consumeParentInbox']
@@ -44,14 +49,26 @@ export interface NodePiDurableLeadCompositionOptions {
   readonly governedManagementCall?: NodePiDurableCompositionOptions['governedManagementCall']
   /** The same canonical service used by child admission/progress. */
   readonly delegationService?: Pick<DelegationService, 'cancelChildren'>
+  /** Retained read-only child observations from that same canonical service. */
+  readonly childDelegations?: Pick<DelegationService, 'listChildren'>
+  /**
+   * Bounded wait for accepted recoveries while closing. A wedged child scan must not hold process
+   * teardown open forever; an incomplete drain is reported instead of hanging.
+   */
+  readonly drainTimeoutMs?: number
   /** A child must independently reload its canonical lineage, selection and authority. */
   readonly childAuthority?: Pick<
     NodePiDurableCompositionOptions,
-    'resolveAdmission' | 'assertAuthority'
+    'resolveAdmission' | 'assertAuthority' | 'assertReadAuthority' | 'assertRecoveryAuthority'
   >
   readonly preparationAuthority?: PiLeadPreparationAuthority
   /** Server-bound canonical child scanner. No child identity is accepted from an HTTP payload. */
   readonly childProgress?: Pick<PiDurableChildProgressScanner, 'scan'>
+  /** Existing service identity and transport; the retained J1 inbox drives replay. */
+  readonly childTimelineDelivery?: {
+    readonly principalId: string
+    readonly notify: Parameters<typeof createPiChildTimelineDelivery>[0]['notify']
+  }
   /**
    * Terminal accounting for completed children: the canonical delegation records, the child cost-state
    * store and the clock. It runs beside the lead settlement on every recovery pass and shares its ledger.
@@ -78,6 +95,7 @@ export async function createNodePiDurableLeadComposition(
     (!options.childAuthority ||
       !options.childProgress ||
       !options.parentInbox ||
+      !options.childTimelineDelivery ||
       !options.consumeParentInbox ||
       !options.delegationService)
   )
@@ -115,6 +133,10 @@ export async function createNodePiDurableLeadComposition(
           resolveAdmission: (request) => admission.canonicalAuthority.resolveAdmission(request),
           assertAuthority: (authority, purpose) =>
             admission.canonicalAuthority.assertAuthority(authority, purpose),
+          assertRecoveryAuthority: (authority) =>
+            admission.canonicalAuthority.assertRecoveryAuthority(authority),
+          assertReadAuthority: (authority) =>
+            admission.canonicalAuthority.assertReadAuthority(authority),
         },
         options.childAuthority
       ),
@@ -124,6 +146,7 @@ export async function createNodePiDurableLeadComposition(
           await leadLifecycle.onExecutionRunning(authority)
       },
       resolveProvider: options.provider,
+      ...(options.engineFactory ? { engineFactory: options.engineFactory } : {}),
       ...(options.admission.scopeAuthority
         ? { scopeAuthority: options.admission.scopeAuthority }
         : {}),
@@ -172,6 +195,15 @@ export async function createNodePiDurableLeadComposition(
     await preparations?.recoverExpired()
     let unclaimedPreparationRecovery = await recoverUnclaimedPreparations()
     let childProgressRecovery = await options.childProgress?.scan(runtime.adapter)
+    const childTimelineDelivery =
+      options.childTimelineDelivery && options.parentInbox
+        ? createPiChildTimelineDelivery({
+            database,
+            parentInbox: options.parentInbox,
+            ...options.childTimelineDelivery,
+          })
+        : undefined
+    let childTimelineRecovery = await childTimelineDelivery?.reconcile()
     let preparationRecovery: Promise<void> | undefined
     let preparationRecoveryBlocked = (unclaimedPreparationRecovery?.pending ?? 0) > 0
     const service = new DurablePiDurableLeadService({
@@ -179,8 +211,14 @@ export async function createNodePiDurableLeadComposition(
       adapter: runtime.adapter,
       receipts: new SqlitePiDurableLeadReceiptStore(database),
       findRuntimeHandle: (request) => runtime!.adapter.findExistingHandle(request),
+      fence: {
+        findRetainedAdmission: (handle) => runtime!.adapter.findRetainedAdmission(handle),
+        cancelFenced: (handle, input, authorize) =>
+          runtime!.adapter.cancelFenced(handle, input, authorize),
+      },
       ...(preparations ? { preparations } : {}),
       ...(options.delegationService ? { delegationService: options.delegationService } : {}),
+      ...(options.childDelegations ? { childDelegations: options.childDelegations } : {}),
       ...(options.admission.now ? { now: options.admission.now } : {}),
     })
     // Created last: after every awaited step and the service, nothing can throw before the return, so a
@@ -191,6 +229,7 @@ export async function createNodePiDurableLeadComposition(
         await preparations?.recoverExpired()
         unclaimedPreparationRecovery = await recoverUnclaimedPreparations()
         childProgressRecovery = await options.childProgress?.scan(runtime!.adapter)
+        childTimelineRecovery = await childTimelineDelivery?.reconcile()
       })()
         .then(() => {
           preparationRecoveryBlocked = (unclaimedPreparationRecovery?.pending ?? 0) > 0
@@ -210,9 +249,56 @@ export async function createNodePiDurableLeadComposition(
     }, recoveryIntervalMs)
     recoveryTimer.unref()
     const initializedRuntime = runtime
+    const publicRecoveries = new Set<Promise<void>>()
+    let drainIncomplete = false
+    const drainTimeoutMs = options.drainTimeoutMs ?? DEFAULT_DRAIN_TIMEOUT_MS
+    /**
+     * Waits for accepted work, but never past the drain deadline. Returns whether the work
+     * settled in time; a rejected work still counts as settled because its outcome is recorded.
+     */
+    const settleWithin = async (work: Promise<unknown> | undefined): Promise<boolean> => {
+      if (!work) return true
+      let settled = false
+      let timer: ReturnType<typeof setTimeout> | undefined
+      const tracked = Promise.resolve(work).then(
+        () => {
+          settled = true
+        },
+        () => {
+          settled = true
+        }
+      )
+      const deadline = new Promise<void>((resolve) => {
+        timer = setTimeout(() => resolve(), drainTimeoutMs)
+        timer.unref()
+      })
+      try {
+        await Promise.race([tracked, deadline])
+      } finally {
+        if (timer !== undefined) clearTimeout(timer)
+      }
+      return settled
+    }
     let closePromise: Promise<void> | undefined
     const assertOpen = () => {
       if (closePromise !== undefined) throw new Error('PI_LEAD_COMPOSITION_CLOSED')
+    }
+    const close = () => {
+      closePromise ??= (async () => {
+        clearInterval(recoveryTimer)
+        // Accepted recovery calls keep the stores live until they settle, including failures.
+        // These recovery waits are bounded; terminal and runtime teardown have separate waits.
+        if (!(await settleWithin(Promise.allSettled(publicRecoveries)))) drainIncomplete = true
+        if (!(await settleWithin(preparationRecovery))) drainIncomplete = true
+        await terminalSettlement.close()
+        await childTerminalSettlement?.close()
+        try {
+          await initializedRuntime.close()
+        } finally {
+          database.close()
+        }
+      })()
+      return closePromise
     }
     return {
       ...runtime,
@@ -220,19 +306,34 @@ export async function createNodePiDurableLeadComposition(
       service,
       async recover() {
         assertOpen()
-        await initializedRuntime.recover()
-        await preparations?.recoverExpired()
-        unclaimedPreparationRecovery = await recoverUnclaimedPreparations()
-        preparationRecoveryBlocked = (unclaimedPreparationRecovery?.pending ?? 0) > 0
-        childProgressRecovery = await options.childProgress?.scan(initializedRuntime.adapter)
-        await terminalSettlement.settle()
-        await childTerminalSettlement?.settle()
+        const recovery = (async () => {
+          await initializedRuntime.recover()
+          await preparations?.recoverExpired()
+          unclaimedPreparationRecovery = await recoverUnclaimedPreparations()
+          preparationRecoveryBlocked = (unclaimedPreparationRecovery?.pending ?? 0) > 0
+          childProgressRecovery = await options.childProgress?.scan(initializedRuntime.adapter)
+          childTimelineRecovery = await childTimelineDelivery?.reconcile()
+          await terminalSettlement.settle()
+          await childTerminalSettlement?.settle()
+        })()
+        publicRecoveries.add(recovery)
+        try {
+          await recovery
+        } finally {
+          publicRecoveries.delete(recovery)
+        }
       },
       get preparationRecoveryBlocked() {
         return preparationRecoveryBlocked
       },
       get childProgressRecovery() {
         return childProgressRecovery
+      },
+      get childTimelineRecovery() {
+        return childTimelineRecovery
+      },
+      get childTimelineDeliveryBlocked() {
+        return (childTimelineRecovery?.blocked.length ?? 0) > 0
       },
       get unclaimedPreparationRecovery() {
         return unclaimedPreparationRecovery
@@ -251,19 +352,16 @@ export async function createNodePiDurableLeadComposition(
       get childTerminalSettlementBlocked() {
         return childTerminalSettlement?.blocked ?? false
       },
-      close() {
-        closePromise ??= (async () => {
-          clearInterval(recoveryTimer)
-          await terminalSettlement.close()
-          await childTerminalSettlement?.close()
-          await preparationRecovery
-          try {
-            await initializedRuntime.close()
-          } finally {
-            database.close()
-          }
-        })()
-        return closePromise
+      close,
+      /** A handoff is valid only after the complete lead composition drained and closed. */
+      async closeForSameVersionUpgrade() {
+        await close()
+        if (drainIncomplete) throw new Error('PI_LEAD_UPGRADE_DRAIN_INCOMPLETE')
+        return createPiDurableLocalUpgradeManifest(options.directory)
+      },
+      /** True once close stops waiting for accepted recovery, even if later teardown is pending. */
+      get drainIncomplete() {
+        return drainIncomplete
       },
     }
   } catch (error) {

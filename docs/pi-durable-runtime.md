@@ -56,6 +56,31 @@ intent/receipt store, composes the actual adapter, drains retained parent inbox
 evidence independently of model inference and scans retained runtime admissions.
 The caller owns closing this composition and its external repositories.
 
+Closing fences new public recoveries and stops the periodic recovery timer. It
+waits for accepted recoveries and the current periodic pass before closing the
+terminal settlements and runtime. These recovery waits use `drainTimeoutMs`,
+which defaults to 30 seconds. When a wait expires, `drainIncomplete` records
+that accepted work did not settle and teardown proceeds.
+
+The subsequent terminal-settlement and runtime close waits are outside that
+bound. They can delay or reject close; `drainTimeoutMs` is not an end-to-end
+shutdown deadline. The host-facing production composition exposes
+`drainIncomplete` beside its terminal-settlement getters so the host can read
+that recovery-drain outcome after close.
+
+The lead factory's `closeForSameVersionUpgrade` uses the complete lead close,
+including its recovery fence, timer, settlements and admission database. It
+refuses a manifest with `PI_LEAD_UPGRADE_DRAIN_INCOMPLETE` when accepted recovery
+did not settle in time. A successful manifest remains same-version local store
+integrity evidence, not independent restore-generation or execution authority.
+
+The retained parent inbox is scanned under the same 4096 bound the child
+progress scanner enforces; a larger inbox is refused rather than replayed. One
+malformed retained row is rejected on its own, exactly as the inbox publisher
+rejects it, and the rest of the pass still runs: the terminal settlements run
+behind this scan in the same recovery, so aborting the pass would stall them on
+every later pass. The rejected-row count is reported with the pass result.
+
 Product `readCurrent` accepts `{schemaVersion:'pi-lead-intent/v1',intentId,
 workspaceId,principalId}`. It returns verified immutable message/profile/selection
 references, original principal, scoped authority revision, current audience,
@@ -132,6 +157,12 @@ expiry cleanup and a fresh canonical attempt are required. Startup and periodic
 scanners release proven unused allocations, including admission interrupted
 before a preparation receipt exists. In-flight or ambiguous sends retain holds.
 
+Lead-composition close refuses new public recovery calls and stops the recovery
+timer. Accepted public and periodic recovery passes finish before terminal
+settlement and runtime stores close. A public recovery failure remains visible
+to its caller and does not skip teardown. Shutdown does not infer cancellation
+authority or cancel admitted inference.
+
 `prepare` also carries an optional `childAllowance` (`pi-lead-child-allowance/v1`): what the accepted
 lead plan holds back for child executions, read from the integrity-verified plan the attempt runs
 under, bound to its `executionPlanDigest` and to the pinned profile version it was compiled from
@@ -180,9 +211,20 @@ fence, including the pinned v2 fence that still permits status and progress
 observation: the lookup and both authority rereads around the child read use it,
 so a fence that appears while the records are being read returns nothing. A
 record of another execution is an authority conflict, and a record of another
-attempt of the same execution is left out. A lead stop does not cascade to
+attempt of the same execution is left out. Attribution is by the exact admitted
+parent attempt, so a legacy record that carries no parent attempt is also left
+out: it cannot be attributed to this dispatch, and it is neither disclosed nor
+counted in `totalChildren`. A lead stop does not cascade to
 children and a child's `cancelled` state is that child's own record, so an
 acknowledged lead stop is not evidence that any child has terminated.
+
+Under a pinned v2 rollback fence the retained marker is compared with the
+current product evidence on the canonical actor as well as on the revision,
+scope and principal set. A canonical-actor drift is therefore an authority
+conflict: `status` and `progress` fail with `PI_LEAD_AUTHORITY_CONFLICT` instead
+of returning a retained receipt. That is a deliberate fail-closed reading of
+actor continuity, and it makes a legitimate change of the canonical actor a
+read outage for that dispatch until the retained marker is re-admitted.
 
 The public Control SDK adds `preparePiDurableLead`, `lookupPiDurableLead`,
 `dispatchPiDurableLead`, `getPiDurableLeadStatus`,
@@ -192,6 +234,13 @@ boundary. These source artifacts do not claim a new SDK release is already
 published. Production integration requires a compatible authorized signer; this
 work creates no grants or credentials. Candidate tests use synthetic policy and
 provider transport.
+
+The child publication operation can expose a bounded plain-text conclusion only from
+the canonical Pi adapter's exact terminal `{ text }` result. It is retained with the
+child attempt and terminal event, then checked against the current parent binding,
+original actor and publication grant on each read. Other result JSON and oversized
+text are withheld. An artifact ID is only a reference; it does not grant a read of
+artifact bytes or expose substantial output in Adea's timeline.
 
 ## Provider, spend and recovery gates
 
@@ -221,7 +270,11 @@ the retained pinned price through the existing ledger. Missing historical price
 or spending evidence leaves reconciliation required, rather than repricing.
 
 An uncertain admitted inference wakes as `unknown` and needs trusted no-resend
-reconciliation. `safe_to_resume` must mean that retained accounting/native evidence
+reconciliation. The adapter itself may resume without an external verdict only
+when its durable v1 pre-run marker proves the engine never entered `run`, no
+generation or receipt was retained, and a new process claim plus current
+authority succeeds. A missing legacy marker, timeout, absent ledger hold, or
+any generation identity never proves no-send. `safe_to_resume` must mean that retained accounting/native evidence
 permits replay without another uncertain paid effect. Cancellation remains
 `cancelling` until the same policy proves the outstanding send reconciled; then it
 can become `cancelled` without new inference. A revoked record blocks only itself

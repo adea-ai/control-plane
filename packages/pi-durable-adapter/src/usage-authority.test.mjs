@@ -3,6 +3,7 @@ import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createPiDurableUsageAuthority } from './usage-authority.ts'
+import { issueInferenceResumePermit } from './resume-permit.ts'
 import { withUsageAuthorityContext, at, ids } from './usage-authority.fixture.mjs'
 import { createSubprocessFixtureProbe } from './subprocess-fixture-data.fixture.mjs'
 
@@ -20,6 +21,36 @@ test('durable dispatch reserves full input and fences a duplicate across SQLite 
     expect(holds[0].costMicrounits).toBe(128)
     const { bridge: reopened } = await reopen()
     await expect(reopened.authorizeInference(authority, key)).rejects.toThrow(
+      'MODEL_REQUEST_DISPATCH_ALREADY_ADMITTED'
+    )
+  })
+})
+
+test('only a trusted exact-key no-send permit can reuse a held dispatch', async () => {
+  await withUsageAuthorityContext(async ({ bridge, authority, workspaceId, reopen }) => {
+    const key = 'pi-turn:one:pi-generation:2'
+    await bridge.authorizeInference(authority, key)
+    const { bridge: recovered, ledger } = await reopen()
+    const before = await ledger.entries(workspaceId, ids.executionId)
+    await expect(
+      recovered.authorizeInference(authority, key, issueInferenceResumePermit('different-key'))
+    ).rejects.toThrow('PI_INFERENCE_RESUME_PERMIT_INVALID')
+    for (const forged of [
+      { schemaVersion: 'pi-inference-resume-permit/v1', inferenceKey: key },
+      Object.freeze({ schemaVersion: 'pi-inference-resume-permit/v1', inferenceKey: key }),
+      structuredClone(issueInferenceResumePermit(key)),
+    ])
+      await expect(recovered.authorizeInference(authority, key, forged)).rejects.toThrow(
+        'PI_INFERENCE_RESUME_PERMIT_INVALID'
+      )
+    expect(
+      await recovered.authorizeInference(authority, key, issueInferenceResumePermit(key))
+    ).toMatchObject({
+      maxOutputTokens: 32,
+      maximumInputTokens: 64,
+    })
+    expect(await ledger.entries(workspaceId, ids.executionId)).toEqual(before)
+    await expect(recovered.authorizeInference(authority, key)).rejects.toThrow(
       'MODEL_REQUEST_DISPATCH_ALREADY_ADMITTED'
     )
   })

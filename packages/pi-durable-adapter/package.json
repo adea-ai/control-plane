@@ -1,6 +1,6 @@
 {
   "name": "@control-plane/pi-durable-adapter",
-  "version": "0.10.4",
+  "version": "0.11.3",
   "private": true,
   "files": [
     "dist"
@@ -34,7 +34,7 @@
     "@earendil-works/chord": "1.1.0",
     "@earendil-works/pi-ai": "1.1.0",
     "@earendil-works/pi-durable": "1.1.0",
-    "zod": "4.6.5"
+    "zod": "4.6.6"
   },
   "devDependencies": {
     "@control-plane/sqlite-persistence": "workspace:*"

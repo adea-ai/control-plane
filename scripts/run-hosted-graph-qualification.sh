@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# This qualifier uses the current shard's database, never another Neon preview.
+# This qualifier uses the current shard's database, never another PostgreSQL preview.
 # Keep the developer's Docker engine out of this CI-only entry point.
 [[ "${GITHUB_ACTIONS:-}" == true ]] || { echo 'GitHub Actions runner required.' >&2; exit 2; }
 [[ "${RUNNER_TEMP:-}" == /* && -d "$RUNNER_TEMP" ]] || { echo 'Absolute existing RUNNER_TEMP required.' >&2; exit 2; }

@@ -1,5 +1,48 @@
 # Changelog
 
+## [1.44.1](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.44.0...sqlite-persistence-v1.44.1) (2026-10-24)
+
+
+### Bug Fixes
+
+* reconcile audit identities and declaration budget ([#1303](https://github.com/adea-ai/control-plane/issues/1303)) ([b65e2c7](https://github.com/adea-ai/control-plane/commit/b65e2c770cd5d2fa7a3007bdff71613e18748860))
+
+## [1.44.0](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.43.0...sqlite-persistence-v1.44.0) (2026-10-23)
+
+
+### Features
+
+* **pi-durable:** compose child reads and drain recovery ([#1204](https://github.com/adea-ai/control-plane/issues/1204)) ([2f1f9d1](https://github.com/adea-ai/control-plane/commit/2f1f9d1a4da48db09e2c8ee9dc08625fbb2bc7a5))
+
+## [1.43.0](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.42.4...sqlite-persistence-v1.43.0) (2026-10-23)
+
+
+### Features
+
+* **database:** add ProjectState digest compatibility ([#612](https://github.com/adea-ai/control-plane/issues/612)) ([#1223](https://github.com/adea-ai/control-plane/issues/1223)) ([5123466](https://github.com/adea-ai/control-plane/commit/512346603a7ca0c0d9f9b90ed40cf48d6dc2d474))
+
+## [1.42.4](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.42.3...sqlite-persistence-v1.42.4) (2026-10-23)
+
+
+### Tests
+
+* **sqlite-persistence:** cover the child budget admission under an OS crash ([#187](https://github.com/adea-ai/control-plane/issues/187)) ([#1241](https://github.com/adea-ai/control-plane/issues/1241)) ([6d23065](https://github.com/adea-ai/control-plane/commit/6d23065e1778e27236d0cddb0b018a82cb2d34c4))
+
+## [1.42.3](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.42.2...sqlite-persistence-v1.42.3) (2026-10-22)
+
+
+### Tests
+
+* m612-sqlite-receipt-byte-provenance ([#1244](https://github.com/adea-ai/control-plane/issues/1244)) ([75e91e6](https://github.com/adea-ai/control-plane/commit/75e91e6952e77fa929a56ea954270997d8a101d3))
+* **sqlite:** pin historical receipt bytes for the SQLite lane ([75e91e6](https://github.com/adea-ai/control-plane/commit/75e91e6952e77fa929a56ea954270997d8a101d3)), closes [#612](https://github.com/adea-ai/control-plane/issues/612)
+
+## [1.42.2](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.42.1...sqlite-persistence-v1.42.2) (2026-10-21)
+
+
+### Tests
+
+* **sqlite-persistence:** prove the three delivery kinds deduplicate independently (CP [#1024](https://github.com/adea-ai/control-plane/issues/1024)) ([#1231](https://github.com/adea-ai/control-plane/issues/1231)) ([f2e5cce](https://github.com/adea-ai/control-plane/commit/f2e5ccebf01732c7643ce06f21212da8f6f880bb))
+
 ## [1.42.1](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.42.0...sqlite-persistence-v1.42.1) (2026-10-19)
 
 

@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
-export const applicationEnvironments = ['development', 'test', 'staging', 'production'] as const
+export const applicationEnvironments = ['development', 'test', 'production'] as const
 
 export type ApplicationEnvironment = (typeof applicationEnvironments)[number]
 export type RawEnvironment = Readonly<Record<string, string | undefined>>
@@ -23,7 +23,7 @@ export async function loadEnvironment(
   options: EnvironmentLoadOptions = {}
 ): Promise<RawEnvironment> {
   const applicationEnvironment = resolveApplicationEnvironment(baseEnvironment)
-  if (applicationEnvironment === 'staging' || applicationEnvironment === 'production') {
+  if (applicationEnvironment === 'production') {
     return { ...baseEnvironment }
   }
 
@@ -75,7 +75,7 @@ function isMissingFileError(error: unknown): error is NodeJS.ErrnoException {
 
 export class EnvironmentNameError extends Error {
   constructor() {
-    super('APP_ENV must be one of development, test, staging, or production')
+    super('APP_ENV must be one of development, test, or production')
     this.name = 'EnvironmentNameError'
   }
 }

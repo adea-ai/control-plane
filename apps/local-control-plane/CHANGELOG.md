@@ -1,5 +1,47 @@
 # Changelog
 
+## [1.38.1](https://github.com/adea-ai/control-plane/compare/local-control-plane-v1.38.0...local-control-plane-v1.38.1) (2026-10-24)
+
+
+### Bug Fixes
+
+* reduce dependency closure and preserve budget checks ([#1270](https://github.com/adea-ai/control-plane/issues/1270)) ([01fa230](https://github.com/adea-ai/control-plane/commit/01fa230233cc796b6c7f93d020006212b89631f6))
+
+## [1.38.0](https://github.com/adea-ai/control-plane/compare/local-control-plane-v1.37.0...local-control-plane-v1.38.0) (2026-10-23)
+
+
+### Features
+
+* **acp-adapter:** qualify native routes and pre-effect controls (CP [#1021](https://github.com/adea-ai/control-plane/issues/1021)) ([#1253](https://github.com/adea-ai/control-plane/issues/1253)) ([d01d337](https://github.com/adea-ai/control-plane/commit/d01d33759540d8835331d7d17035b9d0e89c44e6))
+
+## [1.37.0](https://github.com/adea-ai/control-plane/compare/local-control-plane-v1.36.5...local-control-plane-v1.37.0) (2026-10-23)
+
+
+### Features
+
+* **context:** qualify decision context consumers ([#558](https://github.com/adea-ai/control-plane/issues/558)) ([#1218](https://github.com/adea-ai/control-plane/issues/1218)) ([77b93eb](https://github.com/adea-ai/control-plane/commit/77b93eb77603b462a01094b6916479318c844018))
+
+## [1.36.5](https://github.com/adea-ai/control-plane/compare/local-control-plane-v1.36.4...local-control-plane-v1.36.5) (2026-10-22)
+
+
+### Tests
+
+* **#1018:** prove the concurrent retry and a client reconnect on PostgreSQL ([#1252](https://github.com/adea-ai/control-plane/issues/1252)) ([9789445](https://github.com/adea-ai/control-plane/commit/9789445e7f73dbe5ad3d06bee5873be54ad750fc))
+
+## [1.36.4](https://github.com/adea-ai/control-plane/compare/local-control-plane-v1.36.3...local-control-plane-v1.36.4) (2026-10-22)
+
+
+### Maintenance
+
+* pin Bun 1.4.4 and use native SDK consumer checking ([#1255](https://github.com/adea-ai/control-plane/issues/1255)) ([176d2d6](https://github.com/adea-ai/control-plane/commit/176d2d61571ef89263e017ddb911b4315aa07234))
+
+## [1.36.3](https://github.com/adea-ai/control-plane/compare/local-control-plane-v1.36.2...local-control-plane-v1.36.3) (2026-10-22)
+
+
+### Tests
+
+* **local:** stabilize operations measurement lifecycle ([#1217](https://github.com/adea-ai/control-plane/issues/1217)) ([7f42d34](https://github.com/adea-ai/control-plane/commit/7f42d347800f1a83b9bddcf8bb7f5cccf9486bd6))
+
 ## [1.36.2](https://github.com/adea-ai/control-plane/compare/local-control-plane-v1.36.1...local-control-plane-v1.36.2) (2026-10-17)
 
 

@@ -1,5 +1,27 @@
 # Changelog
 
+## [1.34.1](https://github.com/adea-ai/control-plane/compare/domain-v1.34.0...domain-v1.34.1) (2026-10-24)
+
+
+### Bug Fixes
+
+* reconcile audit identities and declaration budget ([#1303](https://github.com/adea-ai/control-plane/issues/1303)) ([b65e2c7](https://github.com/adea-ai/control-plane/commit/b65e2c770cd5d2fa7a3007bdff71613e18748860))
+* reduce dependency closure and preserve budget checks ([#1270](https://github.com/adea-ai/control-plane/issues/1270)) ([01fa230](https://github.com/adea-ai/control-plane/commit/01fa230233cc796b6c7f93d020006212b89631f6))
+
+## [1.34.0](https://github.com/adea-ai/control-plane/compare/domain-v1.33.0...domain-v1.34.0) (2026-10-23)
+
+
+### Features
+
+* **runtime:** map a model to its harness in managed cloud routing (CP [#678](https://github.com/adea-ai/control-plane/issues/678)) ([#1210](https://github.com/adea-ai/control-plane/issues/1210)) ([4f9967d](https://github.com/adea-ai/control-plane/commit/4f9967dc50dfb5dc3ffa13a305f4e3623ae20fe1))
+
+## [1.33.0](https://github.com/adea-ai/control-plane/compare/domain-v1.32.0...domain-v1.33.0) (2026-10-23)
+
+
+### Features
+
+* **database:** add ProjectState digest compatibility ([#612](https://github.com/adea-ai/control-plane/issues/612)) ([#1223](https://github.com/adea-ai/control-plane/issues/1223)) ([5123466](https://github.com/adea-ai/control-plane/commit/512346603a7ca0c0d9f9b90ed40cf48d6dc2d474))
+
 ## [1.32.0](https://github.com/adea-ai/control-plane/compare/domain-v1.31.1...domain-v1.32.0) (2026-10-17)
 
 

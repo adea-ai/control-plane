@@ -2,8 +2,90 @@ import { test, expect } from 'bun:test'
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
+import { spawnSync } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
 import { checkBoundaries, specifiers, workspaces } from '../scripts/workspace-boundaries.mjs'
 import { buildTasks } from '../scripts/orch-graph.mjs'
+
+test('accepted foundation toolchain matches the current pinned binaries and package manager', () => {
+  const root = fileURLToPath(new URL('..', import.meta.url))
+  const milestone = JSON.parse(readFileSync(join(root, 'docs/m1-foundation.json'), 'utf8'))
+  const manifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
+  expect(milestone.toolchain.node).toBe(readFileSync(join(root, '.node-version'), 'utf8').trim())
+  expect(milestone.toolchain.bun).toBe(readFileSync(join(root, '.bun-version'), 'utf8').trim())
+  expect(manifest.packageManager).toBe(`bun@${milestone.toolchain.bun}`)
+})
+
+test('foundation verify-only retains toolchain and accepted-history refusals', () => {
+  const root = mkdtempSync(join(tmpdir(), 'cp-foundation-verifier-'))
+  const run = (command, args) => spawnSync(command, args, { cwd: root, encoding: 'utf8' })
+  try {
+    mkdirSync(join(root, 'scripts'), { recursive: true })
+    mkdirSync(join(root, 'docs'), { recursive: true })
+    writeFileSync(
+      join(root, 'scripts/run-foundation-acceptance.mjs'),
+      readFileSync(new URL('../scripts/run-foundation-acceptance.mjs', import.meta.url))
+    )
+    writeFileSync(join(root, 'README.md'), 'disposable accepted foundation\n')
+    for (const args of [
+      ['init', '-q'],
+      ['add', 'README.md'],
+      [
+        '-c',
+        'user.name=Foundation Test',
+        '-c',
+        'user.email=foundation@example.invalid',
+        'commit',
+        '-qm',
+        'accepted fixture',
+      ],
+    ]) {
+      expect(run('git', args).status).toBe(0)
+    }
+    const accepted = run('git', ['rev-parse', 'HEAD']).stdout.trim()
+    const milestone = {
+      toolchain: { node: '24.21.0', bun: '1.4.4' },
+      dependencies: Array.from({ length: 8 }, (_, index) => ({
+        issue: index + 1,
+        commit: accepted,
+      })),
+    }
+    const reset = () => {
+      writeFileSync(join(root, '.node-version'), '24.21.0\n')
+      writeFileSync(join(root, '.bun-version'), '1.4.4\n')
+      writeFileSync(join(root, 'package.json'), JSON.stringify({ packageManager: 'bun@1.4.4' }))
+      writeFileSync(join(root, 'docs/m1-foundation.json'), JSON.stringify(milestone))
+    }
+    const verify = () => run('node', ['scripts/run-foundation-acceptance.mjs', '--verify-only'])
+    reset()
+    expect(verify().status).toBe(0)
+    for (const [path, value, message] of [
+      ['.bun-version', '1.4.3\n', 'Pinned Bun version drifted.'],
+      ['.node-version', '24.20.0\n', 'Pinned Node version drifted.'],
+      [
+        'package.json',
+        JSON.stringify({ packageManager: 'bun@1.4.3' }),
+        'packageManager does not match the accepted Bun version.',
+      ],
+    ]) {
+      reset()
+      writeFileSync(join(root, path), value)
+      const result = verify()
+      expect(result.status).not.toBe(0)
+      expect(result.stderr).toContain(message)
+    }
+    reset()
+    milestone.dependencies[7].commit = '0'.repeat(40)
+    writeFileSync(join(root, 'docs/m1-foundation.json'), JSON.stringify(milestone))
+    const missingAncestor = verify()
+    expect(missingAncestor.status).not.toBe(0)
+    expect(missingAncestor.stderr).toContain(
+      'M1 dependency issue 8 is not present in the current history.'
+    )
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
 
 test('boundary parser retains type-only imports, re-exports and import types', () => {
   expect(
@@ -67,7 +149,12 @@ test('workspace graph preserves upstream builds, integration ordering and emitte
       if (operation === 'build') {
         expect(task.cache.output).toEqual([`${dir.slice(root.length + 1)}/dist/**`])
         expect(task.command).toContain('ORCH_TOOLCHAIN=test-toolchain')
-        expect(manifest.scripts.build).toBe('tsc -p tsconfig.json')
+        // Main keeps a single tsc build; the profile-recovery branch extends the
+        // profile-adapters build with its type-test compilation. Both remain valid.
+        expect([
+          'tsc -p tsconfig.json',
+          'tsc -p tsconfig.json && tsc -p tsconfig.type-tests.json',
+        ]).toContain(manifest.scripts.build)
       }
       if (operation === 'test:integration') expect(task.cache).toBe(false)
     }

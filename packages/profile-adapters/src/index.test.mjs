@@ -1,5 +1,8 @@
 import { describe, expect, test } from 'bun:test'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { spawn } from 'node:child_process'
+import { once } from 'node:events'
+import { mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { fileURLToPath } from 'node:url'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { executionConstraintFixtures } from '@control-plane/domain'
@@ -7,8 +10,9 @@ import {
   bindProfileStorage,
   bindProfileRuntime,
   bindProfileWorkflowWake,
-  ExecutionProfiles,
+  bindRetainedProfileWorkflowWake,
   ProfileAdapterError,
+  ExecutionProfiles,
   ProfileCapabilityMatrix,
 } from './index.ts'
 import { ManagedPiAdapter, ManagedPiDriver } from '@control-plane/managed-pi-adapter'
@@ -111,6 +115,198 @@ const hostedPlacement = Object.freeze({
 })
 
 const managedPiNow = '2026-08-25T12:00:00.000Z'
+
+const wakePlan = {
+  executionPlanId: 'pln_01JABCDEF0123456789ABCDEFG',
+  contentDigest: `sha256:${'a'.repeat(64)}`,
+  schemaVersion: 1,
+}
+
+function retainedWakeFixture({
+  queuedAttempt = false,
+  graph: includeGraph = false,
+  scoped = false,
+  reconciliationRequired = false,
+  missingDeadline = false,
+} = {}) {
+  const executionId = 'exe_01JABCDEF0123456789ABCDEFG'
+  const now = '2026-10-09T12:00:00.000Z'
+  const projectId = 'prj_01JABCDEF0123456789ABCDEFG'
+  const executionScope = scoped ? { schemaVersion: 1, kind: 'project', projectId } : undefined
+  const executionPlan = { ...wakePlan, schemaVersion: scoped ? 2 : 1 }
+  const graphSelection = includeGraph
+    ? {
+        reference: {
+          graphDefinitionId: 'graph:retained-wake',
+          graphVersion: '1.0.0',
+          contentDigest: `sha256:${'b'.repeat(64)}`,
+        },
+        input: { prompt: 'resume retained workflow' },
+      }
+    : undefined
+  const execution = {
+    executionId,
+    state: reconciliationRequired
+      ? 'reconciliation_required'
+      : queuedAttempt
+        ? 'queued'
+        : 'accepted',
+    version: queuedAttempt || reconciliationRequired ? 2 : 1,
+    correlation: {
+      workspaceId: 'wsp_01JABCDEF0123456789ABCDEFG',
+      projectId,
+      ...(executionScope === undefined ? {} : { executionScope }),
+      taskId: 'tsk_01JABCDEF0123456789ABCDEFG',
+      agentId: 'agt_01JABCDEF0123456789ABCDEFG',
+      requestId: 'req_01JABCDEF0123456789ABCDEFG',
+    },
+    executionPlan,
+    attemptCount: queuedAttempt ? 1 : 0,
+    ...(queuedAttempt ? { latestAttemptId: 'att_01JABCDEF0123456789ABCDEFG' } : {}),
+    acceptedAt: '2026-10-09T11:00:00.000Z',
+    ...(missingDeadline ? {} : { deadlineAt: now }),
+    ...(reconciliationRequired ? { reconciliationRequiredAt: now } : {}),
+    createdAt: '2026-10-09T11:00:00.000Z',
+    updatedAt: queuedAttempt ? now : '2026-10-09T11:00:00.000Z',
+    ...(queuedAttempt ? { queuedAt: now } : {}),
+  }
+  const command = {
+    callerPrincipalId: 'svc_agent-hq',
+    operation: 'execution.accept',
+    workspaceId: execution.correlation.workspaceId,
+    projectId,
+    ...(executionScope === undefined ? {} : { executionScope }),
+    taskId: execution.correlation.taskId,
+    agentId: execution.correlation.agentId,
+    idempotencyKey: 'task-submit-0001',
+    commandId: 'cmd_01JABCDEF0123456789ABCDEFG',
+    requestId: execution.correlation.requestId,
+    payloadHash: 'a'.repeat(64),
+    status: reconciliationRequired ? 'reconciliation_required' : 'accepted',
+    executionId,
+    executionPlan,
+    version: reconciliationRequired ? 2 : 1,
+    conflictCount: 0,
+    receivedAt: '2026-10-09T11:00:00.000Z',
+    lastSeenAt: '2026-10-09T11:00:00.000Z',
+    retentionExpiresAt: '2026-11-08T11:00:00.000Z',
+    ...(reconciliationRequired
+      ? {
+          reconciliationRequiredAt: now,
+          errorReference: 'urn:workflow:reconciliation-required',
+        }
+      : {}),
+  }
+  const attempt = queuedAttempt
+    ? {
+        attemptId: execution.latestAttemptId,
+        executionId,
+        sequence: 1,
+        state: 'queued',
+        version: 1,
+        acceptedAt: execution.acceptedAt,
+        queuedAt: now,
+        deadlineAt: now,
+        createdAt: now,
+        updatedAt: now,
+      }
+    : undefined
+  const plan = {
+    ...executionPlan,
+    correlation: execution.correlation,
+    ...(graphSelection === undefined ? {} : { graph: graphSelection }),
+  }
+  const reads = []
+  const sources = {
+    commands: {
+      getByExecutionId: async (id) => {
+        reads.push(['command', id])
+        return command
+      },
+      getExecution: async (id) => {
+        reads.push(['execution', id])
+        return execution
+      },
+    },
+    executions: {
+      getAttempt: async (id) => {
+        reads.push(['attempt', id])
+        return attempt
+      },
+    },
+    plans: {
+      get: async () => plan,
+    },
+  }
+  return {
+    command,
+    execution,
+    attempt,
+    plan,
+    reads,
+    sources,
+    workflow: {
+      executionId,
+      workflowId: `wfl_${executionId.slice(4)}`,
+      executionPlan,
+      deadlineAt: now,
+      ...(graphSelection === undefined
+        ? {}
+        : {
+            graph: {
+              workspaceId: execution.correlation.workspaceId,
+              ...graphSelection,
+              threadId: `graph:${executionId}`,
+            },
+          }),
+    },
+  }
+}
+
+async function writeRestartState(path, state) {
+  const temporaryPath = `${path}.${process.pid}.tmp`
+  await writeFile(temporaryPath, JSON.stringify(state), { mode: 0o600 })
+  await rename(temporaryPath, path)
+}
+
+function startWakeRestartWorker(statePath, mode) {
+  const workerPath = fileURLToPath(new URL('./wake-restart.worker.mjs', import.meta.url))
+  const child = spawn(process.execPath, [workerPath, statePath, mode], {
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+  let output = ''
+  let errors = ''
+  child.stdout.setEncoding('utf8')
+  child.stderr.setEncoding('utf8')
+  const exited = once(child, 'exit')
+  child.stdout.on('data', (chunk) => {
+    output += chunk
+  })
+  child.stderr.on('data', (chunk) => {
+    errors += chunk
+  })
+  return { child, exited, output: () => output, errors: () => errors }
+}
+
+async function waitForWorkerOutput(worker, marker) {
+  const deadline = Date.now() + 10_000
+  while (!worker.output().includes(marker)) {
+    if (worker.child.exitCode !== null || worker.child.signalCode !== null) {
+      throw new Error(`wake worker exited before ${marker}: ${worker.errors()}`)
+    }
+    if (Date.now() >= deadline) throw new Error(`wake worker did not print ${marker}`)
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
+}
+
+async function finishWakeRestartWorker(worker) {
+  const [code, signal] = await worker.exited
+  expect({ code, signal, errors: worker.errors() }).toEqual({
+    code: 0,
+    signal: null,
+    errors: '',
+  })
+}
 
 /** Minimal managed-Pi client over the canonical driver contract, mirroring
  *  the hosted runtime-worker fixture so the real adapter classes are used. */
@@ -302,6 +498,16 @@ describe('profile infrastructure bindings', () => {
     expect(() => bindProfileStorage('local', composition('hosted-simple'))).toThrow(
       expect.objectContaining({ code: 'PROFILE_DEPLOYMENT_MISMATCH' })
     )
+    for (const [profile, deploymentProfile] of [
+      ['local', 'cloud'],
+      ['local', 'hosted-server'],
+      ['hosted', 'local'],
+      ['self-hosted', 'local'],
+    ]) {
+      expect(() => bindProfileStorage(profile, composition(deploymentProfile))).toThrow(
+        expect.objectContaining({ code: 'PROFILE_DEPLOYMENT_MISMATCH' })
+      )
+    }
     expect(() => bindProfileStorage('self-hosted', composition('hosted-server', 'sqlite'))).toThrow(
       expect.objectContaining({ code: 'PROFILE_PERSISTENCE_MISMATCH' })
     )
@@ -468,6 +674,373 @@ describe('profile infrastructure bindings', () => {
         deploymentProfile,
         kind: 'restate-ingress',
       })
+    }
+  })
+
+  test('binds a retained zero-attempt workflow wake to the current command and execution generation', async () => {
+    const fixture = retainedWakeFixture()
+    const submitted = []
+    const calls = []
+    const driver = {
+      deploymentProfile: 'hosted-server',
+      kind: 'restate-ingress',
+      submit: async (input) => submitted.push(input),
+    }
+    const wake = await bindRetainedProfileWorkflowWake({
+      profile: 'self-hosted',
+      deployment: composition('hosted-server'),
+      driver,
+      placement: placement('self-hosted'),
+      guards: allowedGuards(calls),
+      topology: trustedWakeTopology(driver),
+      retainedRecords: fixture.sources,
+    })
+
+    await wake.submit(fixture.workflow)
+
+    expect(submitted).toEqual([fixture.workflow])
+    const authorityContext = calls.find(([guard]) => guard === 'authority')[1]
+    expect(authorityContext.target).toMatchObject({
+      kind: 'workflow',
+      executionId: fixture.execution.executionId,
+      retained: {
+        command: { commandId: fixture.command.commandId, version: 1, status: 'accepted' },
+        execution: { version: 1, state: 'accepted', attemptCount: 0 },
+      },
+    })
+    expect(authorityContext.target.retained).not.toHaveProperty('callerPrincipalId')
+    expect(fixture.reads.some(([kind]) => kind === 'attempt')).toBe(false)
+  })
+
+  test('passes the retained admission snapshot to every pre-submit and post-submit guard callback', async () => {
+    const fixture = retainedWakeFixture()
+    const driver = {
+      deploymentProfile: 'hosted-server',
+      kind: 'restate-ingress',
+      submit: async () => undefined,
+    }
+    const workflowGuardCalls = []
+    const requireRetainedWake = (guard) => async (context) => {
+      if (context.operation !== 'workflow.wake') return
+      if (context.target.kind !== 'workflow' || context.target.retained === undefined) {
+        throw new Error(`${guard} workflow.wake guard omitted retained admission context`)
+      }
+      workflowGuardCalls.push({ guard, context })
+    }
+    const wake = await bindRetainedProfileWorkflowWake({
+      profile: 'self-hosted',
+      deployment: composition('hosted-server'),
+      driver,
+      placement: placement('self-hosted'),
+      guards: {
+        authority: { assertCurrent: requireRetainedWake('authority') },
+        residency: { assertCurrent: requireRetainedWake('residency') },
+      },
+      topology: trustedWakeTopology(driver),
+      retainedRecords: fixture.sources,
+    })
+
+    await wake.submit(fixture.workflow)
+
+    expect(workflowGuardCalls.map(({ guard }) => guard)).toEqual([
+      'authority',
+      'residency',
+      'authority',
+      'residency',
+    ])
+    expect(new Set(workflowGuardCalls.map(({ context }) => context)).size).toBe(1)
+    expect(workflowGuardCalls[0].context.target.retained).toMatchObject({
+      command: { commandId: fixture.command.commandId, version: 1, status: 'accepted' },
+      execution: { version: 1, state: 'accepted', attemptCount: 0 },
+    })
+  })
+
+  for (const scenario of [
+    { label: 'graph-bound', options: { graph: true } },
+    { label: 'scoped', options: { scoped: true } },
+    { label: 'reconciliation-required', options: { reconciliationRequired: true } },
+  ]) {
+    test(`admits a retained ${scenario.label} zero-attempt workflow wake`, async () => {
+      const fixture = retainedWakeFixture(scenario.options)
+      const submitted = []
+      const driver = {
+        deploymentProfile: 'hosted-server',
+        kind: 'restate-ingress',
+        submit: async (input) => submitted.push(input),
+      }
+      const wake = await bindRetainedProfileWorkflowWake({
+        profile: 'self-hosted',
+        deployment: composition('hosted-server'),
+        driver,
+        placement: placement('self-hosted'),
+        guards: allowedGuards(),
+        topology: trustedWakeTopology(driver),
+        retainedRecords: fixture.sources,
+      })
+
+      await wake.submit(fixture.workflow)
+
+      expect(submitted).toEqual([fixture.workflow])
+      if (scenario.options.graph) {
+        expect(fixture.workflow.graph).toMatchObject({
+          workspaceId: fixture.execution.correlation.workspaceId,
+          reference: fixture.plan.graph.reference,
+          input: fixture.plan.graph.input,
+        })
+      }
+      if (scenario.options.scoped) {
+        expect(fixture.command.executionScope).toEqual(fixture.execution.correlation.executionScope)
+        expect(fixture.plan.correlation.executionScope).toEqual(
+          fixture.execution.correlation.executionScope
+        )
+      }
+      if (scenario.options.reconciliationRequired) {
+        expect(fixture.command.status).toBe('reconciliation_required')
+        expect(fixture.execution.state).toBe('reconciliation_required')
+      }
+    })
+  }
+
+  test('fails closed when a historical retained execution has no deadline', async () => {
+    const fixture = retainedWakeFixture({ missingDeadline: true })
+    const submitted = []
+    const driver = {
+      deploymentProfile: 'hosted-server',
+      kind: 'restate-ingress',
+      submit: async (input) => submitted.push(input),
+    }
+    const wake = await bindRetainedProfileWorkflowWake({
+      profile: 'self-hosted',
+      deployment: composition('hosted-server'),
+      driver,
+      placement: placement('self-hosted'),
+      guards: allowedGuards(),
+      topology: trustedWakeTopology(driver),
+      retainedRecords: fixture.sources,
+    })
+
+    await expect(wake.submit(fixture.workflow)).rejects.toMatchObject({
+      code: 'PROFILE_WAKE_RETAINED_RECORD_INVALID',
+    })
+    expect(submitted).toEqual([])
+  })
+
+  test('rejects changed retained identity and generation before the exact dispatcher is called', async () => {
+    const fixture = retainedWakeFixture()
+    const submitted = []
+    const driver = {
+      deploymentProfile: 'hosted-server',
+      kind: 'restate-ingress',
+      submit: async (input) => submitted.push(input),
+    }
+    const wake = await bindRetainedProfileWorkflowWake({
+      profile: 'self-hosted',
+      deployment: composition('hosted-server'),
+      driver,
+      placement: placement('self-hosted'),
+      guards: {
+        authority: {
+          assertCurrent: async () => {
+            fixture.execution.version += 1
+          },
+        },
+        residency: { assertCurrent: async () => undefined },
+      },
+      topology: trustedWakeTopology(driver),
+      retainedRecords: fixture.sources,
+    })
+
+    await expect(wake.submit(fixture.workflow)).rejects.toMatchObject({
+      code: 'PROFILE_WAKE_RETAINED_RECORD_STALE',
+    })
+    expect(submitted).toEqual([])
+
+    const attempted = retainedWakeFixture({ queuedAttempt: true })
+    const attemptDriver = {
+      deploymentProfile: 'hosted-server',
+      kind: 'restate-ingress',
+      submit: async (input) => submitted.push(input),
+    }
+    const attemptWake = await bindRetainedProfileWorkflowWake({
+      profile: 'self-hosted',
+      deployment: composition('hosted-server'),
+      driver: attemptDriver,
+      placement: placement('self-hosted'),
+      guards: allowedGuards(),
+      topology: trustedWakeTopology(attemptDriver),
+      retainedRecords: attempted.sources,
+    })
+    await expect(attemptWake.submit(attempted.workflow)).rejects.toMatchObject({
+      code: 'PROFILE_WAKE_RETAINED_RECORD_INVALID',
+    })
+    expect(attempted.reads).toContainEqual(['attempt', attempted.attempt.attemptId])
+    expect(submitted).toEqual([])
+
+    const second = retainedWakeFixture()
+    const rejectedDriver = {
+      deploymentProfile: 'hosted-server',
+      kind: 'restate-ingress',
+      submit: async (input) => submitted.push(input),
+    }
+    const rejectedWake = await bindRetainedProfileWorkflowWake({
+      profile: 'self-hosted',
+      deployment: composition('hosted-server'),
+      driver: rejectedDriver,
+      placement: placement('self-hosted'),
+      guards: allowedGuards(),
+      topology: trustedWakeTopology(rejectedDriver),
+      retainedRecords: second.sources,
+    })
+    await expect(
+      rejectedWake.submit({
+        ...second.workflow,
+        executionPlan: {
+          ...second.workflow.executionPlan,
+          contentDigest: `sha256:${'c'.repeat(64)}`,
+        },
+      })
+    ).rejects.toMatchObject({ code: 'PROFILE_WAKE_RETAINED_RECORD_INVALID' })
+    expect(submitted).toEqual([])
+    await expect(
+      rejectedWake.submit({
+        ...second.workflow,
+        graph: {
+          workspaceId: second.execution.correlation.workspaceId,
+          reference: {
+            graphDefinitionId: 'graph:unretained',
+            graphVersion: '1.0.0',
+            contentDigest: `sha256:${'d'.repeat(64)}`,
+          },
+          threadId: `graph:${second.execution.executionId}`,
+          input: {},
+        },
+      })
+    ).rejects.toMatchObject({ code: 'PROFILE_WAKE_RETAINED_RECORD_INVALID' })
+    expect(submitted).toEqual([])
+  })
+
+  test('does not submit a retained wake when current authority or residency denies it', async () => {
+    for (const deniedGuard of ['authority', 'residency']) {
+      const fixture = retainedWakeFixture()
+      const submitted = []
+      const driver = {
+        deploymentProfile: 'hosted-server',
+        kind: 'restate-ingress',
+        submit: async (input) => submitted.push(input),
+      }
+      const guards = allowedGuards()
+      const wake = await bindRetainedProfileWorkflowWake({
+        profile: 'self-hosted',
+        deployment: composition('hosted-server'),
+        driver,
+        placement: placement('self-hosted'),
+        guards,
+        topology: trustedWakeTopology(driver),
+        retainedRecords: fixture.sources,
+      })
+      guards[deniedGuard].assertCurrent = async () => {
+        throw new ProfileAdapterError(
+          deniedGuard === 'authority' ? 'PROFILE_AUTHORITY_REJECTED' : 'PROFILE_RESIDENCY_REJECTED'
+        )
+      }
+
+      await expect(wake.submit(fixture.workflow)).rejects.toMatchObject({
+        code:
+          deniedGuard === 'authority' ? 'PROFILE_AUTHORITY_REJECTED' : 'PROFILE_RESIDENCY_REJECTED',
+      })
+      expect(submitted).toEqual([])
+    }
+  })
+
+  test('replays a retained wake after child-process SIGKILL using a test-only idempotent ingress', async () => {
+    const fixture = retainedWakeFixture()
+    const directory = await mkdtemp(join(tmpdir(), 'profile-wake-restart-'))
+    const statePath = join(directory, 'state.json')
+    await writeRestartState(statePath, {
+      command: fixture.command,
+      execution: fixture.execution,
+      plan: fixture.plan,
+      workflow: fixture.workflow,
+      actorGrant: true,
+      resident: true,
+      submissions: 0,
+      acceptedExecutionIds: [],
+    })
+
+    let interrupted
+    let restarted
+    try {
+      // This is a local file-backed authority/residency fixture and a fake ingress
+      // that deduplicates by execution ID. It does not exercise Postgres or Restate.
+      interrupted = startWakeRestartWorker(statePath, 'crash-after-effect')
+      await waitForWorkerOutput(interrupted, 'EFFECT_RECORDED')
+      interrupted.child.kill('SIGKILL')
+      const [code, signal] = await interrupted.exited
+      expect({ code, signal }).toEqual({ code: null, signal: 'SIGKILL' })
+
+      restarted = startWakeRestartWorker(statePath, 'resume')
+      await waitForWorkerOutput(restarted, 'SUBMITTED')
+      await finishWakeRestartWorker(restarted)
+
+      const state = JSON.parse(await readFile(statePath, 'utf8'))
+      expect(state.submissions).toBe(2)
+      expect(state.acceptedExecutionIds).toEqual([fixture.execution.executionId])
+    } finally {
+      for (const worker of [interrupted, restarted]) {
+        if (worker && worker.child.exitCode === null && worker.child.signalCode === null) {
+          worker.child.kill('SIGKILL')
+          await worker.exited
+        }
+      }
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  test('rechecks actor authority after binder restart before dispatching a retained wake', async () => {
+    const fixture = retainedWakeFixture()
+    const directory = await mkdtemp(join(tmpdir(), 'profile-wake-revocation-'))
+    const statePath = join(directory, 'state.json')
+    await writeRestartState(statePath, {
+      command: fixture.command,
+      execution: fixture.execution,
+      plan: fixture.plan,
+      workflow: fixture.workflow,
+      actorGrant: true,
+      resident: true,
+      submissions: 0,
+      acceptedExecutionIds: [],
+    })
+
+    let bound
+    let restarted
+    try {
+      // The first worker binds, then dies. Revocation is read from the test
+      // fixture by the fresh worker before it can call the fake ingress.
+      bound = startWakeRestartWorker(statePath, 'bind-only')
+      await waitForWorkerOutput(bound, 'BOUND')
+      bound.child.kill('SIGKILL')
+      const [code, signal] = await bound.exited
+      expect({ code, signal }).toEqual({ code: null, signal: 'SIGKILL' })
+
+      const state = JSON.parse(await readFile(statePath, 'utf8'))
+      state.actorGrant = false
+      await writeRestartState(statePath, state)
+
+      restarted = startWakeRestartWorker(statePath, 'resume')
+      await waitForWorkerOutput(restarted, 'DENIED')
+      await finishWakeRestartWorker(restarted)
+
+      const afterRestart = JSON.parse(await readFile(statePath, 'utf8'))
+      expect(afterRestart.submissions).toBe(0)
+      expect(afterRestart.acceptedExecutionIds).toEqual([])
+    } finally {
+      for (const worker of [bound, restarted]) {
+        if (worker && worker.child.exitCode === null && worker.child.signalCode === null) {
+          worker.child.kill('SIGKILL')
+          await worker.exited
+        }
+      }
+      await rm(directory, { recursive: true, force: true })
     }
   })
 

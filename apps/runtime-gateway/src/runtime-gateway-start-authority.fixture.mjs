@@ -57,5 +57,11 @@ test('forwards the host credential authority', async () => {
   })
 
   expect(composedOptions.runtimeNodeCredentialAuthority).toBe(authority)
+  // The parent test reads this marker from the subprocess output, so the body
+  // prints it itself. The reporter prints the name of a failing test, never the
+  // name of a passing one, so the name of this test was never a marker the
+  // parent could find. The marker is printed after the expectation, so it is
+  // present only when the authority really was forwarded.
+  console.log('forwards the host credential authority')
   await runtime.shutdown('test')
 })

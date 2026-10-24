@@ -1,11 +1,13 @@
 import { spawnSync } from 'node:child_process'
-import { readdir, readFile } from 'node:fs/promises'
+import { readdir, readFile, stat } from 'node:fs/promises'
 import process from 'node:process'
 import { fileURLToPath } from 'node:url'
+import { JSONC } from 'bun'
 
 const repositoryRoot = fileURLToPath(new URL('..', import.meta.url))
 const budgetFile = resolveBudgetFile()
-const usage = 'usage: check-budgets.mjs [lane --group <unit|e2e|smoke> --seconds <n> | dist | deps]'
+const usage =
+  'usage: check-budgets.mjs [lane --group <unit|e2e|smoke|build> --seconds <n> | dist | deps]'
 
 function resolveBudgetFile() {
   if (process.env.BUDGETS_FILE !== undefined) return process.env.BUDGETS_FILE
@@ -53,6 +55,74 @@ async function totalDistBytes() {
   return total * 1024
 }
 
+/** Failure attribution only; the gate continues to use its unchanged du sum. */
+async function distOutputDiagnostics() {
+  const roots = []
+  const largestFiles = []
+  async function inspect(directory, row) {
+    row.directories++
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+      const file = new URL(`${entry.name}${entry.isDirectory() ? '/' : ''}`, directory)
+      if (entry.isDirectory()) await inspect(file, row)
+      else if (entry.isFile()) {
+        const metadata = await stat(file)
+        row.files++
+        row.logicalBytes += metadata.size
+        const relativePath = fileURLToPath(file).slice(repositoryRoot.length)
+        largestFiles.push({
+          path: relativePath,
+          logicalBytes: metadata.size,
+          allocatedBytes: metadata.blocks * 512,
+        })
+      }
+    }
+  }
+  for (const group of ['packages', 'apps']) {
+    const parent = new URL(`../${group}/`, import.meta.url)
+    let entries
+    try {
+      entries = await readdir(parent, { withFileTypes: true })
+    } catch (error) {
+      if (error.code === 'ENOENT') continue
+      throw error
+    }
+    for (const entry of entries) {
+      const directory = new URL(`${entry.name}/dist/`, parent)
+      const result = spawnSync('du', ['-sk', fileURLToPath(directory)], {
+        cwd: repositoryRoot,
+        encoding: 'utf8',
+      })
+      if (result.status !== 0) continue
+      const row = {
+        path: `${group}/${entry.name}/dist`,
+        allocatedBytes: Number.parseInt(result.stdout.split('\t')[0], 10) * 1024,
+        logicalBytes: 0,
+        files: 0,
+        directories: 0,
+      }
+      await inspect(directory, row)
+      roots.push(row)
+    }
+  }
+  return {
+    platform: process.platform,
+    architecture: process.arch,
+    measurement: 'du -sk for every packages/*/dist and apps/*/dist',
+    roots: roots.toSorted(
+      (left, right) =>
+        right.allocatedBytes - left.allocatedBytes ||
+        (left.path < right.path ? -1 : left.path > right.path ? 1 : 0)
+    ),
+    largestFiles: largestFiles
+      .toSorted(
+        (left, right) =>
+          right.logicalBytes - left.logicalBytes ||
+          (left.path < right.path ? -1 : left.path > right.path ? 1 : 0)
+      )
+      .slice(0, 20),
+  }
+}
+
 export function checkDistBudget(budgets, totalBytes) {
   const ceilingBytes = budgets.dist.totalMbCeiling * 1024 * 1024
   return {
@@ -62,15 +132,457 @@ export function checkDistBudget(budgets, totalBytes) {
   }
 }
 
-export function countExternalPackages(lsOutput) {
+/**
+ * The package name of a tree entry, without the install path it is nested
+ * under.
+ *
+ * `bun pm ls --all` prints a tree entry under its parent, so an entry is
+ * normally already a plain package name (`@oxlint/binding-darwin-arm64`).
+ * An install path can still reach the counter — the lockfile nests a
+ * conflicting version under its parent, and the nested path is
+ * `vite-plus/oxlint/@oxlint/binding-darwin-arm64` — so the trailing scope is
+ * kept and the path is dropped: the package is
+ * `@oxlint/binding-darwin-arm64` and that is what the closure counts.
+ */
+export function normalizePackageName(raw) {
+  const segments = String(raw).trim().split('/')
+  if (segments.length >= 2 && segments[segments.length - 2].startsWith('@'))
+    return `${segments[segments.length - 2]}/${segments[segments.length - 1]}`
+  return segments[segments.length - 1]
+}
+
+/**
+ * The number of distinct external `package@version` pairs in a
+ * `bun pm ls --all` listing.
+ *
+ * Bun 1.4.3 lists the full lock tree, whereas 1.4.4 reports host-installed
+ * packages. This parser counts whichever listing is explicitly supplied; the
+ * real gate uses lockfileExternalPairs to preserve its all-platform scope.
+ * The name is normalized
+ * before it is counted: the same package installed under two paths is one
+ * package, and a nested scoped package is counted rather than dropped.
+ */
+export function externalPackagePairs(lsOutput) {
   const external = new Set()
   for (const line of lsOutput.split('\n')) {
-    const match = line.match(/^(?:[│├└─\s]+)?([a-z@][^@\s]+)@(\S+)$/)
+    const match = line.match(/^(?:[│├└─\s]*)(.*)@([^@\s]+)$/)
     if (match === null) continue
-    if (match[1].startsWith('@control-plane/')) continue
-    external.add(`${match[1]}@${match[2]}`)
+    const name = normalizePackageName(match[1])
+    if (name === '') continue
+    if (name.startsWith('@control-plane/')) continue
+    external.add(`${name}@${match[2]}`)
   }
-  return external.size
+  return external
+}
+
+export function countExternalPackages(lsOutput) {
+  return externalPackagePairs(lsOutput).size
+}
+
+/**
+ * Stable all-platform receipt. Bun 1.4.4's installed-host listing omits
+ * optional entries that Bun 1.4.3 listed. Count every lock entry directly so
+ * that runtime change cannot silently narrow the established budget scope.
+ * Unreachable entries remain counted; graph attribution never filters the gate.
+ */
+export function lockfileExternalPairs(lockfileText) {
+  const lock = JSONC.parse(lockfileText)
+  if (lock.packages === null || typeof lock.packages !== 'object' || Array.isArray(lock.packages))
+    throw new Error('dependency lockfile has no package inventory')
+  const pairs = new Set()
+  for (const [key, entry] of Object.entries(lock.packages)) {
+    const name = normalizePackageName(key)
+    const spec = Array.isArray(entry) ? entry[0] : undefined
+    if (typeof spec !== 'string') throw new Error(`invalid lockfile entry: ${key}`)
+    if (name.startsWith('@control-plane/')) continue
+    const at = spec.lastIndexOf('@')
+    const version = spec.slice(at + 1)
+    if (at <= 0 || !/^[0-9][^\s@]*$/u.test(version))
+      throw new Error(`invalid lockfile identity: ${key}`)
+    pairs.add(`${name}@${version}`)
+  }
+  return pairs
+}
+
+/**
+ * The install layout of a `bun pm ls --all` listing: every entry with the
+ * install path it sits at and the entry that holds it.
+ *
+ * The listing is a tree — an entry is printed under the entry that installs
+ * it — so the depth of a line is the depth of its install path. `bun pm ls`
+ * prints the package name under its parent, so the path is the chain of the
+ * parents' identities, not a path in the listing's text.
+ *
+ * This is the layout of the **measured** input: the paths it reports are the
+ * ones the installation actually uses.
+ *
+ * @param {string} lsOutput the output of `bun pm ls --all`
+ * @returns {{ entries: Array<{identity: string, name: string, version: string, depth: number, parent: string|undefined, path: string[], installRoot: string|undefined}>, byIdentity: Map<string, object> }}
+ */
+export function parseListingLayout(lsOutput) {
+  const entries = []
+  const stack = []
+  for (const line of lsOutput.split('\n')) {
+    const match = line.match(/^((?:[│ ]   )*)(?:├── |└── )(.*)$/)
+    if (match === null) continue
+    const identity = match[2].trim()
+    if (identity === '') continue
+    const at = identity.lastIndexOf('@')
+    if (at <= 0) continue
+    const depth = match[1].length / 4 + 1
+    stack.length = depth - 1
+    const parent = depth >= 2 ? stack[depth - 2] : undefined
+    stack[depth - 1] = identity
+    const path = stack.slice(0, depth)
+    entries.push({
+      identity,
+      name: identity.slice(0, at),
+      version: identity.slice(at + 1),
+      depth,
+      parent,
+      path,
+      installRoot: path[0],
+    })
+  }
+  return {
+    entries,
+    byIdentity: new Map(entries.map((entry) => [entry.identity, entry])),
+  }
+}
+
+/**
+ * The lockfile's dependency graph: its entries, the declared roots, the
+ * manifest that owns each declaration, and the walk that reaches the external
+ * identities from those roots.
+ *
+ * The walk is the one the attribution and the reduction plan share, so the
+ * per-root numbers, the savings and the plan are measured on the same graph.
+ */
+function lockfileGraph(lockfileText) {
+  const lock = JSONC.parse(lockfileText)
+  const entries = new Map()
+  for (const [key, value] of Object.entries(lock.packages ?? {})) {
+    entries.set(key, {
+      spec: Array.isArray(value) ? value[0] : value,
+      meta:
+        Array.isArray(value) && typeof value[2] === 'object' && value[2] !== null ? value[2] : {},
+    })
+  }
+  // Resolve the nearest ancestor copy, including scoped package ancestors.
+  // An unrelated nested copy never supplies a missing dependency.
+  const providerOf = (parentKey, name) => {
+    let ancestor = parentKey
+    while (ancestor !== '') {
+      const nested = `${ancestor}/${name}`
+      if (entries.has(nested)) return nested
+      ancestor = ancestor.replace(/(?:^|\/)(?:@[^/]+\/)?[^/]+$/u, '')
+    }
+    return entries.has(name) ? name : undefined
+  }
+  const rootProviders = new Map()
+  const declaredRoots = []
+  const owners = new Map()
+  for (const [path, workspace] of Object.entries(lock.workspaces ?? {})) {
+    for (const section of ['dependencies', 'devDependencies', 'optionalDependencies']) {
+      for (const name of Object.keys(workspace[section] ?? {})) {
+        declaredRoots.push(name)
+        // Preserve each workspace's resolution before grouping roots by name.
+        const provider = providerOf(workspace.name ?? '', name)
+        if (!rootProviders.has(name)) rootProviders.set(name, new Set())
+        if (provider !== undefined) rootProviders.get(name).add(provider)
+        // The manifest that declares the root: the owner of the declaration,
+        // and so of the identities removing it would shed.
+        const list = owners.get(name) ?? []
+        list.push(path === '' ? 'package.json (root)' : `${path}/package.json`)
+        owners.set(name, list)
+      }
+    }
+  }
+  const roots = [...new Set(declaredRoots)]
+  const identityOf = (key) => {
+    const { spec } = entries.get(key)
+    const at = spec.lastIndexOf('@')
+    return `${normalizePackageName(key)}@${spec.slice(at + 1)}`
+  }
+  // The external identities the declared roots reach. A root resolves to the
+  // hoisted copy of its name — the copy its manifest's range selects — and
+  // every edge resolves to the entry that provides it.
+  const closureOf = (rootNames) => {
+    const identities = new Set()
+    const resolutions = new Map()
+    const visited = new Set()
+    const queue = []
+    const unresolved = []
+    for (const root of new Set(rootNames)) {
+      const keys = rootProviders.get(root) ?? new Set()
+      if (keys.size === 0) {
+        unresolved.push(root)
+        continue
+      }
+      queue.push(...keys)
+    }
+    while (queue.length > 0) {
+      const key = queue.pop()
+      if (visited.has(key)) continue
+      visited.add(key)
+      const { spec, meta } = entries.get(key)
+      const identity = identityOf(key)
+      if (!identity.startsWith('@control-plane/')) {
+        identities.add(identity)
+        // An alias entry names the package it resolves to, so the measured
+        // identity can be traced to the package that is actually installed.
+        resolutions.set(identity, spec)
+      }
+      const optionalPeers = new Set(meta.optionalPeers ?? [])
+      for (const section of ['dependencies', 'optionalDependencies', 'peerDependencies']) {
+        for (const name of Object.keys(meta[section] ?? {})) {
+          if (section === 'peerDependencies' && optionalPeers.has(name)) continue
+          const child = providerOf(key, name)
+          if (child !== undefined) queue.push(child)
+        }
+      }
+    }
+    return { identities, resolutions, unresolved }
+  }
+  return { entries, roots, owners, providerOf, identityOf, closureOf }
+}
+
+/**
+ * The attribution of the measured closure: the external identities the
+ * lockfile's graph reaches from the declared roots, how much each root
+ * contributes, and what removing a root would actually shed.
+ *
+ * The attribution answers "which dependency brings this package in", so a
+ * breach can be routed to the slice that owns the manifest instead of being
+ * an unattributed count. It never changes the measurement: the counted
+ * identities come from the listing, and this only explains them.
+ *
+ * Two rules make the attribution mean what it says:
+ *
+ * - **An edge resolves to the entry that provides it.** A dependency is
+ *   satisfied by the copy installed under the requiring package, or by the
+ *   hoisted copy when there is none. Resolving a dependency name to *every*
+ *   entry that carries it would attribute a package's whole closure — every
+ *   version of it — to each root that names it, and would report the same
+ *   number for roots that share their dependencies.
+ * - **An optional peer is not an edge that keeps a package installed.** A peer
+ *   listed in `optionalPeers` is satisfied only when something else provides
+ *   it, so it cannot hold a package in the tree on its own. It is still
+ *   recorded as a consumer.
+ *
+ * @param {string} lockfileText the contents of `bun.lock`
+ * @returns {{ identities: Set<string>, perRoot: Record<string, number>, owners: Map<string, string[]>, removalSavings: Record<string, number>, exclusivePerRoot: Record<string, number>, consumers: Map<string, string[]>, resolutions: Map<string, string>, unresolvedRoots: string[] }}
+ */
+export function attributeExternalPackages(lockfileText) {
+  const { entries, roots, owners, providerOf, identityOf, closureOf } = lockfileGraph(lockfileText)
+  const perRoot = {}
+  const closures = new Map()
+  for (const root of roots) {
+    const { identities: rootIdentities } = closureOf([root])
+    closures.set(root, rootIdentities)
+    if (rootIdentities.size > 0) perRoot[root] = rootIdentities.size
+  }
+  // The exact offenders: the identities only one declared root brings in. A
+  // dependency several roots share cannot be shed by dropping one of them, so
+  // the exclusive part is what an owner could actually remove.
+  const identityOwners = new Map()
+  for (const [root, rootIdentities] of closures) {
+    for (const identity of rootIdentities) {
+      if (!identityOwners.has(identity)) identityOwners.set(identity, [])
+      identityOwners.get(identity).push(root)
+    }
+  }
+  const exclusivePerRoot = {}
+  for (const [root, rootIdentities] of closures) {
+    const exclusive = [...rootIdentities].filter(
+      (identity) => identityOwners.get(identity).length === 1
+    )
+    if (exclusive.length > 0) exclusivePerRoot[root] = exclusive.length
+  }
+  // What removing a root would shed: the identities the remaining roots no
+  // longer reach. This is the saving an owner can count on, and it is the
+  // measure the reduction plan is built from.
+  const all = closureOf(roots)
+  const removalSavings = {}
+  for (const root of roots) {
+    if (all.identities.size === 0) break
+    const remaining = closureOf(roots.filter((name) => name !== root))
+    const saving = all.identities.size - remaining.identities.size
+    if (saving > 0) removalSavings[root] = saving
+  }
+  // The consumers of every identity: the entries that name it, and the
+  // section they name it in. An optional peer is a consumer too, but it is
+  // not an edge, so it never keeps a package in the tree.
+  const consumers = new Map()
+  for (const [key, { meta }] of entries) {
+    for (const section of ['dependencies', 'optionalDependencies', 'peerDependencies']) {
+      for (const name of Object.keys(meta[section] ?? {})) {
+        const consumer = identityOf(key)
+        if (consumer.startsWith('@control-plane/')) continue
+        const required = !(
+          section === 'peerDependencies' && (meta.optionalPeers ?? []).includes(name)
+        )
+        const provider = providerOf(key, name)
+        if (provider === undefined) continue
+        const identity = identityOf(provider)
+        if (identity.startsWith('@control-plane/')) continue
+        const list = consumers.get(identity) ?? []
+        list.push(required ? `${consumer} (${section})` : `${consumer} (optional peer)`)
+        consumers.set(identity, list)
+      }
+    }
+  }
+  return {
+    identities: all.identities,
+    perRoot,
+    owners,
+    removalSavings,
+    exclusivePerRoot,
+    consumers,
+    resolutions: all.resolutions,
+    unresolvedRoots: all.unresolved,
+  }
+}
+
+/**
+ * The measured reduction plan: the declared roots whose removal brings the
+ * measured closure down to the ceiling, and what each removal saves.
+ *
+ * The plan is **measured, not argued**: every step's saving is the number of
+ * identities the remaining roots no longer reach once that root is gone, so
+ * the plan accounts for the identities several roots share instead of
+ * counting them once per root.
+ *
+ * This greedy plan establishes a sufficient sequence, not the minimum.
+ * Shared identities can disappear only after several roots are removed, so
+ * summing individual savings cannot bound the saving of a combined removal.
+ *
+ * The plan is a *measurement of a possible reduction*. It changes nothing:
+ * the ceiling, the count and the verdict are computed before it, and the
+ * plan is only reported.
+ *
+ * @param {string} lockfileText the contents of `bun.lock`
+ * @param {number} ceiling the committed ceiling the plan is measured against
+ * @returns {{ steps: Array<{root: string, saving: number, closure: number}>, residual: number, reachable: boolean, minimumRemovals: number|null, overageUpperBound: number }}
+ */
+export function planDependencyReduction(lockfileText, ceiling) {
+  const { roots, owners, closureOf } = lockfileGraph(lockfileText)
+  const measured = closureOf(roots).identities.size
+  const overage = Math.max(0, measured - ceiling)
+  // The plan itself: remove the root with the largest marginal saving until
+  // the closure is at or below the ceiling.
+  const steps = []
+  let remainingRoots = [...roots]
+  let closure = measured
+  while (closure > ceiling && steps.length < roots.length) {
+    let best = null
+    for (const root of remainingRoots) {
+      const size = closureOf(remainingRoots.filter((name) => name !== root)).identities.size
+      if (best === null || size < best.size) best = { root, size }
+    }
+    if (best === null) break
+    const saving = closure - best.size
+    if (saving <= 0) break
+    steps.push({
+      root: best.root,
+      saving,
+      closure: best.size,
+      owner: owners.get(best.root) ?? [],
+    })
+    remainingRoots = remainingRoots.filter((name) => name !== best.root)
+    closure = best.size
+  }
+  return {
+    steps,
+    residual: closure,
+    reachable: closure <= ceiling,
+    minimumRemovals: measured <= ceiling ? 0 : null,
+    overageUpperBound: overage,
+  }
+}
+
+/**
+ * The install layout of the measured listing, reduced to what a report
+ * carries: how the measured identities are installed, and the consumers each
+ * one has.
+ *
+ * The layout is the **measured** input's own layout, so the paths it reports
+ * are the ones the installation uses. The consumers come from the lockfile:
+ * they are the entries that name an identity, which is the only place the
+ * requirement edges are recorded.
+ */
+export function summarizeInstallLayout(listingText, consumers) {
+  const { entries, byIdentity } = parseListingLayout(listingText)
+  const external = entries.filter((entry) => !entry.name.startsWith('@control-plane/'))
+  const nested = external.filter((entry) => entry.depth > 1)
+  const roots = new Map()
+  for (const entry of external) {
+    const root = entry.installRoot ?? entry.identity
+    roots.set(root, (roots.get(root) ?? 0) + 1)
+  }
+  const samples = nested.slice(0, 5).map((entry) => ({
+    identity: entry.identity,
+    installPath: entry.path.join(' > '),
+    consumers: (consumers?.get(entry.identity) ?? []).slice(0, 3),
+  }))
+  return {
+    entries: external.length,
+    nestedEntries: nested.length,
+    installRoots: roots.size,
+    largestInstallRoots: Object.fromEntries(
+      [...roots].toSorted((left, right) => right[1] - left[1]).slice(0, 5)
+    ),
+    nestedSamples: samples,
+    byIdentity,
+  }
+}
+
+/**
+ * The attribution of a measured closure, reduced to what a report carries:
+ * the reachable identities, the roots that contribute the most, what removing
+ * a root would shed, and the measured residual. A lockfile that cannot be
+ * read is reported as an absent attribution, never as an empty one.
+ */
+export function summarizeAttribution(lockfileText, listingText, ceiling) {
+  try {
+    const {
+      identities,
+      perRoot,
+      removalSavings,
+      exclusivePerRoot,
+      consumers,
+      resolutions,
+      unresolvedRoots,
+    } = attributeExternalPackages(lockfileText)
+    const roots = Object.entries(perRoot).toSorted((left, right) => right[1] - left[1])
+    const offenders = Object.entries(removalSavings).toSorted((left, right) => right[1] - left[1])
+    const aliases = Object.fromEntries(
+      [...resolutions].filter(([identity, resolved]) => resolved !== identity)
+    )
+    const plan = ceiling === undefined ? undefined : planDependencyReduction(lockfileText, ceiling)
+    return {
+      reachableIdentities: identities.size,
+      declaredRootCount: Object.keys(perRoot).length,
+      largestContributors: Object.fromEntries(roots.slice(0, 10)),
+      // The exact offenders: what removing each declared root would shed, so an
+      // owner can see what dropping that dependency would actually save.
+      largestOffenders: Object.fromEntries(offenders.slice(0, 10)),
+      // The exclusive share of every root, for comparison with the saving:
+      // the two agree when the attribution resolves every edge to the entry
+      // that provides it.
+      exclusiveShareTotal: Object.values(exclusivePerRoot).reduce((sum, count) => sum + count, 0),
+      removalSavingTotal: Object.values(removalSavings).reduce((sum, count) => sum + count, 0),
+      aliasedIdentities: Object.keys(aliases).length,
+      aliases,
+      unresolvedRoots,
+      ...(plan === undefined ? {} : { reductionPlan: plan }),
+      ...(listingText === undefined
+        ? {}
+        : { installLayout: summarizeInstallLayout(listingText, consumers) }),
+    }
+  } catch (error) {
+    return { unavailable: error instanceof Error ? error.message : String(error) }
+  }
 }
 
 export function checkDependencyBudget(budgets, externalCount) {
@@ -101,17 +613,79 @@ if (import.meta.main) {
       report(checkLaneBudget(budgets, group, seconds))
     }
   } else if (command === 'dist') {
-    report(checkDistBudget(budgets, await totalDistBytes()))
+    const measuredBytes = await totalDistBytes()
+    const check = checkDistBudget(budgets, measuredBytes)
+    if (check.ok) report(check)
+    else {
+      let diagnostics
+      try {
+        diagnostics = await distOutputDiagnostics()
+      } catch (error) {
+        diagnostics = { unavailable: error.message }
+      }
+      report({ ...check, measuredBytes, diagnostics })
+    }
   } else if (command === 'deps') {
-    const result = spawnSync('bun', ['pm', 'ls', '--all'], {
-      cwd: repositoryRoot,
-      encoding: 'utf8',
-    })
-    if (result.error !== undefined || result.status !== 0) {
-      console.error('failed to enumerate dependencies via bun pm ls --all')
-      process.exitCode = 1
+    // The listing seam: when ADEA_DEPS_LISTING_FILE names a file, that
+    // listing is measured instead of the lockfile's dependency tree, and the
+    // counted package identities are reported with it. It exists so the
+    // measurement can be exercised on explicit fixtures; the seam changes
+    // the measurement's input, not its scope: the repository's measured
+    // scope is the lockfile's dependency tree, which carries the optional
+    // platform-specific binaries of every supported platform.
+    const listingFile = process.env.ADEA_DEPS_LISTING_FILE
+    let listing
+    if (listingFile !== undefined && listingFile !== '') {
+      try {
+        listing = await readFile(listingFile, 'utf8')
+      } catch (error) {
+        console.error(`failed to read the dependency listing: ${error.message}`)
+        process.exitCode = 1
+        listing = undefined
+      }
     } else {
-      report(checkDependencyBudget(budgets, countExternalPackages(result.stdout ?? '')))
+      const result = spawnSync('bun', ['pm', 'ls', '--all'], {
+        cwd: repositoryRoot,
+        encoding: 'utf8',
+      })
+      if (result.error !== undefined || result.status !== 0) {
+        console.error('failed to enumerate dependencies via bun pm ls --all')
+        process.exitCode = 1
+      } else {
+        listing = result.stdout ?? ''
+      }
+    }
+    if (listing !== undefined) {
+      const explicitListing = listingFile !== undefined && listingFile !== ''
+      // Listing fixtures remain explicit inputs; the real gate always counts
+      // the full lock inventory. Failure to read that inventory fails closed.
+      let lockfileText
+      try {
+        lockfileText = await readFile(new URL('../bun.lock', import.meta.url), 'utf8')
+      } catch (error) {
+        if (!explicitListing) throw error
+      }
+      const pairs = [
+        ...(explicitListing ? externalPackagePairs(listing) : lockfileExternalPairs(lockfileText)),
+      ].toSorted()
+      const check = checkDependencyBudget(budgets, pairs.length)
+      const attribution =
+        lockfileText === undefined
+          ? { unavailable: 'dependency lockfile could not be read' }
+          : summarizeAttribution(lockfileText, listing, budgets.dependencies.externalPackageCeiling)
+      if (explicitListing) report({ ...check, pairs, scope: 'listing file', attribution })
+      else
+        report({
+          ...check,
+          scope: 'all-platform lockfile identities',
+          installedListing: {
+            command: 'bun pm ls --all',
+            runtime: `bun@${process.versions.bun}`,
+            platform: `${process.platform}-${process.arch}`,
+            measured: externalPackagePairs(listing).size,
+          },
+          attribution,
+        })
     }
   } else {
     console.error(usage)

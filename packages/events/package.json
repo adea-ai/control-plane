@@ -1,6 +1,6 @@
 {
   "name": "@control-plane/events",
-  "version": "1.10.2",
+  "version": "1.10.3",
   "private": true,
   "files": [
     "dist"
@@ -25,7 +25,7 @@
     "@control-plane/contracts": "workspace:*",
     "@control-plane/domain": "workspace:*",
     "@control-plane/telemetry": "workspace:*",
-    "zod": "4.6.5"
+    "zod": "4.6.6"
   },
   "engines": {
     "node": "24.21.0"

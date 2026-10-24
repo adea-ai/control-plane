@@ -88,20 +88,22 @@ function foundationCaseNames() {
   )
   expect(suites).toEqual(['PostgreSQL persistence foundation'])
   expect(new Set(names).size).toBe(names.length)
-  expect(names).toHaveLength(65)
+  expect(names).toHaveLength(66)
   // Freeze the reviewed names from 6bc3d941; changed inventory needs rebalancing review.
+  // Reviewed 66th case: the physical-reconnect channel-generation proof. It lands in shard 1
+  // (38 of 45 allowed); shard 2 is unchanged.
   expect(createHash('sha256').update(JSON.stringify(names.toSorted())).digest('hex')).toBe(
-    'f3136477ef9f1044fa8dd65529df09b4cc7fefd9eae7e2383c38be4536d3fc46'
+    '506f60dbc95e5d7b461214382e28a239cf042f711f3718240ef6da32a638205a'
   )
   cachedFoundationNames = Object.freeze(names)
   return cachedFoundationNames
 }
 
 describe('integration shard partition', () => {
-  test('historical three-file move redistributes recorded Neon work across three owners', () => {
+  test('historical three-file move redistributes recorded PostgreSQL work across three owners', () => {
     const measurement = JSON.parse(
       readFileSync(
-        new URL('../docs/evidence/m11-neon-shard-balance-2026-10-07.json', import.meta.url),
+        new URL('../docs/evidence/m11-postgres-shard-balance-2026-10-07.json', import.meta.url),
         'utf8'
       )
     )
@@ -122,7 +124,10 @@ describe('integration shard partition', () => {
   test('budget admission preserves all cases on the spare owner after the recorded timeout', () => {
     const measurement = JSON.parse(
       readFileSync(
-        new URL('../docs/evidence/m11-neon-budget-shard-balance-2026-10-07.json', import.meta.url),
+        new URL(
+          '../docs/evidence/m11-postgres-budget-shard-balance-2026-10-07.json',
+          import.meta.url
+        ),
         'utf8'
       )
     )
@@ -139,7 +144,7 @@ describe('integration shard partition', () => {
     expect(file.totalStaticCases).toBe(24)
     expect(measurement.integrationComplete).toEqual({ 1: false, 2: true, 3: true })
     // Both the interrupted step and file are censored. This evidence is
-    // historical and no longer qualifies the current Neon provider-only lane.
+    // historical and no longer qualifies the current PostgreSQL provider-only lane.
     const recorded = { ...measurement.integrationSeconds }
     recorded[file.fromShard] -= file.secondsLowerBound
     recorded[owners[0].shard] += file.secondsLowerBound
@@ -238,6 +243,58 @@ describe('integration shard partition', () => {
     expect(
       assigned.get('apps/workflow-worker/src/remote-runtime-waiter.integration.test.mjs')
     ).toEqual([{ kind: 'shard', shard: 3, pattern: undefined }])
+    // The hosted model-forwarding test has one local shard owner and no case
+    // pattern: it is a whole file on one owner, not a partitioned case set.
+    expect(
+      assigned.get('apps/hosted-control-plane/src/hosted-model-forwarding.integration.test.mjs')
+    ).toEqual([{ kind: 'shard', shard: 3, pattern: undefined }])
+  })
+
+  test('the hosted model-forwarding test is registered for the local sharded lane', () => {
+    // The local sharded lane is the explicit inventory in
+    // scripts/integration-shards.mjs. The hosted model-forwarding test is
+    // registered there, on exactly one owner, so the disposable-local
+    // PostgreSQL shards run it rather than skipping it.
+    const owners = INTEGRATION_SHARDS.flatMap((entry) =>
+      entry.groups
+        .filter((group) => group.package === 'apps/hosted-control-plane')
+        .flatMap((group) =>
+          group.files
+            .filter((file) => file === 'src/hosted-model-forwarding.integration.test.mjs')
+            .map(() => ({ shard: entry.shard, pattern: group.testNamePattern }))
+        )
+    )
+    expect(owners).toEqual([{ shard: 3, pattern: undefined }])
+
+    // The owner shard selects the file with the same arguments the local
+    // runner uses, so the registration is not decorative.
+    const group = selectIntegrationShard(3).find(
+      (candidate) =>
+        candidate.package === 'apps/hosted-control-plane' &&
+        candidate.files.includes('src/hosted-model-forwarding.integration.test.mjs')
+    )
+    expect(group).toBeDefined()
+    expect(
+      integrationFileArguments(group, 'src/hosted-model-forwarding.integration.test.mjs', 30_000)
+    ).toEqual(['test', '--timeout', 30_000, 'src/hosted-model-forwarding.integration.test.mjs'])
+
+    // The package's own integration glob already includes this file. That is a
+    // different registration from the local shard inventory: the package script
+    // runs the package's files directly, while the local sharded lane runs the
+    // explicit inventory above. The two are not the same registration, so the
+    // shard inventory is what gives the local lane its coverage.
+    const hostedControlPlaneManifest = JSON.parse(
+      readFileSync(new URL('../apps/hosted-control-plane/package.json', import.meta.url), 'utf8')
+    )
+    expect(hostedControlPlaneManifest.scripts['test:integration']).toBe(
+      'bun test --timeout 30000 src/*.integration.test.mjs'
+    )
+
+    // The file is a real integration test in that package, so the package glob
+    // matches it, and the explicit local inventory names it as well.
+    expect(integrationFilesUnder('apps/hosted-control-plane/src')).toContain(
+      'hosted-model-forwarding.integration.test.mjs'
+    )
   })
 
   test('every foundation case belongs to one bounded slice across the existing shards', () => {
@@ -258,7 +315,7 @@ describe('integration shard partition', () => {
     for (const [index, slice] of slices.entries()) {
       expect(slice.pattern).toBeDefined()
       const assigned = names.filter((name) => new RegExp(slice.pattern).test(name))
-      expect(assigned).toHaveLength([37, 28][index])
+      expect(assigned).toHaveLength([38, 28][index])
       expect(assigned.length).toBeLessThanOrEqual(45)
     }
   })

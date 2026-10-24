@@ -12,7 +12,7 @@ codeql: auto
 dependency_review: auto
 package_manager: bun
 runtime_repository: 0xPlayerOne/code-foundry
-runtime_ref: v1.48.1
+runtime_ref: v1.48.4
 runner: ubuntu-slim
 ci_runner: ubuntu-latest
 test_runner: ubuntu-latest
@@ -63,3 +63,6 @@ e2e_shards: '2'
 # build before the commit gate's lint and type-check so a fresh clone passes
 # the same tree CI sees (the failure mode reported in code-foundry#691).
 pre_commit_build: true
+
+# Preserve the existing application formatter explicitly.
+formatter: oxfmt

@@ -1,5 +1,38 @@
 # Changelog
 
+## [1.22.1](https://github.com/adea-ai/control-plane/compare/sdk-v1.22.0...sdk-v1.22.1) (2026-10-24)
+
+
+### Bug Fixes
+
+* reduce dependency closure and preserve budget checks ([#1270](https://github.com/adea-ai/control-plane/issues/1270)) ([01fa230](https://github.com/adea-ai/control-plane/commit/01fa230233cc796b6c7f93d020006212b89631f6))
+
+## [1.22.0](https://github.com/adea-ai/control-plane/compare/sdk-v1.21.0...sdk-v1.22.0) (2026-10-23)
+
+
+### Features
+
+* **pi-durable:** compose child reads and drain recovery ([#1204](https://github.com/adea-ai/control-plane/issues/1204)) ([2f1f9d1](https://github.com/adea-ai/control-plane/commit/2f1f9d1a4da48db09e2c8ee9dc08625fbb2bc7a5))
+
+## [1.21.0](https://github.com/adea-ai/control-plane/compare/sdk-v1.20.1...sdk-v1.21.0) (2026-10-23)
+
+
+### Features
+
+* **runtime:** map a model to its harness in managed cloud routing (CP [#678](https://github.com/adea-ai/control-plane/issues/678)) ([#1210](https://github.com/adea-ai/control-plane/issues/1210)) ([4f9967d](https://github.com/adea-ai/control-plane/commit/4f9967dc50dfb5dc3ffa13a305f4e3623ae20fe1))
+
+## [1.20.1](https://github.com/adea-ai/control-plane/compare/sdk-v1.20.0...sdk-v1.20.1) (2026-10-22)
+
+
+### Bug Fixes
+
+* **pi-durable:** fence cancellation retries and uncertain effects ([#935](https://github.com/adea-ai/control-plane/issues/935)) ([#1246](https://github.com/adea-ai/control-plane/issues/1246)) ([62d530f](https://github.com/adea-ai/control-plane/commit/62d530f5a4c012e978f38e6880181b8f5fbfebe5))
+
+
+### Maintenance
+
+* pin Bun 1.4.4 and use native SDK consumer checking ([#1255](https://github.com/adea-ai/control-plane/issues/1255)) ([176d2d6](https://github.com/adea-ai/control-plane/commit/176d2d61571ef89263e017ddb911b4315aa07234))
+
 ## [1.20.0](https://github.com/adea-ai/control-plane/compare/sdk-v1.19.1...sdk-v1.20.0) (2026-10-18)
 
 

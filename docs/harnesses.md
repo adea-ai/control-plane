@@ -55,6 +55,17 @@ coupling, and neither ever substitutes for the other:
   location must match the qualification evidence. A mismatch denies with
   `INCOMPATIBLE_HARNESS` or `INCOMPATIBLE_LOCATION`; it never selects another
   target.
+- A deployment may narrow this with a per-model harness map
+  (`CONTROL_PLANE_HARNESS_BY_MODEL`, `packages/config`
+  `ManagedCloudRuntimeConfiguration.harnessByModel`): a model id maps to the
+  harness id that must serve it. The map constrains the harness only; it never
+  changes the selected model, and neither choice is silently substituted. With
+  a map configured the execution must carry a model (the execution read model
+  `modelId`), the map must name that model, and a deployment pin that names
+  another harness is a conflict, not a preference: the attempt denies with
+  `HARNESS_MAP_MODEL_ABSENT`, `HARNESS_MAP_MODEL_UNMAPPED`, or
+  `HARNESS_MAP_CONFLICTS_WITH_PIN`. Without a map the routing is exactly what
+  it was.
 - Production routing: `RuntimeDiscoveryAttemptRouter`
   (`apps/workflow-worker/src/runtime-attempt-router.ts`) applies an accepted
   harness pin as a hard filter over the eligible candidates before ranking. The
@@ -65,6 +76,19 @@ coupling, and neither ever substitutes for the other:
   `acceptedHarnessId` into the routing input digest and add the reason code
   `HARNESS_PINNED`; unpinned digests are unchanged. When no eligible candidate
   exposes the pin, the attempt fails closed with `NO_COMPATIBLE_RUNTIME`.
+- Without a per-model map, harness denials retain precedence over model
+  entitlement denials. A harness selected only by the map records
+  `policy-default` provenance; an actual explicit harness pin records
+  `explicit-pin`.
+- A per-model map is resolved at attempt time from the execution's accepted
+  model and passed through the same pin path, so a mapped model reaches only a
+  runtime exposing the mapped harness, the mapped harness is bound into the
+  routing digest, and the reason code `HARNESS_MAPPED` records that the map
+  decided it. The same accepted harness constrains local-device and enrolled
+  remote-host no-fallback fences: an unavailable host exposing another harness
+  cannot block a compatible mapped route. The execution read model carries the accepted model
+  (`packages/domain` `ExecutionSchema.modelId`); the execution plan and its
+  content digest are untouched by it.
 - The managed Pi remote command accepts only discovered family `managed-pi`
   (`MANAGED_PI_DRIVER_FAMILY`, `apps/workflow-worker/src/managed-pi-remote-command.ts`)
   and refuses `pi`.
@@ -73,6 +97,13 @@ coupling, and neither ever substitutes for the other:
 
 - The managed Pi remote command receives no accepted-harness id. It enforces
   driver identity by discovered family only; the pin is enforced at routing.
+- The per-model harness map is wired in the managed cloud worker composition
+  (`apps/workflow-worker/src/cloud-composition.ts`). The hosted control-plane
+  composition and the execution acceptance service that records the accepted
+  model are owned by another lane, so the map reaches the hosted composition
+  and the accepted model reaches the execution read model only once those
+  owners land their half; until then a map is enforced for the worker path and
+  the hosted path keeps its deployment pin.
 - `resolveDecisionLayer` has no production caller yet. Production harness
   filtering happens in the router above.
 - The managed Pi certification rows are keyed `runtimeFamily: managed-pi`

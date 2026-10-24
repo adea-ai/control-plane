@@ -32,7 +32,9 @@ function leadDatabase() {
   database.exec(`CREATE TABLE pi_lead_intent_admissions (intent_id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, attempt_id TEXT NOT NULL UNIQUE, digest TEXT NOT NULL, state TEXT NOT NULL, record TEXT NOT NULL);
     CREATE TABLE pi_lead_intent_budgets (intent_id TEXT PRIMARY KEY, record TEXT NOT NULL);`)
   database
-    .prepare('INSERT INTO pi_lead_intent_admissions VALUES (?, ?, ?, ?, ?, ?)')
+    .prepare(
+      'INSERT INTO pi_lead_intent_admissions (intent_id, workspace_id, attempt_id, digest, state, record) VALUES (?, ?, ?, ?, ?, ?)'
+    )
     .run(intentId, workspaceId, attemptId, `sha256:${'d'.repeat(64)}`, 'ready', '{}')
   database
     .prepare('INSERT INTO pi_lead_intent_budgets VALUES (?, ?)')

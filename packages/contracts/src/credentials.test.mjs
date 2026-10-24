@@ -55,7 +55,7 @@ describe('credential Control API contracts', () => {
     for (const extra of [
       { secret: 'leaked-secret-value' },
       { secretRevisions: [] },
-      { locator: 'neon://credential-secrets/crd' },
+      { locator: 'postgres://credential-secrets/crd' },
       { ciphertextDigest: `sha256:${'a'.repeat(64)}` },
     ]) {
       expect(

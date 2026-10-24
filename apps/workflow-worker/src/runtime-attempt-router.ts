@@ -8,7 +8,7 @@ import type { RuntimeConnectionDiscoveryReadModel } from '@control-plane/contrac
 import type { Execution, ExecutionAttempt } from '@control-plane/domain'
 import type { ExecutionPlan } from '@control-plane/execution-plan'
 import { availableRuntimesFromDiscovery } from '@control-plane/contracts'
-import { selectRuntimesExposingHarness } from '@control-plane/policy'
+import { selectRuntimesExposingHarness, resolveMappedHarness } from '@control-plane/policy'
 import { RuntimeCapabilitySchema, evaluateCapabilities } from '@control-plane/runtime-sdk'
 import type { RuntimeAttemptRouter } from './cloud-execution-activities.js'
 
@@ -30,6 +30,15 @@ export interface RuntimeDiscoveryAttemptRouterOptions {
    * No pin means no behavior change.
    */
   readonly pinnedHarnessId?: string
+  /**
+   * Optional per-model harness map (M12/#678): the deployment maps a model id
+   * to the harness that must serve it. When the map is present it is a policy,
+   * not a fallback: an execution without a model, or with a model the map does
+   * not name, is denied instead of being routed to another harness, and a pin
+   * that names another harness is a conflict rather than a substitution.
+   * Absent leaves routing exactly as it is today.
+   */
+  readonly harnessByModel?: Readonly<Record<string, string>>
 }
 
 type SelectedRuntime = NonNullable<ExecutionAttempt['runtime']>
@@ -39,11 +48,13 @@ export class RuntimeDiscoveryAttemptRouter implements RuntimeAttemptRouter {
   readonly #now: () => string
 
   readonly #pinnedHarnessId: string | undefined
+  readonly #harnessByModel: Readonly<Record<string, string>> | undefined
 
   constructor(options: RuntimeDiscoveryAttemptRouterOptions) {
     this.#discovery = options.discovery
     this.#now = options.now ?? (() => new Date().toISOString())
     this.#pinnedHarnessId = options.pinnedHarnessId
+    this.#harnessByModel = options.harnessByModel
   }
 
   async resolve(input: {
@@ -59,19 +70,29 @@ export class RuntimeDiscoveryAttemptRouter implements RuntimeAttemptRouter {
       throw new Error('WORKFLOW_RUNTIME_SCOPE_UNSUPPORTED')
     }
     const evaluatedAt = this.#now()
+    // The harness this attempt must expose is resolved from the deployment's
+    // per-model map (M12/#678) when one is configured, and from the
+    // deployment pin otherwise. The map is a policy: a missing or unmapped
+    // model is denied, never routed to another harness.
+    const accepted = resolveMappedHarness({
+      ...(this.#harnessByModel === undefined ? {} : { harnessByModel: this.#harnessByModel }),
+      ...(input.execution.modelId === undefined ? {} : { modelId: input.execution.modelId }),
+      ...(this.#pinnedHarnessId === undefined ? {} : { pinnedHarnessId: this.#pinnedHarnessId }),
+    })
+    const acceptedHarnessId = accepted.harnessId
     const discovered = await this.#discovery.listRuntimeConnections({
       workspaceId: input.execution.correlation.workspaceId,
       projectId: scope.projectId,
     })
     // Accepted-harness hard filter (#678) runs on the eligible set BEFORE
-    // ranking: only candidates exposing the exact pinned harness id survive.
+    // ranking: only candidates exposing the exact accepted harness id survive.
     // An empty set with a pin is a typed NO_COMPATIBLE_RUNTIME denial.
     const live = selectRuntimesExposingHarness(
       discovered
         .map((connection) => candidate(connection, input.executionPlan, evaluatedAt))
         .filter((value) => value !== undefined)
         .map((value) => ({ ...value, harnessIds: harnessIdsOf(value.connection) })),
-      this.#pinnedHarnessId
+      acceptedHarnessId
     )
     // TDD-A377: a local location the plan could use, that is not live-eligible right now, is never
     // silently replaced by a remote runtime. While one exists the choice is restricted to local
@@ -81,18 +102,27 @@ export class RuntimeDiscoveryAttemptRouter implements RuntimeAttemptRouter {
     const localFenced = discovered.some(
       (connection) =>
         !liveIds.has(connection.runtimeConnectionId) &&
-        fencedLocalRuntime(connection, input.executionPlan, this.#pinnedHarnessId)
+        fencedLocalRuntime(connection, input.executionPlan, acceptedHarnessId)
+    )
+    const remoteHostFenced = discovered.some(
+      (connection) =>
+        !liveIds.has(connection.runtimeConnectionId) &&
+        fencedRemoteHostRuntime(connection, input.executionPlan, acceptedHarnessId)
     )
     const eligible = localFenced
       ? live.filter(({ connection }) => !isRemoteLocation(connection))
-      : live
+      : remoteHostFenced
+        ? live.filter(({ connection }) => !isCloudServiceRuntime(connection))
+        : live
     const candidates = eligible.toSorted(compareCandidates)
     const selected = candidates[0]
     if (selected === undefined) {
       throw new Error(
         localFenced && live.length > 0
           ? 'WORKFLOW_RUNTIME_LOCAL_UNAVAILABLE_NO_FALLBACK'
-          : 'WORKFLOW_RUNTIME_UNAVAILABLE'
+          : remoteHostFenced && live.length > 0
+            ? 'WORKFLOW_RUNTIME_REMOTE_HOST_UNAVAILABLE_NO_FALLBACK'
+            : 'WORKFLOW_RUNTIME_UNAVAILABLE'
       )
     }
     const inputDigest = digest({
@@ -106,9 +136,9 @@ export class RuntimeDiscoveryAttemptRouter implements RuntimeAttemptRouter {
         allowedFamilies: [...input.executionPlan.constraints.runtime.allowedFamilies].toSorted(),
         allowedLocations: [...input.executionPlan.constraints.runtime.allowedLocations].toSorted(),
       },
-      // Pinned attempts bind the accepted harness into the evidence; unpinned
+      // Accepted attempts bind the accepted harness into the evidence; unpinned
       // digests are unchanged.
-      ...(this.#pinnedHarnessId === undefined ? {} : { acceptedHarnessId: this.#pinnedHarnessId }),
+      ...(acceptedHarnessId === undefined ? {} : { acceptedHarnessId }),
       candidates: candidates.map(({ connection, degraded }) => ({
         runtimeConnectionId: connection.runtimeConnectionId,
         runtimeDefinitionId: connection.runtimeDefinitionId,
@@ -138,6 +168,7 @@ export class RuntimeDiscoveryAttemptRouter implements RuntimeAttemptRouter {
         reasonCodes: [
           selected.degraded ? 'RUNTIME_SELECTED_DEGRADED' : 'RUNTIME_SELECTED',
           ...(this.#pinnedHarnessId === undefined ? [] : ['HARNESS_PINNED']),
+          ...(accepted.mapped ? ['HARNESS_MAPPED'] : []),
         ],
       },
     }
@@ -209,8 +240,26 @@ function harnessIdsOf(connection: RuntimeConnectionDiscoveryReadModel): readonly
   return availableRuntimesFromDiscovery([connection])[0]?.harnessIds ?? []
 }
 
+/**
+ * The harness identity a connection would expose if it were available. The discovery family is the
+ * harness id (see availableRuntimesFromDiscovery), but that mapper drops unavailable and revoked
+ * records, so it cannot answer whether an offline or revoked connection matches a pin. Matching is
+ * still exact family identity; only the availability filter is left out.
+ */
+function staticHarnessIdsOf(connection: RuntimeConnectionDiscoveryReadModel): readonly string[] {
+  return [connection.family]
+}
+
+function isEnrolledRemoteHost(connection: RuntimeConnectionDiscoveryReadModel): boolean {
+  return connection.node?.location === 'remote_host'
+}
+
+function isCloudServiceRuntime(connection: RuntimeConnectionDiscoveryReadModel): boolean {
+  return connection.node?.location === 'agent_hq_cloud' || connection.location === 'agent_hq_cloud'
+}
+
 function isRemoteLocation(connection: RuntimeConnectionDiscoveryReadModel): boolean {
-  return connection.node?.location === 'remote_host' || connection.location === 'agent_hq_cloud'
+  return isEnrolledRemoteHost(connection) || isCloudServiceRuntime(connection)
 }
 
 function locationAllowed(
@@ -222,14 +271,32 @@ function locationAllowed(
 }
 
 /**
- * A local-location runtime the plan could have used, but which is not usable right now. While one
- * exists, a remote runtime must not be chosen in its place: that would be an implicit cloud reroute.
+ * A route the plan could use but cannot use now must not trigger location fallback.
  *
  * Only runtimes that are statically unusable for this plan are exempt: a disallowed family or
  * location, missing capability, an unpinned harness, a denied entitlement, or a compatibility state
  * of `incompatible` or `capability_missing`. Everything else that keeps a connection out of the live
  * candidate set (offline, stale, reconnecting, unknown health, revoked or missing grant, revoked or
  * unavailable compatibility, no node, ineligible) is an unavailable location, not a different one.
+ */
+function canRuntimeServePlanIfAvailable(
+  connection: RuntimeConnectionDiscoveryReadModel,
+  plan: ExecutionPlan,
+  pinnedHarnessId: string | undefined
+): boolean {
+  return (
+    locationAllowed(connection, plan.constraints.runtime.allowedLocations) &&
+    runtimeFamilyAllowed(connection.family, plan.constraints.runtime.allowedFamilies) &&
+    (pinnedHarnessId === undefined || staticHarnessIdsOf(connection).includes(pinnedHarnessId)) &&
+    connection.access.entitlement.state !== 'denied' &&
+    !['incompatible', 'capability_missing'].includes(connection.compatibility.state) &&
+    capabilityDecisionOf(connection, plan).eligible
+  )
+}
+
+/**
+ * A local-location runtime the plan could have used, but which is not usable right now. While one
+ * exists, a remote runtime must not be chosen in its place: that would be an implicit cloud reroute.
  */
 function fencedLocalRuntime(
   connection: RuntimeConnectionDiscoveryReadModel,
@@ -238,12 +305,22 @@ function fencedLocalRuntime(
 ): boolean {
   return (
     !isRemoteLocation(connection) &&
-    locationAllowed(connection, plan.constraints.runtime.allowedLocations) &&
-    runtimeFamilyAllowed(connection.family, plan.constraints.runtime.allowedFamilies) &&
-    (pinnedHarnessId === undefined || harnessIdsOf(connection).includes(pinnedHarnessId)) &&
-    connection.access.entitlement.state !== 'denied' &&
-    !['incompatible', 'capability_missing'].includes(connection.compatibility.state) &&
-    capabilityDecisionOf(connection, plan).eligible
+    canRuntimeServePlanIfAvailable(connection, plan, pinnedHarnessId)
+  )
+}
+
+/**
+ * An unavailable enrolled remote_host is a device route, not the cloud service. Do not replace it
+ * with the cloud service when it otherwise could have served this plan.
+ */
+function fencedRemoteHostRuntime(
+  connection: RuntimeConnectionDiscoveryReadModel,
+  plan: ExecutionPlan,
+  pinnedHarnessId: string | undefined
+): boolean {
+  return (
+    isEnrolledRemoteHost(connection) &&
+    canRuntimeServePlanIfAvailable(connection, plan, pinnedHarnessId)
   )
 }
 

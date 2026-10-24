@@ -66,6 +66,30 @@ describe('Hosted server composition', () => {
     })
   })
 
+  test('forwards an explicitly supplied profile wake configuration through production startup', () => {
+    const environment = {
+      DATABASE_URL: 'postgresql://app:secret@postgres/control_plane',
+    }
+    const profileWorkflowWake = {
+      placement: {
+        controlPlaneHostId: 'control-plane-host',
+        runtimeHostId: 'runtime-host',
+        runtimeLocation: 'remote_host',
+        coLocated: false,
+      },
+      guards: {
+        authority: { assertCurrent: async () => undefined },
+        residency: { assertCurrent: async () => undefined },
+      },
+    }
+
+    expect(resolveHostedCompositionConfiguration(environment).profileWorkflowWake).toBeUndefined()
+    expect(
+      resolveHostedCompositionConfiguration(environment, { profileWorkflowWake })
+        .profileWorkflowWake
+    ).toBe(profileWorkflowWake)
+  })
+
   test('reports PostgreSQL and separate Restate dependencies without changing core contracts', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'control-plane-hosted-'))
     const calls = []
@@ -299,23 +323,23 @@ describe('Hosted server composition', () => {
 
   test('resolves the optional pinned harness id from the environment or options', () => {
     const base = resolveHostedCompositionConfiguration({
-      DATABASE_URL: 'postgresql://app:secret@example.neon.tech/control_plane',
+      DATABASE_URL: 'postgresql://app:secret@postgres.example.invalid/control_plane',
     })
     expect(base.pinnedHarnessId).toBeUndefined()
     const fromEnv = resolveHostedCompositionConfiguration({
-      DATABASE_URL: 'postgresql://app:secret@example.neon.tech/control_plane',
+      DATABASE_URL: 'postgresql://app:secret@postgres.example.invalid/control_plane',
       CONTROL_PLANE_PINNED_HARNESS_ID: 'deepseek',
     })
     expect(fromEnv.pinnedHarnessId).toBe('deepseek')
     const fromOptions = resolveHostedCompositionConfiguration(
-      { DATABASE_URL: 'postgresql://app:secret@example.neon.tech/control_plane' },
+      { DATABASE_URL: 'postgresql://app:secret@postgres.example.invalid/control_plane' },
       { pinnedHarnessId: 'zcode' }
     )
     expect(fromOptions.pinnedHarnessId).toBe('zcode')
   })
 
   test('resolves the optional catalog approval policy from the environment', () => {
-    const base = { DATABASE_URL: 'postgresql://app:secret@example.neon.tech/control_plane' }
+    const base = { DATABASE_URL: 'postgresql://app:secret@postgres.example.invalid/control_plane' }
     expect(resolveHostedCompositionConfiguration(base).catalogApprovalPolicy).toBeUndefined()
     expect(
       resolveHostedCompositionConfiguration({

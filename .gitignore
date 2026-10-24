@@ -83,6 +83,7 @@ mise.local.lock
 # committed pre-commit gate is tracked.
 .githooks/*
 !.githooks/pre-commit
+.fleet-wt/
 
 # The calibration grader verdicts are the answer key for the blinded human
 # review. They are written outside the reviewer-facing directory and are never

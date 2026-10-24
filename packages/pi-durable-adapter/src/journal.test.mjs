@@ -91,13 +91,14 @@ test('a stale claim release does not clear a newer owner fence', () => {
       admission: { selectionRef: 'opaque' },
       at: '2026-10-08T00:00:00.000Z',
     })
-    const claimed = journal.claimProcess('handle')
-    journal.update('handle', claimed, {
-      detail: { ...journal.get('handle').detail, ownerPid: process.ppid, ownerEpoch: claimed + 1 },
-    })
-    journal.releaseProcess('handle', claimed)
-    expect(journal.get('handle').detail.ownerPid).toBe(process.ppid)
-    expect(journal.get('handle').detail.ownerEpoch).toBe(claimed + 1)
+    const staleClaim = journal.claimProcess('handle')
+    journal.releaseProcess('handle', staleClaim)
+    const newerClaim = journal.claimProcess('handle')
+    journal.releaseProcess('handle', staleClaim)
+    expect(journal.get('handle').detail.ownerPid).toBe(newerClaim.ownerPid)
+    expect(journal.get('handle').detail.ownerEpoch).toBe(newerClaim.ownerEpoch)
+    expect(journal.get('handle').detail.ownerClaimId).toBe(newerClaim.claimId)
+    journal.releaseProcess('handle', newerClaim)
   } finally {
     rmSync(directory, { recursive: true, force: true })
   }

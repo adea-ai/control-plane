@@ -4509,7 +4509,7 @@
               "id": "agent-hq-prd-current-056",
               "sourceLines": [97],
               "kind": "definition",
-              "text": "* M3, Live Workspace: add durable WorkspaceEvents, durable WorkspaceEvent delivery backed by Agent HQ Neon, authenticated SSE replay with signed opaque cursors and explicit resync, client cache synchronization, and reconnect/scale-out tests."
+              "text": "* M3, Live Workspace: add durable WorkspaceEvents, durable WorkspaceEvent delivery backed by Agent HQ PostgreSQL, authenticated SSE replay with signed opaque cursors and explicit resync, client cache synchronization, and reconnect/scale-out tests."
             },
             {
               "id": "agent-hq-prd-current-057",
@@ -6994,13 +6994,13 @@
               "id": "control-plane-prd-current-004",
               "sourceLines": [11],
               "kind": "definition",
-              "text": "The same Control Plane core supports three deployment options: Cloud (Railway/Neon/Cloudflare R2), Hosted (user-controlled VPS), and Local (desktop/all-in-one)."
+              "text": "The same Control Plane core supports three deployment options: Cloud (Railway/PostgreSQL/Cloudflare R2), Hosted (user-controlled VPS), and Local (desktop/all-in-one)."
             },
             {
               "id": "control-plane-prd-current-005",
               "sourceLines": [11],
               "kind": "definition",
-              "text": "Implementation first establishes and certifies the managed-cloud reference on Railway with Neon PostgreSQL, Cloudflare R2, and Restate."
+              "text": "Implementation first establishes and certifies the managed-cloud reference on Railway with PostgreSQL PostgreSQL, Cloudflare R2, and Restate."
             },
             {
               "id": "control-plane-prd-current-006",
@@ -7601,7 +7601,7 @@
               "id": "control-plane-prd-current-070",
               "sourceLines": [180],
               "kind": "definition",
-              "text": "* M9–M12, Managed Cloud, Portability, Audit, and Release: M9 completes the managed-cloud Control Plane on Railway, preserving prior hardening/eval evidence while replacing the AWS/ECS-first deployment path, migrating the cloud durable lifecycle to Restate, wiring Neon/R2/secrets/networking/health, freezing public contracts and deterministic Profile/Skill/ContextProvider behavior, centralizing operational defaults, and certifying real Railway staging."
+              "text": "* M9–M12, Managed Cloud, Portability, Audit, and Release: M9 completes the managed-cloud Control Plane on Railway, preserving prior hardening/eval evidence while replacing the AWS/ECS-first deployment path, migrating the cloud durable lifecycle to Restate, wiring PostgreSQL/R2/secrets/networking/health, freezing public contracts and deterministic Profile/Skill/ContextProvider behavior, centralizing operational defaults, and certifying real Railway sandbox."
             },
             {
               "id": "control-plane-prd-current-071",
@@ -13772,7 +13772,7 @@
               "id": "system-architecture-current-007",
               "sourceLines": [11],
               "kind": "definition",
-              "text": "Adea now uses SolidJS/TanStack Start/Router, TypeScript and Vite, an Electrobun/Bun desktop shell with CEF, a Capacitor mobile wrapper, published shared UI/Themes packages, and Cloudflare Workers/Hyperdrive/Neon application deployment."
+              "text": "Adea now uses SolidJS/TanStack Start/Router, TypeScript and Vite, an Electrobun/Bun desktop shell with CEF, a Capacitor mobile wrapper, published shared UI/Themes packages, and Cloudflare Workers/Hyperdrive/PostgreSQL application deployment."
             },
             {
               "id": "system-architecture-current-008",
@@ -13868,7 +13868,7 @@
               "id": "system-architecture-current-023",
               "sourceLines": [13],
               "kind": "definition",
-              "text": "Railway/Neon/R2/Restate describes the Control Plane managed profile; Adea application compute is Cloudflare."
+              "text": "Railway/PostgreSQL/R2/Restate describes the Control Plane managed profile; Adea application compute is Cloudflare."
             },
             {
               "id": "system-architecture-current-024",
@@ -14619,7 +14619,7 @@
               "id": "system-architecture-current-100",
               "sourceLines": [88],
               "kind": "definition",
-              "text": "Neon Auth provides authentication behind @adea-ai/auth, while an Agent HQ-owned AuthIdentity maps the provider subject to stable user_id."
+              "text": "Authentication provides authentication behind @adea-ai/auth, while an Agent HQ-owned AuthIdentity maps the provider subject to stable user_id."
             },
             {
               "id": "system-architecture-current-101",
@@ -14753,7 +14753,7 @@
               "id": "system-architecture-current-110",
               "sourceLines": [91],
               "kind": "definition",
-              "text": "M9 first establishes a production-shaped managed-cloud reference on Railway with Restate, a separate Neon PostgreSQL database, and Cloudflare R2."
+              "text": "M9 first establishes a production-shaped managed-cloud reference on Railway with Restate, a separate PostgreSQL PostgreSQL database, and Cloudflare R2."
             },
             {
               "id": "system-architecture-current-111",
@@ -14783,7 +14783,7 @@
               "id": "system-architecture-current-115",
               "sourceLines": [91],
               "kind": "dated-status",
-              "text": "NeonEncryptedSecretProvider is implemented, while live provider/key verification and M9.6 credential certification remain pending (STM-023)."
+              "text": "PostgresEncryptedSecretProvider is implemented, while live provider/key verification and M9.6 credential certification remain pending (STM-023)."
             },
             {
               "id": "system-architecture-current-116",
@@ -14813,7 +14813,7 @@
               "id": "system-architecture-current-120",
               "sourceLines": [91],
               "kind": "obligation",
-              "text": "Docker, PostgreSQL, Redis/Valkey, Runtime Gateway, Neon, and R2 are not required for ordinary Local execution."
+              "text": "Docker, PostgreSQL, Redis/Valkey, Runtime Gateway, PostgreSQL, and R2 are not required for ordinary Local execution."
             },
             {
               "id": "system-architecture-current-121",
@@ -15014,7 +15014,7 @@
               "id": "system-architecture-current-139",
               "sourceLines": [119],
               "kind": "definition",
-              "text": "Neon Auth remains behind @adea-ai/auth; workspace authorization resolves the Agent HQ User and explicit permissions server-side."
+              "text": "Authentication remains behind @adea-ai/auth; workspace authorization resolves the Agent HQ User and explicit permissions server-side."
             }
           ]
         },
@@ -15050,7 +15050,7 @@
               "id": "system-architecture-current-140",
               "sourceLines": [121],
               "kind": "definition",
-              "text": "WorkspaceEvents are ordered by workspace_sequence in Agent HQ Neon and delivered through the application HTTP/SSE boundary."
+              "text": "WorkspaceEvents are ordered by workspace_sequence in Agent HQ PostgreSQL and delivered through the application HTTP/SSE boundary."
             },
             {
               "id": "system-architecture-current-141",
@@ -15098,7 +15098,7 @@
               "id": "system-architecture-current-148",
               "sourceLines": [121],
               "kind": "obligation",
-              "text": "PostgreSQL LISTEN/NOTIFY carries event identity/sequence only with a 2-second polling fallback; reconnect and scale-out correctness always come from Neon replay."
+              "text": "PostgreSQL LISTEN/NOTIFY carries event identity/sequence only with a 2-second polling fallback; reconnect and scale-out correctness always come from PostgreSQL replay."
             },
             {
               "id": "system-architecture-current-149",
@@ -17900,7 +17900,7 @@
               "id": "control-plane-tdd-current-014",
               "sourceLines": [12],
               "kind": "definition",
-              "text": "Profile split: Managed Cloud uses Railway, separate Control Plane Neon/PostgreSQL, R2 and Restate."
+              "text": "Profile split: Managed Cloud uses Railway, separate Control Plane PostgreSQL/PostgreSQL, R2 and Restate."
             },
             {
               "id": "control-plane-tdd-current-015",
@@ -18032,7 +18032,7 @@
               "id": "control-plane-tdd-current-036",
               "sourceLines": [16],
               "kind": "dated-status",
-              "text": "The generated architecture audit still records an older staging candidate and stale package versions; its provenance must be regenerated for a current acceptance candidate."
+              "text": "The generated architecture audit still records an older sandbox candidate and stale package versions; its provenance must be regenerated for a current acceptance candidate."
             },
             {
               "id": "control-plane-tdd-current-037",
@@ -18674,7 +18674,7 @@
               "id": "control-plane-tdd-current-117",
               "sourceLines": [209],
               "kind": "dated-status",
-              "text": "The implementation reference is established first in M9 as a production-shaped managed-cloud profile on Railway using Restate, a separate Neon PostgreSQL database, Cloudflare R2 for explicit cloud Artifacts/bundles, Railway service/shared variables for deployment/service bootstrap configuration, and coordination/cache only where measured need justifies it."
+              "text": "The implementation reference is established first in M9 as a production-shaped managed-cloud profile on Railway using Restate, a separate PostgreSQL PostgreSQL database, Cloudflare R2 for explicit cloud Artifacts/bundles, Railway service/shared variables for deployment/service bootstrap configuration, and coordination/cache only where measured need justifies it."
             },
             {
               "id": "control-plane-tdd-current-118",
@@ -18704,7 +18704,7 @@
               "id": "control-plane-tdd-current-122",
               "sourceLines": [210],
               "kind": "obligation",
-              "text": "No Docker, PostgreSQL, Redis/Valkey, Neon, R2, or cloud Runtime Gateway is required for ordinary local execution."
+              "text": "No Docker, PostgreSQL, Redis/Valkey, PostgreSQL, R2, or cloud Runtime Gateway is required for ordinary local execution."
             },
             {
               "id": "control-plane-tdd-current-123",
@@ -18791,13 +18791,13 @@
               "id": "control-plane-tdd-current-130",
               "sourceLines": [320],
               "kind": "definition",
-              "text": "Agent HQ Cloud uses its own Neon PostgreSQL project/database."
+              "text": "Agent HQ Cloud uses its own PostgreSQL PostgreSQL project/database."
             },
             {
               "id": "control-plane-tdd-current-131",
               "sourceLines": [320],
               "kind": "definition",
-              "text": "Control Plane persistence is separate: embedded SQLite for local desktop, user-controlled SQLite or PostgreSQL for self-hosted deployments with PostgreSQL recommended for server-grade use, and a separate Neon PostgreSQL project/database for Agent HQ-managed Control Plane Cloud."
+              "text": "Control Plane persistence is separate: embedded SQLite for local desktop, user-controlled SQLite or PostgreSQL for self-hosted deployments with PostgreSQL recommended for server-grade use, and a separate PostgreSQL PostgreSQL project/database for Agent HQ-managed Control Plane Cloud."
             },
             {
               "id": "control-plane-tdd-current-132",
@@ -27151,7 +27151,7 @@
               "id": "data-api-spec-current-070",
               "sourceLines": [194],
               "kind": "dated-status",
-              "text": "The current Cloudflare Worker application exposes the authenticated WorkspaceEvent SSE route and replays committed Agent HQ Neon WorkspaceEvents; a standalone gateway remains a possible scale-out target."
+              "text": "The current Cloudflare Worker application exposes the authenticated WorkspaceEvent SSE route and replays committed Agent HQ PostgreSQL WorkspaceEvents; a standalone gateway remains a possible scale-out target."
             },
             {
               "id": "data-api-spec-current-071",
@@ -27187,7 +27187,7 @@
               "id": "data-api-spec-current-076",
               "sourceLines": [194],
               "kind": "obligation",
-              "text": "PostgreSQL LISTEN/NOTIFY plus 2-second bounded Neon fallback is a target wake-up path carrying event identity/sequence only."
+              "text": "PostgreSQL LISTEN/NOTIFY plus 2-second bounded PostgreSQL fallback is a target wake-up path carrying event identity/sequence only."
             },
             {
               "id": "data-api-spec-current-077",
@@ -27461,13 +27461,13 @@
               "id": "data-api-spec-current-109",
               "sourceLines": [217],
               "kind": "definition",
-              "text": "Agent HQ Cloud owns its Neon PostgreSQL product-metadata boundary while Agent HQ Desktop currently owns a separate AES-GCM encrypted, file-backed local-content store behind Electrobun/Bun; the latter is neither a Neon replica nor Control Plane persistence."
+              "text": "Agent HQ Cloud owns its PostgreSQL PostgreSQL product-metadata boundary while Agent HQ Desktop currently owns a separate AES-GCM encrypted, file-backed local-content store behind Electrobun/Bun; the latter is neither a PostgreSQL replica nor Control Plane persistence."
             },
             {
               "id": "data-api-spec-current-110",
               "sourceLines": [217],
               "kind": "definition",
-              "text": "The Control Plane owns a separate deployment-profile persistence boundary: Local and Self-hosted `simple` use Node 24 `node:sqlite`/Drizzle; Self-hosted `server` and Agent HQ-managed cloud use PostgreSQL, with Neon selected for first-party managed cloud."
+              "text": "The Control Plane owns a separate deployment-profile persistence boundary: Local and Self-hosted `simple` use Node 24 `node:sqlite`/Drizzle; Self-hosted `server` and Agent HQ-managed cloud use PostgreSQL, with PostgreSQL selected for first-party managed cloud."
             },
             {
               "id": "data-api-spec-current-111",
@@ -32401,7 +32401,7 @@
               "id": "execution-consistency-spec-current-019",
               "sourceLines": [95],
               "kind": "dated-status",
-              "text": "* Current implementation: GET /api/v1/workspaces/{workspaceId}/events authenticates, reads committed WorkspaceEvents, and handles ordered SSE delivery/replay inside the Cloudflare Worker app. A separately deployable gateway is a possible future scale-out boundary, not an evidenced current Railway service. Agent HQ Neon WorkspaceEvents remain authoritative. Delivery currently polls every second. The target LISTEN/NOTIFY wake-up and 2-second fallback below are not implemented here. Connection accounting is eight streams per workspace per server instance."
+              "text": "* Current implementation: GET /api/v1/workspaces/{workspaceId}/events authenticates, reads committed WorkspaceEvents, and handles ordered SSE delivery/replay inside the Cloudflare Worker app. A separately deployable gateway is a possible future scale-out boundary, not an evidenced current Railway service. Agent HQ PostgreSQL WorkspaceEvents remain authoritative. Delivery currently polls every second. The target LISTEN/NOTIFY wake-up and 2-second fallback below are not implemented here. Connection accounting is eight streams per workspace per server instance."
             },
             {
               "id": "execution-consistency-spec-current-020",
@@ -32419,7 +32419,7 @@
               "id": "execution-consistency-spec-current-022",
               "sourceLines": [96],
               "kind": "definition",
-              "text": "Agent HQ Neon PostgreSQL WorkspaceEvent rows are the source of truth."
+              "text": "Agent HQ PostgreSQL PostgreSQL WorkspaceEvent rows are the source of truth."
             },
             {
               "id": "execution-consistency-spec-current-023",
@@ -32443,7 +32443,7 @@
               "id": "execution-consistency-spec-current-026",
               "sourceLines": [97],
               "kind": "obligation",
-              "text": "If LISTEN/NOTIFY is unavailable or disconnected, the gateway falls back to bounded 2-second Neon polling/catch-up until notification capability recovers."
+              "text": "If LISTEN/NOTIFY is unavailable or disconnected, the gateway falls back to bounded 2-second PostgreSQL polling/catch-up until notification capability recovers."
             }
           ]
         },
@@ -32481,7 +32481,7 @@
               "id": "execution-consistency-spec-current-029",
               "sourceLines": [99],
               "kind": "obligation",
-              "text": "Any instance can validate the signed cursor and replay from Neon."
+              "text": "Any instance can validate the signed cursor and replay from PostgreSQL."
             },
             {
               "id": "execution-consistency-spec-current-030",
@@ -32735,7 +32735,7 @@
               "id": "execution-consistency-spec-current-059",
               "sourceLines": [149],
               "kind": "obligation",
-              "text": "A lost LISTEN/NOTIFY wake-up does not lose an SSE update because the event-serving capability falls back to durable Neon catch-up/polling and replay from the signed cursor."
+              "text": "A lost LISTEN/NOTIFY wake-up does not lose an SSE update because the event-serving capability falls back to durable PostgreSQL catch-up/polling and replay from the signed cursor."
             }
           ]
         },
@@ -36367,7 +36367,7 @@
               "id": "security-trust-model-current-016",
               "sourceLines": [11],
               "kind": "dated-status",
-              "text": "Adea cloud application compute is Cloudflare Workers/Assets/Hyperdrive/Neon, separate from the Control Plane Railway profile and credentials."
+              "text": "Adea cloud application compute is Cloudflare Workers/Assets/Hyperdrive/PostgreSQL, separate from the Control Plane Railway profile and credentials."
             },
             {
               "id": "security-trust-model-current-017",
@@ -36530,7 +36530,7 @@
               "id": "security-trust-model-current-041",
               "sourceLines": [37],
               "kind": "obligation",
-              "text": "Agent HQ Neon PostgreSQL does not require plaintext Local/Self-hosted Task prompts, Message bodies, execution inputs, ContextPackages, repository content, provider memory, reusable credentials, or unwrapped E2E content keys."
+              "text": "Agent HQ PostgreSQL PostgreSQL does not require plaintext Local/Self-hosted Task prompts, Message bodies, execution inputs, ContextPackages, repository content, provider memory, reusable credentials, or unwrapped E2E content keys."
             },
             {
               "id": "security-trust-model-current-042",
@@ -36542,7 +36542,7 @@
               "id": "security-trust-model-current-043",
               "sourceLines": [37],
               "kind": "dated-status",
-              "text": "Agent HQ Desktop owns a separate AES-GCM file-backed local-content authority behind Electrobun/Bun; it is not a Neon replica or Control Plane persistence."
+              "text": "Agent HQ Desktop owns a separate AES-GCM file-backed local-content authority behind Electrobun/Bun; it is not a PostgreSQL replica or Control Plane persistence."
             },
             {
               "id": "security-trust-model-current-044",
@@ -36655,7 +36655,7 @@
               "id": "security-trust-model-current-052",
               "sourceLines": [46],
               "kind": "dated-status",
-              "text": "Event delivery: workspace-authorized application HTTP/SSE routes deliver cloud-safe product state from durable Neon WorkspaceEvents."
+              "text": "Event delivery: workspace-authorized application HTTP/SSE routes deliver cloud-safe product state from durable PostgreSQL WorkspaceEvents."
             },
             {
               "id": "security-trust-model-current-053",
@@ -36756,7 +36756,7 @@
               "id": "security-trust-model-current-065",
               "sourceLines": [64],
               "kind": "obligation",
-              "text": "Neon Auth establishes a provider subject and session behind @adea-ai/auth; AuthIdentity resolves that subject to stable Agent HQ user_id before workspace membership and explicit permissions are evaluated server-side for every read, write, execution, provider mapping/policy change, memory-write decision, Artifact access, and event subscription."
+              "text": "Authentication establishes a provider subject and session behind @adea-ai/auth; AuthIdentity resolves that subject to stable Agent HQ user_id before workspace membership and explicit permissions are evaluated server-side for every read, write, execution, provider mapping/policy change, memory-write decision, Artifact access, and event subscription."
             },
             {
               "id": "security-trust-model-current-066",
@@ -36866,7 +36866,7 @@
               "id": "security-trust-model-current-078",
               "sourceLines": [68],
               "kind": "obligation",
-              "text": "The M9 managed-cloud profile uses Railway service/shared variables for bootstrap configuration such as Neon connection references, service authentication, Restate configuration, R2 credentials, and bootstrap/master references."
+              "text": "The M9 managed-cloud profile uses Railway service/shared variables for bootstrap configuration such as PostgreSQL connection references, service authentication, Restate configuration, R2 credentials, and bootstrap/master references."
             },
             {
               "id": "security-trust-model-current-079",
@@ -36884,7 +36884,7 @@
               "id": "security-trust-model-current-081",
               "sourceLines": [68],
               "kind": "dated-status",
-              "text": "M9.9 implemented NeonEncryptedSecretProvider behind the credential-vault boundary."
+              "text": "M9.9 implemented PostgresEncryptedSecretProvider behind the credential-vault boundary."
             },
             {
               "id": "security-trust-model-current-082",
@@ -40249,7 +40249,7 @@
               "id": "evaluation-plan-current-018",
               "sourceLines": [110],
               "kind": "dated-status",
-              "text": "Control Plane managed-cloud comparisons begin in M9 and establish the Railway/Neon/R2/Restate semantic and operational reference before Local/Self-hosted portability is added."
+              "text": "Control Plane managed-cloud comparisons begin in M9 and establish the Railway/PostgreSQL/R2/Restate semantic and operational reference before Local/Self-hosted portability is added."
             },
             {
               "id": "evaluation-plan-current-019",
@@ -40348,7 +40348,7 @@
               "id": "evaluation-plan-current-025",
               "sourceLines": [116],
               "kind": "definition",
-              "text": "M9 owns Managed Cloud Deployment, Hardening & Evals: it preserves prior hardening/evaluation evidence, makes the Railway/Neon/R2 profile actually deployable, migrates the managed-cloud durable lifecycle to Restate, wires secrets/networking/health/recovery, freezes public contracts and deterministic Profile/Skill/ContextProvider behavior, centralizes operational defaults, and certifies real staging."
+              "text": "M9 owns Managed Cloud Deployment, Hardening & Evals: it preserves prior hardening/evaluation evidence, makes the Railway/PostgreSQL/R2 profile actually deployable, migrates the managed-cloud durable lifecycle to Restate, wires secrets/networking/health/recovery, freezes public contracts and deterministic Profile/Skill/ContextProvider behavior, centralizes operational defaults, and certifies real sandbox."
             },
             {
               "id": "evaluation-plan-current-026",
@@ -42657,7 +42657,7 @@
               "id": "runtime-compatibility-current-025",
               "sourceLines": [158],
               "kind": "obligation",
-              "text": "M9 managed-cloud certification proves the Railway/Neon/R2/Restate reference and freezes canonical contracts/policies/defaults."
+              "text": "M9 managed-cloud certification proves the Railway/PostgreSQL/R2/Restate reference and freezes canonical contracts/policies/defaults."
             },
             {
               "id": "runtime-compatibility-current-026",
@@ -47427,13 +47427,13 @@
               "id": "architecture-decisions-current-034",
               "sourceLines": [208],
               "kind": "obligation",
-              "text": "Consequences: Agent HQ uses its own Neon PostgreSQL project/database for cloud product state."
+              "text": "Consequences: Agent HQ uses its own PostgreSQL PostgreSQL project/database for cloud product state."
             },
             {
               "id": "architecture-decisions-current-035",
               "sourceLines": [208],
               "kind": "definition",
-              "text": "Control Plane persistence remains independently owned: SQLite for local desktop, user-controlled SQLite or PostgreSQL for self-hosting with PostgreSQL recommended for server-grade use, and a separate Neon PostgreSQL project/database for Agent HQ-managed cloud."
+              "text": "Control Plane persistence remains independently owned: SQLite for local desktop, user-controlled SQLite or PostgreSQL for self-hosting with PostgreSQL recommended for server-grade use, and a separate PostgreSQL PostgreSQL project/database for Agent HQ-managed cloud."
             },
             {
               "id": "architecture-decisions-current-036",
@@ -47775,7 +47775,7 @@
               "id": "architecture-decisions-current-069",
               "sourceLines": [279],
               "kind": "obligation",
-              "text": "Control Plane M9 first establishes the production-shaped managed-cloud reference on Railway using Restate, a separate Neon PostgreSQL database, Cloudflare R2 for explicitly cloud-stored artifacts/bundles, Railway service/shared variables for deployment/service bootstrap configuration, and replaceable coordination services where measured need justifies them."
+              "text": "Control Plane M9 first establishes the production-shaped managed-cloud reference on Railway using Restate, a separate PostgreSQL PostgreSQL database, Cloudflare R2 for explicitly cloud-stored artifacts/bundles, Railway service/shared variables for deployment/service bootstrap configuration, and replaceable coordination services where measured need justifies them."
             },
             {
               "id": "architecture-decisions-current-070",
@@ -47945,7 +47945,7 @@
               "id": "architecture-decisions-current-086",
               "sourceLines": [282],
               "kind": "obligation",
-              "text": "Consequences: M9 owns every change required to make the first-party managed-cloud profile correct and operable, including Railway build/service configuration, managed-cloud Restate migration, Neon/R2 wiring, service authentication, bootstrap configuration, dynamic credential-vault provider selection/verification, networking, health/readiness, migrations, recovery, cloud security, and evidence of cost and performance under production conditions."
+              "text": "Consequences: M9 owns every change required to make the first-party managed-cloud profile correct and operable, including Railway build/service configuration, managed-cloud Restate migration, PostgreSQL/R2 wiring, service authentication, bootstrap configuration, dynamic credential-vault provider selection/verification, networking, health/readiness, migrations, recovery, cloud security, and evidence of cost and performance under production conditions."
             },
             {
               "id": "architecture-decisions-current-087",
@@ -47975,7 +47975,7 @@
               "id": "architecture-decisions-current-091",
               "sourceLines": [282],
               "kind": "obligation",
-              "text": "Local and Self-hosted `simple` use Node 24 `node:sqlite` through Drizzle behind PersistenceProvider; Self-hosted `server` and managed cloud use PostgreSQL, with Neon selected for the first-party cloud profile."
+              "text": "Local and Self-hosted `simple` use Node 24 `node:sqlite` through Drizzle behind PersistenceProvider; Self-hosted `server` and managed cloud use PostgreSQL, with PostgreSQL selected for the first-party cloud profile."
             },
             {
               "id": "architecture-decisions-current-092",

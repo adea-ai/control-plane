@@ -19,13 +19,26 @@ const succeeded = {
 }
 
 test('actual Pi SQLite and loopback HTTP register only governed delegate_child and retain all generation receipts', async () => {
-  const setup = await fixture()
+  const dispatchMarkers = []
+  const setup = await fixture({ dispatchMarkers })
   try {
     const engine = setup.open()
     const result = await engine.run(run)
     expect(result.text).toBe('Child delegation receipt received.')
     expect(setup.effects()).toBe(1)
     expect(setup.requests).toHaveLength(2)
+    expect(dispatchMarkers.map((marker) => marker.stage)).toEqual([
+      'prepared',
+      'armed',
+      'prepared',
+      'armed',
+    ])
+    expect(
+      dispatchMarkers.every((marker) => /^sha256:[a-f0-9]{64}$/.test(marker.requestDigest))
+    ).toBe(true)
+    expect(dispatchMarkers[0].requestDigest).toBe(dispatchMarkers[1].requestDigest)
+    expect(dispatchMarkers[2].requestDigest).toBe(dispatchMarkers[3].requestDigest)
+    expect(dispatchMarkers[0].requestDigest).not.toBe(dispatchMarkers[2].requestDigest)
     expect(setup.requests[0].tools.map((tool) => tool.function.name)).toEqual(['delegate_child'])
     expect(setup.requests[0].tools[0].function.parameters.additionalProperties).toBe(false)
     expect(Object.keys(setup.requests[0].tools[0].function.parameters.properties)).toEqual([
@@ -48,6 +61,20 @@ test('actual Pi SQLite and loopback HTTP register only governed delegate_child a
     expect((await readFile(engine.storePath(run.sessionId))).toString()).not.toContain(
       'fixture-no-paid-account'
     )
+  } finally {
+    await setup.close()
+  }
+})
+
+test('ambiguous durable arm prevents the real loopback provider request', async () => {
+  const dispatchMarkers = []
+  const setup = await fixture({ dispatchMarkers, armFault: true })
+  try {
+    const engine = setup.open()
+    await expect(engine.run(run)).rejects.toThrow('PI_SUBMISSION_UNANSWERED')
+    expect(dispatchMarkers.map((marker) => marker.stage)).toEqual(['prepared', 'armed'])
+    expect(setup.requests).toHaveLength(0)
+    await engine.close()
   } finally {
     await setup.close()
   }

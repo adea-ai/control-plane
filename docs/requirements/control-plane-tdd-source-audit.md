@@ -30,7 +30,7 @@ requirement count. SHA-256 of retrieved text normalized to LF with a final newli
 2. Co-located execution uses direct RuntimeDriver/IPC; the Runtime Gateway is for remote
    RuntimeNodes. Local execution must not require a cloud gateway hop.
 3. Persistence is profile-specific: SQLite for Local and Hosted Simple, PostgreSQL for
-   Hosted Server and managed cloud. Railway/Neon/R2/Restate replaces the AWS-first reference.
+   Hosted Server and managed cloud. Railway/PostgreSQL/R2/Restate replaces the AWS-first reference.
 4. AgentProfile versions and field-level merge strategies become deterministic and
    provenance-bearing. Lower-precedence layers cannot broaden higher-precedence constraints.
 5. Skill selection is the pinned baseline, authorized explicit requests, and transitive

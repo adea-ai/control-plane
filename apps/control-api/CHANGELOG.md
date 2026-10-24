@@ -1,5 +1,72 @@
 # Changelog
 
+## [1.36.1](https://github.com/adea-ai/control-plane/compare/control-api-v1.36.0...control-api-v1.36.1) (2026-10-24)
+
+
+### Bug Fixes
+
+* reduce dependency closure and preserve budget checks ([#1270](https://github.com/adea-ai/control-plane/issues/1270)) ([01fa230](https://github.com/adea-ai/control-plane/commit/01fa230233cc796b6c7f93d020006212b89631f6))
+
+
+### Tests
+
+* **profiles:** prove profile recovery and fenced rollback evidence ([#1048](https://github.com/adea-ai/control-plane/issues/1048)) ([da1a38c](https://github.com/adea-ai/control-plane/commit/da1a38cbb4f20da086313451077593d8df3e283d))
+
+## [1.36.0](https://github.com/adea-ai/control-plane/compare/control-api-v1.35.0...control-api-v1.36.0) (2026-10-23)
+
+
+### Features
+
+* **pi-durable:** compose child reads and drain recovery ([#1204](https://github.com/adea-ai/control-plane/issues/1204)) ([2f1f9d1](https://github.com/adea-ai/control-plane/commit/2f1f9d1a4da48db09e2c8ee9dc08625fbb2bc7a5))
+
+## [1.35.0](https://github.com/adea-ai/control-plane/compare/control-api-v1.34.7...control-api-v1.35.0) (2026-10-23)
+
+
+### Features
+
+* **context:** qualify decision context consumers ([#558](https://github.com/adea-ai/control-plane/issues/558)) ([#1218](https://github.com/adea-ai/control-plane/issues/1218)) ([77b93eb](https://github.com/adea-ai/control-plane/commit/77b93eb77603b462a01094b6916479318c844018))
+
+## [1.34.7](https://github.com/adea-ai/control-plane/compare/control-api-v1.34.6...control-api-v1.34.7) (2026-10-23)
+
+
+### Tests
+
+* **control-api:** prove the immutable configuration binding and the approval replay for CP [#932](https://github.com/adea-ai/control-plane/issues/932) ([#1226](https://github.com/adea-ai/control-plane/issues/1226)) ([b513d54](https://github.com/adea-ai/control-plane/commit/b513d547cfa03b30e8ebea29752546dca13144ca))
+
+## [1.34.6](https://github.com/adea-ai/control-plane/compare/control-api-v1.34.5...control-api-v1.34.6) (2026-10-22)
+
+
+### Tests
+
+* **#1018:** prove the concurrent retry and a client reconnect on PostgreSQL ([#1252](https://github.com/adea-ai/control-plane/issues/1252)) ([9789445](https://github.com/adea-ai/control-plane/commit/9789445e7f73dbe5ad3d06bee5873be54ad750fc))
+
+## [1.34.5](https://github.com/adea-ai/control-plane/compare/control-api-v1.34.4...control-api-v1.34.5) (2026-10-22)
+
+
+### Bug Fixes
+
+* **railway:** verify production PostgreSQL identity and scoped migrations ([#1256](https://github.com/adea-ai/control-plane/issues/1256)) ([86b7515](https://github.com/adea-ai/control-plane/commit/86b751520c569106644c518dd5fd0819056cd169))
+
+## [1.34.4](https://github.com/adea-ai/control-plane/compare/control-api-v1.34.3...control-api-v1.34.4) (2026-10-22)
+
+
+### Bug Fixes
+
+* **pi-durable:** fence cancellation retries and uncertain effects ([#935](https://github.com/adea-ai/control-plane/issues/935)) ([#1246](https://github.com/adea-ai/control-plane/issues/1246)) ([62d530f](https://github.com/adea-ai/control-plane/commit/62d530f5a4c012e978f38e6880181b8f5fbfebe5))
+
+
+### Maintenance
+
+* pin Bun 1.4.4 and use native SDK consumer checking ([#1255](https://github.com/adea-ai/control-plane/issues/1255)) ([176d2d6](https://github.com/adea-ai/control-plane/commit/176d2d61571ef89263e017ddb911b4315aa07234))
+
+## [1.34.3](https://github.com/adea-ai/control-plane/compare/control-api-v1.34.2...control-api-v1.34.3) (2026-10-21)
+
+
+### Bug Fixes
+
+* **control-api:** refuse the funding disclosure when the funding host is absent ([019b5fe](https://github.com/adea-ai/control-plane/commit/019b5fec91525a9adc152ea8bc605113c34865cf))
+* **control-api:** refuse the funding disclosure when the funding host is absent (CP [#931](https://github.com/adea-ai/control-plane/issues/931)) ([#1229](https://github.com/adea-ai/control-plane/issues/1229)) ([019b5fe](https://github.com/adea-ai/control-plane/commit/019b5fec91525a9adc152ea8bc605113c34865cf))
+
 ## [1.34.2](https://github.com/adea-ai/control-plane/compare/control-api-v1.34.1...control-api-v1.34.2) (2026-10-20)
 
 

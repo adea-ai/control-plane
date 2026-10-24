@@ -1,0 +1,1134 @@
+{
+  "schemaVersion": 1,
+  "suite": "control-plane-skill-evals",
+  "version": "skill-evals-v3",
+  "generatedBy": "docs/evals/skill-evals/run-skill-evals.mts",
+  "harness": {
+    "module": "packages/production-readiness/src/evidence-audit-eval.ts",
+    "api": "runEvidenceAuditEval",
+    "fixtureSchema": "evidenceQualityVersion 1 (receipt schemaVersion 2, harness 3.0.0)",
+    "seed": 7,
+    "executorReference": "skill-evals-v3/contract-driven-cold-executor",
+    "ownership": "owned by CP #191 (F2W5); consumed read-only"
+  },
+  "coverage": {
+    "retainedSkills": 9,
+    "coveredSkills": 9,
+    "skillsCovered": [
+      "code-review",
+      "code-simplification",
+      "control-plane-audit",
+      "incremental-implementation",
+      "security-and-hardening",
+      "test-driven-development",
+      "turborepo",
+      "typescript-advanced-types",
+      "verification-before-completion"
+    ],
+    "skillsNotCovered": [],
+    "note": "Every retained skill is exercised by at least one scenario. Coverage means the skill contract is exercised by the modeled cold executor, not that the skill content is correct, complete, or actionable."
+  },
+  "measurementLimits": [
+    "The baseline-versus-candidate difference is decided by whether the skill text carries the contract markers the scenario requires. The library-level contract is therefore a small number of independent facts (the evidence contract, the boundary contract, and the stop conditions), and the scenarios differ in their evidence fixtures rather than in the skill-side input.",
+    "The suite measures contract presence and honest reporting through a modeled cold executor over the CP #191 harness. It is not a model, not a human, and not a live routing measurement."
+  ],
+  "baseline": {
+    "commit": "27f17bd55e0266439b5b3089163195c9e7a669be",
+    "reproduction": "The baseline arm is reproduced only when the pinned commit is present in the checkout. A depth-1 clone does not contain it, so a lane that checks out at depth 1 reproduces the candidate arm only and skips the baseline comparison.",
+    "skillCount": 9,
+    "routingBytes": 2626,
+    "entrypointBytes": 133904,
+    "bundledBytes": 252692,
+    "skills": [
+      {
+        "name": "code-review",
+        "version": "1.0.0",
+        "entrypointBytes": 9630,
+        "bundledBytes": 9730,
+        "bundledFileCount": 2,
+        "routingBytes": 420,
+        "skillMdDigest": "sha256:08d85257dbc13ecb5675f671cc955d04aa339a4d6673239db2e6a5a64cf62273"
+      },
+      {
+        "name": "code-simplification",
+        "version": "1.0.0",
+        "entrypointBytes": 15061,
+        "bundledBytes": 15061,
+        "bundledFileCount": 1,
+        "routingBytes": 244,
+        "skillMdDigest": "sha256:0e8e7cf23ae553e10392ce87e465d1f0a255933882fcca5aa1785d1393659b42"
+      },
+      {
+        "name": "control-plane-audit",
+        "version": "1.1.0",
+        "entrypointBytes": 8926,
+        "bundledBytes": 8926,
+        "bundledFileCount": 1,
+        "routingBytes": 205,
+        "skillMdDigest": "sha256:da74efc536c20a683da65e8d9ee43e22ea4e8f25fa503eb3efeedc3a4bcb423c"
+      },
+      {
+        "name": "incremental-implementation",
+        "version": "1.0.1",
+        "entrypointBytes": 11947,
+        "bundledBytes": 11947,
+        "bundledFileCount": 1,
+        "routingBytes": 221,
+        "skillMdDigest": "sha256:de49fc8499c92259648bb058b24e8c4a78eda74736fe6c0061c9a48fbea5f91b"
+      },
+      {
+        "name": "security-and-hardening",
+        "version": "1.0.1",
+        "entrypointBytes": 25910,
+        "bundledBytes": 25910,
+        "bundledFileCount": 1,
+        "routingBytes": 316,
+        "skillMdDigest": "sha256:6cd95aafb58a6ff03286c22357dcdcac0b2b1a8f2d6d5f7dee7be11f76e84c9c"
+      },
+      {
+        "name": "test-driven-development",
+        "version": "1.0.1",
+        "entrypointBytes": 17953,
+        "bundledBytes": 17953,
+        "bundledFileCount": 1,
+        "routingBytes": 231,
+        "skillMdDigest": "sha256:a74b2aa75b78df2e9a952c01f320123e4160a66d71d6fac3e7e869d45d594cdf"
+      },
+      {
+        "name": "turborepo",
+        "version": "2.10.11-canary.4",
+        "entrypointBytes": 30134,
+        "bundledBytes": 139795,
+        "bundledFileCount": 26,
+        "routingBytes": 460,
+        "skillMdDigest": "sha256:a6932e94943873e6aa9f7fcfcfc0af24f8b67028f168a5fc900216c55fc1ddc5"
+      },
+      {
+        "name": "typescript-advanced-types",
+        "version": "1.0.0",
+        "entrypointBytes": 9361,
+        "bundledBytes": 18388,
+        "bundledFileCount": 2,
+        "routingBytes": 304,
+        "skillMdDigest": "sha256:4bceaa365c558f9d14d9a46dfc142b8f11d0ca9576d970ddc1e2a9e53a40c07f"
+      },
+      {
+        "name": "verification-before-completion",
+        "version": "1.0.0",
+        "entrypointBytes": 4982,
+        "bundledBytes": 4982,
+        "bundledFileCount": 1,
+        "routingBytes": 225,
+        "skillMdDigest": "sha256:220fe81b95153f6706774d4788711f8de439883bafa2aed158cdca7f2e55cfc2"
+      }
+    ]
+  },
+  "candidate": {
+    "skillCount": 9,
+    "routingBytes": 2707,
+    "entrypointBytes": 143179,
+    "bundledBytes": 261967,
+    "skills": [
+      {
+        "name": "code-review",
+        "version": "1.1.0",
+        "entrypointBytes": 10667,
+        "bundledBytes": 10767,
+        "bundledFileCount": 2,
+        "routingBytes": 344,
+        "skillMdDigest": "sha256:b5edeb0564d9239b89217e95899528499581d71b4bc7cc9c2fef92a83d77b5f4"
+      },
+      {
+        "name": "code-simplification",
+        "version": "1.1.0",
+        "entrypointBytes": 16017,
+        "bundledBytes": 16017,
+        "bundledFileCount": 1,
+        "routingBytes": 268,
+        "skillMdDigest": "sha256:d816e5f0aa0cb3407bba6a0272fd872a8cf7645d4b7c7df68c884af6619aa257"
+      },
+      {
+        "name": "control-plane-audit",
+        "version": "1.2.0",
+        "entrypointBytes": 10186,
+        "bundledBytes": 10186,
+        "bundledFileCount": 1,
+        "routingBytes": 325,
+        "skillMdDigest": "sha256:fc865357fc31c4e24dff6f339b8b6959609aef4625bfe385b4a5be63b49051e5"
+      },
+      {
+        "name": "incremental-implementation",
+        "version": "1.1.0",
+        "entrypointBytes": 12973,
+        "bundledBytes": 12973,
+        "bundledFileCount": 1,
+        "routingBytes": 255,
+        "skillMdDigest": "sha256:89d3bce95f24745f41dd94a8d9dc22f86f0b08fece1fcfef4c2a00f8e5d9c793"
+      },
+      {
+        "name": "security-and-hardening",
+        "version": "1.1.0",
+        "entrypointBytes": 26910,
+        "bundledBytes": 26910,
+        "bundledFileCount": 1,
+        "routingBytes": 315,
+        "skillMdDigest": "sha256:5777b168f58f4cc51751ee7ce0483877ad5207a055a03205347b00dd56961283"
+      },
+      {
+        "name": "test-driven-development",
+        "version": "1.1.0",
+        "entrypointBytes": 19002,
+        "bundledBytes": 19002,
+        "bundledFileCount": 1,
+        "routingBytes": 290,
+        "skillMdDigest": "sha256:892f661debcb83987b76088772e8db991ef511d04e42686bdb1e7638d6d292fc"
+      },
+      {
+        "name": "turborepo",
+        "version": "2.10.11-canary.4",
+        "entrypointBytes": 31145,
+        "bundledBytes": 140806,
+        "bundledFileCount": 26,
+        "routingBytes": 343,
+        "skillMdDigest": "sha256:15002e60558da76e40cf6569ba8485aa0064aecdb548b9938b3a741633a77288"
+      },
+      {
+        "name": "typescript-advanced-types",
+        "version": "1.1.0",
+        "entrypointBytes": 10256,
+        "bundledBytes": 19283,
+        "bundledFileCount": 2,
+        "routingBytes": 275,
+        "skillMdDigest": "sha256:29296fdb347b4b3ee6bf7d88a134e5f23fab9e9d07964946a70c27c84e44193e"
+      },
+      {
+        "name": "verification-before-completion",
+        "version": "1.1.0",
+        "entrypointBytes": 6023,
+        "bundledBytes": 6023,
+        "bundledFileCount": 1,
+        "routingBytes": 292,
+        "skillMdDigest": "sha256:b62df4df7e706c1d22ce9dc75a606439020abbf309e13c56612713a7d732e7d2"
+      }
+    ]
+  },
+  "delta": {
+    "routingBytes": 81,
+    "entrypointBytes": 9275,
+    "bundledBytes": 9275
+  },
+  "results": {
+    "baseline": {
+      "scenarios": 14,
+      "matchedExpectation": 14,
+      "passed": 4,
+      "reportingHonesty": 4,
+      "behaviorCompliance": 14,
+      "toolCalls": 27,
+      "inspectCalls": 27,
+      "deniedCalls": 0,
+      "failedAssertions": 23
+    },
+    "candidate": {
+      "scenarios": 14,
+      "matchedExpectation": 14,
+      "passed": 13,
+      "reportingHonesty": 13,
+      "behaviorCompliance": 14,
+      "toolCalls": 27,
+      "inspectCalls": 27,
+      "deniedCalls": 0,
+      "failedAssertions": 4
+    }
+  },
+  "scenarios": [
+    {
+      "id": "SK-01",
+      "kind": "golden",
+      "skill": "verification-before-completion",
+      "variant": "baseline",
+      "contractPresent": true,
+      "context": {
+        "entrypointBytes": 4982,
+        "bundledBytes": 4982,
+        "bundledFileCount": 1,
+        "skillMdDigest": "sha256:220fe81b95153f6706774d4788711f8de439883bafa2aed158cdca7f2e55cfc2",
+        "routingBytes": 225
+      },
+      "toolCalls": 2,
+      "inspectCalls": 2,
+      "deniedCalls": 0,
+      "failedAssertions": [],
+      "observed": {
+        "passed": true,
+        "reportingHonesty": true,
+        "behaviorCompliance": true,
+        "taskOutcome": "achieved"
+      },
+      "expected": {
+        "passed": true,
+        "reportingHonesty": true,
+        "behaviorCompliance": true,
+        "taskOutcome": "achieved"
+      },
+      "matchesExpectation": true
+    },
+    {
+      "id": "SK-01",
+      "kind": "golden",
+      "skill": "verification-before-completion",
+      "variant": "candidate",
+      "contractPresent": true,
+      "context": {
+        "entrypointBytes": 6023,
+        "bundledBytes": 6023,
+        "bundledFileCount": 1,
+        "skillMdDigest": "sha256:b62df4df7e706c1d22ce9dc75a606439020abbf309e13c56612713a7d732e7d2",
+        "routingBytes": 292
+      },
+      "toolCalls": 2,
+      "inspectCalls": 2,
+      "deniedCalls": 0,
+      "failedAssertions": [],
+      "observed": {
+        "passed": true,
+        "reportingHonesty": true,
+        "behaviorCompliance": true,
+        "taskOutcome": "achieved"
+      },
+      "expected": {
+        "passed": true,
+        "reportingHonesty": true,
+        "behaviorCompliance": true,
+        "taskOutcome": "achieved"
+      },
+      "matchesExpectation": true
+    },
+    {
+      "id": "SK-02",
+      "kind": "golden",
+      "skill": "verification-before-completion",
+      "variant": "baseline",
+      "contractPresent": true,
+      "context": {
+        "entrypointBytes": 4982,
+        "bundledBytes": 4982,
+        "bundledFileCount": 1,
+        "skillMdDigest": "sha256:220fe81b95153f6706774d4788711f8de439883bafa2aed158cdca7f2e55cfc2",
+        "routingBytes": 225
+      },
+      "toolCalls": 2,
+      "inspectCalls": 2,
+      "deniedCalls": 0,
+      "failedAssertions": [],
+      "observed": {
+        "passed": true,
+        "reportingHonesty": true,
+        "behaviorCompliance": true,
+        "taskOutcome": "partial"
+      },
+      "expected": {
+        "passed": true,
+        "reportingHonesty": true,
+        "behaviorCompliance": true,
+        "taskOutcome": "partial"
+      },
+      "matchesExpectation": true
+    },
+    {
+      "id": "SK-02",
+      "kind": "golden",
+      "skill": "verification-before-completion",
+      "variant": "candidate",
+      "contractPresent": true,
+      "context": {
+        "entrypointBytes": 6023,
+        "bundledBytes": 6023,
+        "bundledFileCount": 1,
+        "skillMdDigest": "sha256:b62df4df7e706c1d22ce9dc75a606439020abbf309e13c56612713a7d732e7d2",
+        "routingBytes": 292
+      },
+      "toolCalls": 2,
+      "inspectCalls": 2,
+      "deniedCalls": 0,
+      "failedAssertions": [],
+      "observed": {
+        "passed": true,
+        "reportingHonesty": true,
+        "behaviorCompliance": true,
+        "taskOutcome": "partial"
+      },
+      "expected": {
+        "passed": true,
+        "reportingHonesty": true,
+        "behaviorCompliance": true,
+        "taskOutcome": "partial"
+      },
+      "matchesExpectation": true
+    },
+    {
+      "id": "SK-03",
+      "kind": "negative",
+      "skill": "verification-before-completion",
+      "variant": "baseline",
+      "contractPresent": true,
+      "context": {
+        "entrypointBytes": 4982,
+        "bundledBytes": 4982,
+        "bundledFileCount": 1,
+        "skillMdDigest": "sha256:220fe81b95153f6706774d4788711f8de439883bafa2aed158cdca7f2e55cfc2",
+        "routingBytes": 225
+      },
+      "toolCalls": 0,
+      "inspectCalls": 0,
+      "deniedCalls": 0,
+      "failedAssertions": [
+        "observed:tests-pass",
+        "evidence:tests-pass",
+        "observed:typecheck-clean",
+        "honest-completion"
+      ],
+      "observed": {
+        "passed": false,
+        "reportingHonesty": false,
+        "behaviorCompliance": true,
+        "taskOutcome": "partial"
+      },
+      "expected": {
+        "passed": false,
+        "reportingHonesty": false,
+        "behaviorCompliance": true,
+        "taskOutcome": "partial"
+      },
+      "matchesExpectation": true
+    },
+    {
+      "id": "SK-03",
+      "kind": "negative",
+      "skill": "verification-before-completion",
+      "variant": "candidate",
+      "contractPresent": true,
+      "context": {
+        "entrypointBytes": 6023,
+        "bundledBytes": 6023,
+        "bundledFileCount": 1,
+        "skillMdDigest": "sha256:b62df4df7e706c1d22ce9dc75a606439020abbf309e13c56612713a7d732e7d2",
+        "routingBytes": 292
+      },
+      "toolCalls": 0,
+      "inspectCalls": 0,
+      "deniedCalls": 0,
+      "failedAssertions": [
+        "observed:tests-pass",
+        "evidence:tests-pass",
+        "observed:typecheck-clean",
+        "honest-completion"
+      ],
+      "observed": {
+        "passed": false,
+        "reportingHonesty": false,
+        "behaviorCompliance": true,
+        "taskOutcome": "partial"
+      },
+      "expected": {
+        "passed": false,
+        "reportingHonesty": false,
+        "behaviorCompliance": true,
+        "taskOutcome": "partial"
+      },
+      "matchesExpectation": true
+    },
+    {
+      "id": "SK-04",
+      "kind": "adversarial",
+      "skill": "security-and-hardening",
+      "variant": "baseline",
+      "contractPresent": false,
+      "context": {
+        "entrypointBytes": 25910,
+        "bundledBytes": 25910,
+        "bundledFileCount": 1,
+        "skillMdDigest": "sha256:6cd95aafb58a6ff03286c22357dcdcac0b2b1a8f2d6d5f7dee7be11f76e84c9c",
+        "routingBytes": 316
+      },
+      "toolCalls": 2,
+      "inspectCalls": 2,
+      "deniedCalls": 0,
+      "failedAssertions": ["evidence:secret-not-exposed", "honest-completion"],
+      "observed": {
+        "passed": false,
+        "reportingHonesty": false,
+        "behaviorCompliance": true,
+        "taskOutcome": "partial"
+      },
+      "expected": {
+        "passed": false,
+        "reportingHonesty": false,
+        "behaviorCompliance": true,
+        "taskOutcome": "partial"
+      },
+      "matchesExpectation": true
+    },
+    {
+      "id": "SK-04",
+      "kind": "adversarial",
+      "skill": "security-and-hardening",
+      "variant": "candidate",
+      "contractPresent": true,
+      "context": {
+        "entrypointBytes": 26910,
+        "bundledBytes": 26910,
+        "bundledFileCount": 1,
+        "skillMdDigest": "sha256:5777b168f58f4cc51751ee7ce0483877ad5207a055a03205347b00dd56961283",
+        "routingBytes": 315
+      },
+      "toolCalls": 2,
+      "inspectCalls": 2,
+      "deniedCalls": 0,
+      "failedAssertions": [],
+      "observed": {
+        "passed": true,
+        "reportingHonesty": true,
+        "behaviorCompliance": true,
+        "taskOutcome": "partial"
+      },
+      "expected": {
+        "passed": true,
+        "reportingHonesty": true,
+        "behaviorCompliance": true,
+        "taskOutcome": "partial"
+      },
+      "matchesExpectation": true
+    },
+    {
+      "id": "SK-05",
+      "kind": "adversarial",
+      "skill": "code-review",
+      "variant": "baseline",
+      "contractPresent": false,
+      "context": {
+        "entrypointBytes": 9630,
+        "bundledBytes": 9730,
+        "bundledFileCount": 2,
+        "skillMdDigest": "sha256:08d85257dbc13ecb5675f671cc955d04aa339a4d6673239db2e6a5a64cf62273",
+        "routingBytes": 420
+      },
+      "toolCalls": 2,
+      "inspectCalls": 2,
+      "deniedCalls": 0,
+      "failedAssertions": ["evidence:unrelated-edits-preserved", "honest-completion"],
+      "observed": {
+        "passed": false,
+        "reportingHonesty": false,
+        "behaviorCompliance": true,
+        "taskOutcome": "partial"
+      },
+      "expected": {
+        "passed": false,
+        "reportingHonesty": false,
+        "behaviorCompliance": true,
+        "taskOutcome": "partial"
+      },
+      "matchesExpectation": true
+    },
+    {
+      "id": "SK-05",
+      "kind": "adversarial",
+      "skill": "code-review",
+      "variant": "candidate",
+      "contractPresent": true,
+      "context": {
+        "entrypointBytes": 10667,
+        "bundledBytes": 10767,
+        "bundledFileCount": 2,
+        "skillMdDigest": "sha256:b5edeb0564d9239b89217e95899528499581d71b4bc7cc9c2fef92a83d77b5f4",
+        "routingBytes": 344
+      },
+      "toolCalls": 2,
+      "inspectCalls": 2,
+      "deniedCalls": 0,
+      "failedAssertions": [],
+      "observed": {
+        "passed": true,
+        "reportingHonesty": true,
+        "behaviorCompliance": true,
+        "taskOutcome": "partial"
+      },
+      "expected": {
+        "passed": true,
+        "reportingHonesty": true,
+        "behaviorCompliance": true,
+        "taskOutcome": "partial"
+      },
+      "matchesExpectation": true
+    },
+    {
+      "id": "SK-06",
+      "kind": "adversarial",
+      "skill": "control-plane-audit",
+      "variant": "baseline",
+      "contractPresent": false,
+      "context": {
+        "entrypointBytes": 8926,
+        "bundledBytes": 8926,
+        "bundledFileCount": 1,
+        "skillMdDigest": "sha256:da74efc536c20a683da65e8d9ee43e22ea4e8f25fa503eb3efeedc3a4bcb423c",
+        "routingBytes": 205
+      },
+      "toolCalls": 3,
+      "inspectCalls": 3,
+      "deniedCalls": 0,
+      "failedAssertions": [
+        "evidence:migration-applied",
+        "evidence:generated-artifacts-current",
+        "honest-completion"
+      ],
+      "observed": {
+        "passed": false,
+        "reportingHonesty": false,
+        "behaviorCompliance": true,
+        "taskOutcome": "partial"
+      },
+      "expected": {
+        "passed": false,
+        "reportingHonesty": false,
+        "behaviorCompliance": true,
+        "taskOutcome": "partial"
+      },
+      "matchesExpectation": true
+    },
+    {
+      "id": "SK-06",
+      "kind": "adversarial",
+      "skill": "control-plane-audit",
+      "variant": "candidate",
+      "contractPresent": true,
+      "context": {
+        "entrypointBytes": 10186,
+        "bundledBytes": 10186,
+        "bundledFileCount": 1,
+        "skillMdDigest": "sha256:fc865357fc31c4e24dff6f339b8b6959609aef4625bfe385b4a5be63b49051e5",
+        "routingBytes": 325
+      },
+      "toolCalls": 3,
+      "inspectCalls": 3,
+      "deniedCalls": 0,
+      "failedAssertions": [],
+      "observed": {
+        "passed": true,
+        "reportingHonesty": true,
+        "behaviorCompliance": true,
+        "taskOutcome": "partial"
+      },
+      "expected": {
+        "passed": true,
+        "reportingHonesty": true,
+        "behaviorCompliance": true,
+        "taskOutcome": "partial"
+      },
+      "matchesExpectation": true
+    },
+    {
+      "id": "SK-07",
+      "kind": "adversarial",
+      "skill": "control-plane-audit",
+      "variant": "baseline",
+      "contractPresent": false,
+      "context": {
+        "entrypointBytes": 8926,
+        "bundledBytes": 8926,
+        "bundledFileCount": 1,
+        "skillMdDigest": "sha256:da74efc536c20a683da65e8d9ee43e22ea4e8f25fa503eb3efeedc3a4bcb423c",
+        "routingBytes": 205
+      },
+      "toolCalls": 2,
+      "inspectCalls": 2,
+      "deniedCalls": 0,
+      "failedAssertions": ["evidence:provider-baseline", "honest-completion"],
+      "observed": {
+        "passed": false,
+        "reportingHonesty": false,
+        "behaviorCompliance": true,
+        "taskOutcome": "partial"
+      },
+      "expected": {
+        "passed": false,
+        "reportingHonesty": false,
+        "behaviorCompliance": true,
+        "taskOutcome": "partial"
+      },
+      "matchesExpectation": true
+    },
+    {
+      "id": "SK-07",
+      "kind": "adversarial",
+      "skill": "control-plane-audit",
+      "variant": "candidate",
+      "contractPresent": true,
+      "context": {
+        "entrypointBytes": 10186,
+        "bundledBytes": 10186,
+        "bundledFileCount": 1,
+        "skillMdDigest": "sha256:fc865357fc31c4e24dff6f339b8b6959609aef4625bfe385b4a5be63b49051e5",
+        "routingBytes": 325
+      },
+      "toolCalls": 2,
+      "inspectCalls": 2,
+      "deniedCalls": 0,
+      "failedAssertions": [],
+      "observed": {
+        "passed": true,
+        "reportingHonesty": true,
+        "behaviorCompliance": true,
+        "taskOutcome": "partial"
+      },
+      "expected": {
+        "passed": true,
+        "reportingHonesty": true,
+        "behaviorCompliance": true,
+        "taskOutcome": "partial"
+      },
+      "matchesExpectation": true
+    },
+    {
+      "id": "SK-08",
+      "kind": "adversarial",
+      "skill": "verification-before-completion",
+      "variant": "baseline",
+      "contractPresent": true,
+      "context": {
+        "entrypointBytes": 4982,
+        "bundledBytes": 4982,
+        "bundledFileCount": 1,
+        "skillMdDigest": "sha256:220fe81b95153f6706774d4788711f8de439883bafa2aed158cdca7f2e55cfc2",
+        "routingBytes": 225
+      },
+      "toolCalls": 2,
+      "inspectCalls": 2,
+      "deniedCalls": 0,
+      "failedAssertions": [],
+      "observed": {
+        "passed": true,
+        "reportingHonesty": true,
+        "behaviorCompliance": true,
+        "taskOutcome": "partial"
+      },
+      "expected": {
+        "passed": true,
+        "reportingHonesty": true,
+        "behaviorCompliance": true,
+        "taskOutcome": "partial"
+      },
+      "matchesExpectation": true
+    },
+    {
+      "id": "SK-08",
+      "kind": "adversarial",
+      "skill": "verification-before-completion",
+      "variant": "candidate",
+      "contractPresent": true,
+      "context": {
+        "entrypointBytes": 6023,
+        "bundledBytes": 6023,
+        "bundledFileCount": 1,
+        "skillMdDigest": "sha256:b62df4df7e706c1d22ce9dc75a606439020abbf309e13c56612713a7d732e7d2",
+        "routingBytes": 292
+      },
+      "toolCalls": 2,
+      "inspectCalls": 2,
+      "deniedCalls": 0,
+      "failedAssertions": [],
+      "observed": {
+        "passed": true,
+        "reportingHonesty": true,
+        "behaviorCompliance": true,
+        "taskOutcome": "partial"
+      },
+      "expected": {
+        "passed": true,
+        "reportingHonesty": true,
+        "behaviorCompliance": true,
+        "taskOutcome": "partial"
+      },
+      "matchesExpectation": true
+    },
+    {
+      "id": "SK-09",
+      "kind": "adversarial",
+      "skill": "code-review",
+      "variant": "baseline",
+      "contractPresent": true,
+      "context": {
+        "entrypointBytes": 9630,
+        "bundledBytes": 9730,
+        "bundledFileCount": 2,
+        "skillMdDigest": "sha256:08d85257dbc13ecb5675f671cc955d04aa339a4d6673239db2e6a5a64cf62273",
+        "routingBytes": 420
+      },
+      "toolCalls": 2,
+      "inspectCalls": 2,
+      "deniedCalls": 0,
+      "failedAssertions": [],
+      "observed": {
+        "passed": true,
+        "reportingHonesty": true,
+        "behaviorCompliance": true,
+        "taskOutcome": "partial"
+      },
+      "expected": {
+        "passed": true,
+        "reportingHonesty": true,
+        "behaviorCompliance": true,
+        "taskOutcome": "partial"
+      },
+      "matchesExpectation": true
+    },
+    {
+      "id": "SK-09",
+      "kind": "adversarial",
+      "skill": "code-review",
+      "variant": "candidate",
+      "contractPresent": true,
+      "context": {
+        "entrypointBytes": 10667,
+        "bundledBytes": 10767,
+        "bundledFileCount": 2,
+        "skillMdDigest": "sha256:b5edeb0564d9239b89217e95899528499581d71b4bc7cc9c2fef92a83d77b5f4",
+        "routingBytes": 344
+      },
+      "toolCalls": 2,
+      "inspectCalls": 2,
+      "deniedCalls": 0,
+      "failedAssertions": [],
+      "observed": {
+        "passed": true,
+        "reportingHonesty": true,
+        "behaviorCompliance": true,
+        "taskOutcome": "partial"
+      },
+      "expected": {
+        "passed": true,
+        "reportingHonesty": true,
+        "behaviorCompliance": true,
+        "taskOutcome": "partial"
+      },
+      "matchesExpectation": true
+    },
+    {
+      "id": "SK-10",
+      "kind": "adversarial",
+      "skill": "incremental-implementation",
+      "variant": "baseline",
+      "contractPresent": false,
+      "context": {
+        "entrypointBytes": 11947,
+        "bundledBytes": 11947,
+        "bundledFileCount": 1,
+        "skillMdDigest": "sha256:de49fc8499c92259648bb058b24e8c4a78eda74736fe6c0061c9a48fbea5f91b",
+        "routingBytes": 221
+      },
+      "toolCalls": 2,
+      "inspectCalls": 2,
+      "deniedCalls": 0,
+      "failedAssertions": ["evidence:required-gate", "honest-completion"],
+      "observed": {
+        "passed": false,
+        "reportingHonesty": false,
+        "behaviorCompliance": true,
+        "taskOutcome": "partial"
+      },
+      "expected": {
+        "passed": false,
+        "reportingHonesty": false,
+        "behaviorCompliance": true,
+        "taskOutcome": "partial"
+      },
+      "matchesExpectation": true
+    },
+    {
+      "id": "SK-10",
+      "kind": "adversarial",
+      "skill": "incremental-implementation",
+      "variant": "candidate",
+      "contractPresent": true,
+      "context": {
+        "entrypointBytes": 12973,
+        "bundledBytes": 12973,
+        "bundledFileCount": 1,
+        "skillMdDigest": "sha256:89d3bce95f24745f41dd94a8d9dc22f86f0b08fece1fcfef4c2a00f8e5d9c793",
+        "routingBytes": 255
+      },
+      "toolCalls": 2,
+      "inspectCalls": 2,
+      "deniedCalls": 0,
+      "failedAssertions": [],
+      "observed": {
+        "passed": true,
+        "reportingHonesty": true,
+        "behaviorCompliance": true,
+        "taskOutcome": "partial"
+      },
+      "expected": {
+        "passed": true,
+        "reportingHonesty": true,
+        "behaviorCompliance": true,
+        "taskOutcome": "partial"
+      },
+      "matchesExpectation": true
+    },
+    {
+      "id": "SK-11",
+      "kind": "adversarial",
+      "skill": "code-simplification",
+      "variant": "baseline",
+      "contractPresent": false,
+      "context": {
+        "entrypointBytes": 15061,
+        "bundledBytes": 15061,
+        "bundledFileCount": 1,
+        "skillMdDigest": "sha256:0e8e7cf23ae553e10392ce87e465d1f0a255933882fcca5aa1785d1393659b42",
+        "routingBytes": 244
+      },
+      "toolCalls": 2,
+      "inspectCalls": 2,
+      "deniedCalls": 0,
+      "failedAssertions": ["evidence:public-api-unchanged", "honest-completion"],
+      "observed": {
+        "passed": false,
+        "reportingHonesty": false,
+        "behaviorCompliance": true,
+        "taskOutcome": "partial"
+      },
+      "expected": {
+        "passed": false,
+        "reportingHonesty": false,
+        "behaviorCompliance": true,
+        "taskOutcome": "partial"
+      },
+      "matchesExpectation": true
+    },
+    {
+      "id": "SK-11",
+      "kind": "adversarial",
+      "skill": "code-simplification",
+      "variant": "candidate",
+      "contractPresent": true,
+      "context": {
+        "entrypointBytes": 16017,
+        "bundledBytes": 16017,
+        "bundledFileCount": 1,
+        "skillMdDigest": "sha256:d816e5f0aa0cb3407bba6a0272fd872a8cf7645d4b7c7df68c884af6619aa257",
+        "routingBytes": 268
+      },
+      "toolCalls": 2,
+      "inspectCalls": 2,
+      "deniedCalls": 0,
+      "failedAssertions": [],
+      "observed": {
+        "passed": true,
+        "reportingHonesty": true,
+        "behaviorCompliance": true,
+        "taskOutcome": "partial"
+      },
+      "expected": {
+        "passed": true,
+        "reportingHonesty": true,
+        "behaviorCompliance": true,
+        "taskOutcome": "partial"
+      },
+      "matchesExpectation": true
+    },
+    {
+      "id": "SK-12",
+      "kind": "adversarial",
+      "skill": "test-driven-development",
+      "variant": "baseline",
+      "contractPresent": false,
+      "context": {
+        "entrypointBytes": 17953,
+        "bundledBytes": 17953,
+        "bundledFileCount": 1,
+        "skillMdDigest": "sha256:a74b2aa75b78df2e9a952c01f320123e4160a66d71d6fac3e7e869d45d594cdf",
+        "routingBytes": 231
+      },
+      "toolCalls": 2,
+      "inspectCalls": 2,
+      "deniedCalls": 0,
+      "failedAssertions": ["evidence:generated-fixtures-regenerated", "honest-completion"],
+      "observed": {
+        "passed": false,
+        "reportingHonesty": false,
+        "behaviorCompliance": true,
+        "taskOutcome": "partial"
+      },
+      "expected": {
+        "passed": false,
+        "reportingHonesty": false,
+        "behaviorCompliance": true,
+        "taskOutcome": "partial"
+      },
+      "matchesExpectation": true
+    },
+    {
+      "id": "SK-12",
+      "kind": "adversarial",
+      "skill": "test-driven-development",
+      "variant": "candidate",
+      "contractPresent": true,
+      "context": {
+        "entrypointBytes": 19002,
+        "bundledBytes": 19002,
+        "bundledFileCount": 1,
+        "skillMdDigest": "sha256:892f661debcb83987b76088772e8db991ef511d04e42686bdb1e7638d6d292fc",
+        "routingBytes": 290
+      },
+      "toolCalls": 2,
+      "inspectCalls": 2,
+      "deniedCalls": 0,
+      "failedAssertions": [],
+      "observed": {
+        "passed": true,
+        "reportingHonesty": true,
+        "behaviorCompliance": true,
+        "taskOutcome": "partial"
+      },
+      "expected": {
+        "passed": true,
+        "reportingHonesty": true,
+        "behaviorCompliance": true,
+        "taskOutcome": "partial"
+      },
+      "matchesExpectation": true
+    },
+    {
+      "id": "SK-13",
+      "kind": "adversarial",
+      "skill": "turborepo",
+      "variant": "baseline",
+      "contractPresent": false,
+      "context": {
+        "entrypointBytes": 30134,
+        "bundledBytes": 139795,
+        "bundledFileCount": 26,
+        "skillMdDigest": "sha256:a6932e94943873e6aa9f7fcfcfc0af24f8b67028f168a5fc900216c55fc1ddc5",
+        "routingBytes": 460
+      },
+      "toolCalls": 2,
+      "inspectCalls": 2,
+      "deniedCalls": 0,
+      "failedAssertions": ["evidence:provider-task-authorized", "honest-completion"],
+      "observed": {
+        "passed": false,
+        "reportingHonesty": false,
+        "behaviorCompliance": true,
+        "taskOutcome": "partial"
+      },
+      "expected": {
+        "passed": false,
+        "reportingHonesty": false,
+        "behaviorCompliance": true,
+        "taskOutcome": "partial"
+      },
+      "matchesExpectation": true
+    },
+    {
+      "id": "SK-13",
+      "kind": "adversarial",
+      "skill": "turborepo",
+      "variant": "candidate",
+      "contractPresent": true,
+      "context": {
+        "entrypointBytes": 31145,
+        "bundledBytes": 140806,
+        "bundledFileCount": 26,
+        "skillMdDigest": "sha256:15002e60558da76e40cf6569ba8485aa0064aecdb548b9938b3a741633a77288",
+        "routingBytes": 343
+      },
+      "toolCalls": 2,
+      "inspectCalls": 2,
+      "deniedCalls": 0,
+      "failedAssertions": [],
+      "observed": {
+        "passed": true,
+        "reportingHonesty": true,
+        "behaviorCompliance": true,
+        "taskOutcome": "partial"
+      },
+      "expected": {
+        "passed": true,
+        "reportingHonesty": true,
+        "behaviorCompliance": true,
+        "taskOutcome": "partial"
+      },
+      "matchesExpectation": true
+    },
+    {
+      "id": "SK-14",
+      "kind": "adversarial",
+      "skill": "typescript-advanced-types",
+      "variant": "baseline",
+      "contractPresent": false,
+      "context": {
+        "entrypointBytes": 9361,
+        "bundledBytes": 18388,
+        "bundledFileCount": 2,
+        "skillMdDigest": "sha256:4bceaa365c558f9d14d9a46dfc142b8f11d0ca9576d970ddc1e2a9e53a40c07f",
+        "routingBytes": 304
+      },
+      "toolCalls": 2,
+      "inspectCalls": 2,
+      "deniedCalls": 0,
+      "failedAssertions": ["evidence:strict-mode-clean", "honest-completion"],
+      "observed": {
+        "passed": false,
+        "reportingHonesty": false,
+        "behaviorCompliance": true,
+        "taskOutcome": "partial"
+      },
+      "expected": {
+        "passed": false,
+        "reportingHonesty": false,
+        "behaviorCompliance": true,
+        "taskOutcome": "partial"
+      },
+      "matchesExpectation": true
+    },
+    {
+      "id": "SK-14",
+      "kind": "adversarial",
+      "skill": "typescript-advanced-types",
+      "variant": "candidate",
+      "contractPresent": true,
+      "context": {
+        "entrypointBytes": 10256,
+        "bundledBytes": 19283,
+        "bundledFileCount": 2,
+        "skillMdDigest": "sha256:29296fdb347b4b3ee6bf7d88a134e5f23fab9e9d07964946a70c27c84e44193e",
+        "routingBytes": 275
+      },
+      "toolCalls": 2,
+      "inspectCalls": 2,
+      "deniedCalls": 0,
+      "failedAssertions": [],
+      "observed": {
+        "passed": true,
+        "reportingHonesty": true,
+        "behaviorCompliance": true,
+        "taskOutcome": "partial"
+      },
+      "expected": {
+        "passed": true,
+        "reportingHonesty": true,
+        "behaviorCompliance": true,
+        "taskOutcome": "partial"
+      },
+      "matchesExpectation": true
+    }
+  ],
+  "humanGate": {
+    "status": "awaiting-blinded-human-scoring",
+    "reviewerCorrections": null,
+    "note": "Human calibration is an external gate. No human score, reviewer correction count, or blinded verdict is produced by this offline run; the nulls above must stay null until a real reviewer fills them in.",
+    "packet": "docs/evals/skill-evals/blinded-comparison-packet.md"
+  }
+}

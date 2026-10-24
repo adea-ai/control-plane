@@ -288,7 +288,7 @@ describe('Control Plane SDK public client', () => {
       dependencies: {
         '@control-plane/contracts': 'workspace:^',
         '@control-plane/runtime-sdk': 'workspace:^',
-        zod: '4.6.5',
+        zod: '4.6.6',
       },
       publishConfig: { access: 'public', provenance: true },
     })
@@ -300,7 +300,7 @@ describe('Control Plane SDK public client', () => {
     expect(manifest.version).toMatch(/^\d+\.\d+\.\d+$/)
     expect(manifest.version).toBe(releaseManifest['packages/control-sdk'])
     expect(manifest.private).toBeUndefined()
-    expect(PublicContractManifest.current).toEqual({ major: 3, minor: 0 })
+    expect(PublicContractManifest.current).toEqual({ major: 3, minor: 1 })
     for (const prohibited of [
       'database',
       'drizzle',

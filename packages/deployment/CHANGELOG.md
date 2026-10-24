@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.10.8](https://github.com/adea-ai/control-plane/compare/deployment-v1.10.7...deployment-v1.10.8) (2026-10-22)
+
+
+### Tests
+
+* **deployment:** qualify retention scheduler cadence ([#194](https://github.com/adea-ai/control-plane/issues/194)) ([#1242](https://github.com/adea-ai/control-plane/issues/1242)) ([dc66373](https://github.com/adea-ai/control-plane/commit/dc66373d50b64af2182425533ca1dc9f9e437f6b))
+
 ## [1.10.7](https://github.com/adea-ai/control-plane/compare/deployment-v1.10.6...deployment-v1.10.7) (2026-10-17)
 
 

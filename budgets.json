@@ -1,14 +1,25 @@
 {
   "schemaVersion": 1,
-  "comment": "M13 #405 regression budgets. Ceilings are reviewed ceilings, not targets — changes are a reviewable diff. Lane values are wall-clock seconds measured by scripts/run-bun-test-group.mjs on the CI runner.",
+  "comment": "M13 #405 regression budgets. Ceilings are reviewed ceilings, not targets \u2014 changes are a reviewable diff. Lane values are wall-clock seconds measured by scripts/run-bun-test-group.mjs on the CI runner. The build lane is declared here so its ceiling is MEASURABLE by scripts/check-budgets.mjs; its CI enforcement point is the code-foundry runtime, which owns that lane.",
   "lanes": {
-    "unit": { "ceilingSeconds": 480, "baselineSeconds": 300 },
+    "unit": {
+      "ceilingSeconds": 480,
+      "baselineSeconds": 300
+    },
     "e2e": {
       "ceilingSeconds": 120,
       "baselineSeconds": 53,
       "comment": "The E2E lane runs as two shards (e2e_shards in .github/code-foundry.yml), so the value the runner measures is one shard, not the whole lane. The ceiling is the unchanged reviewed lane ceiling: the lane's wall clock is the slower shard and stays inside it. The baseline is the measured per-shard projection: the per-file costs measured in runs 39346283807 and 39263107268 sum to 52.3s per shard, and the whole lane measured 82.7s on main and 74.8-80.7s locally."
     },
-    "smoke": { "ceilingSeconds": 90, "baselineSeconds": 68 }
+    "smoke": {
+      "ceilingSeconds": 90,
+      "baselineSeconds": 68
+    },
+    "build": {
+      "ceilingSeconds": 300,
+      "baselineSeconds": 254,
+      "comment": "The CI Build lane's wall clock. The lane itself is defined by the code-foundry runtime, so this repository can MEASURE the ceiling (scripts/check-budgets.mjs lane --group build --seconds <n>) but its CI enforcement point is that external runtime. The baseline is the 254 s measured in Validation run 35462414764 (#405 M13 audit)."
+    }
   },
   "dist": {
     "totalMbCeiling": 12,

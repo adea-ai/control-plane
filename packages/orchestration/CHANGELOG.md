@@ -1,5 +1,34 @@
 # Changelog
 
+## [1.13.1](https://github.com/adea-ai/control-plane/compare/orchestration-v1.13.0...orchestration-v1.13.1) (2026-10-24)
+
+
+### Bug Fixes
+
+* reconcile audit identities and declaration budget ([#1303](https://github.com/adea-ai/control-plane/issues/1303)) ([b65e2c7](https://github.com/adea-ai/control-plane/commit/b65e2c770cd5d2fa7a3007bdff71613e18748860))
+* reduce dependency closure and preserve budget checks ([#1270](https://github.com/adea-ai/control-plane/issues/1270)) ([01fa230](https://github.com/adea-ai/control-plane/commit/01fa230233cc796b6c7f93d020006212b89631f6))
+
+## [1.13.0](https://github.com/adea-ai/control-plane/compare/orchestration-v1.12.0...orchestration-v1.13.0) (2026-10-23)
+
+
+### Features
+
+* **pi-durable:** compose child reads and drain recovery ([#1204](https://github.com/adea-ai/control-plane/issues/1204)) ([2f1f9d1](https://github.com/adea-ai/control-plane/commit/2f1f9d1a4da48db09e2c8ee9dc08625fbb2bc7a5))
+
+## [1.12.0](https://github.com/adea-ai/control-plane/compare/orchestration-v1.11.0...orchestration-v1.12.0) (2026-10-23)
+
+
+### Features
+
+* child-progress-outcomes-1019 ([#1273](https://github.com/adea-ai/control-plane/issues/1273)) ([ac39ab9](https://github.com/adea-ai/control-plane/commit/ac39ab9fde85bf52f3fd60aebd1512c3fe919359))
+
+## [1.11.0](https://github.com/adea-ai/control-plane/compare/orchestration-v1.10.3...orchestration-v1.11.0) (2026-10-22)
+
+
+### Features
+
+* **child-progress:** recover authorized reference and cost evidence ([#1019](https://github.com/adea-ai/control-plane/issues/1019)) ([#1236](https://github.com/adea-ai/control-plane/issues/1236)) ([a996dc1](https://github.com/adea-ai/control-plane/commit/a996dc19d588610757ba270ad7b9876e406d1f8b))
+
 ## [1.10.3](https://github.com/adea-ai/control-plane/compare/orchestration-v1.10.2...orchestration-v1.10.3) (2026-10-19)
 
 

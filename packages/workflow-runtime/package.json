@@ -1,6 +1,6 @@
 {
   "name": "@control-plane/workflow-runtime",
-  "version": "1.9.1",
+  "version": "1.9.2",
   "private": true,
   "files": [
     "dist"
@@ -30,7 +30,7 @@
     "@control-plane/orchestration": "workspace:*",
     "@control-plane/runtime-sdk": "workspace:*",
     "@restatedev/restate-sdk": "1.17.2",
-    "zod": "4.6.5"
+    "zod": "4.6.6"
   },
   "devDependencies": {
     "@control-plane/sqlite-persistence": "workspace:*"

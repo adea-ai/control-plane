@@ -31,6 +31,50 @@ class RecordingMetricAdapter {
   }
 }
 
+describe('the managed cloud worker composition', () => {
+  test('the real composition wires the deployment per-model harness map into the router', async () => {
+    const configuration = loadManagedCloudConfiguration(
+      {
+        ...managedCloudEnvironment(),
+        CONTROL_PLANE_CLOUD_RUNTIME: 'remote',
+        CONTROL_PLANE_HARNESS_BY_MODEL: '{"deepseek-flash":"pi"}',
+      },
+      'workflow-worker'
+    )
+    const composition = createManagedCloudWorkflowWorkerComposition(
+      configuration,
+      undefined,
+      undefined,
+      () => ({ database: {}, check: async () => undefined, close: async () => undefined })
+    )
+    const plan = createExecutionPlanTestFixture()
+    // The map reached the real router: with a map configured an execution
+    // without a model is denied before any discovery happens, which is the
+    // fail-closed map policy and not a helper-only behaviour.
+    await expect(
+      composition.runtimeRouter.resolve({
+        execution: {
+          executionId: 'exe_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+          state: 'queued',
+          version: 2,
+          correlation: plan.correlation,
+          executionPlan: {
+            executionPlanId: plan.executionPlanId,
+            contentDigest: plan.contentDigest,
+            schemaVersion: plan.schemaVersion,
+          },
+          attemptCount: 0,
+          acceptedAt: '2026-08-28T11:59:59.000Z',
+          queuedAt: '2026-08-28T12:00:00.000Z',
+          createdAt: '2026-08-28T11:59:59.000Z',
+          updatedAt: '2026-08-28T12:00:00.000Z',
+        },
+        executionPlan: plan,
+      })
+    ).rejects.toMatchObject({ code: 'HARNESS_MAP_MODEL_ABSENT' })
+  })
+})
+
 describe('workflow worker telemetry', () => {
   test('wires explicit remote execution and discovery without a certification runtime', () => {
     const configuration = loadManagedCloudConfiguration(
@@ -128,7 +172,7 @@ describe('workflow worker telemetry', () => {
     await runtime.shutdown('test-complete')
   })
 
-  test('composes durable activities from the managed Cloud Neon boundary', () => {
+  test('composes durable activities from the managed Cloud PostgreSQL boundary', () => {
     const composition = createManagedCloudWorkflowWorkerComposition(
       loadManagedCloudConfiguration(managedCloudEnvironment(), 'workflow-worker'),
       runtimePort(),
@@ -360,7 +404,7 @@ describe('workflow worker telemetry', () => {
     expect(adapter.emissions).toEqual([])
   })
 
-  test('probes and closes Neon around managed Cloud worker startup', async () => {
+  test('probes and closes PostgreSQL around managed Cloud worker startup', async () => {
     const processAdapter = new FakeProcessAdapter()
     const lifecycle = []
     const endpoint = {
@@ -386,14 +430,14 @@ describe('workflow worker telemetry', () => {
     expect(lifecycle).toEqual(['checked', 'endpoint', 'postgres'])
   })
 
-  test('composes and closes the staging certification runtime through R2', async () => {
+  test('composes and closes the disposable test certification runtime through R2', async () => {
     const lifecycle = []
     const endpoint = {
       run: async () => undefined,
       shutdown: async () => lifecycle.push('endpoint'),
     }
     const runtime = await start({
-      environment: managedCloudEnvironment(),
+      environment: { ...managedCloudEnvironment(), APP_ENV: 'test' },
       logger: { write: () => undefined },
       processAdapter: new FakeProcessAdapter(),
       restateEndpointFactory: { create: async () => endpoint },
@@ -490,12 +534,12 @@ function runtimePort() {
 
 function managedCloudEnvironment() {
   return {
-    APP_ENV: 'staging',
+    APP_ENV: 'production',
     COMMIT_SHA: 'abc123',
     INSTANCE_ID: 'worker-1',
     SERVICE_VERSION: '1.0.0',
     DATABASE_URL:
-      'postgresql://app:database-secret@example.neon.tech/control_plane?sslmode=require',
+      'postgresql://app:database-secret@postgres.example.invalid/control_plane?sslmode=require',
     CONTROL_PLANE_SECRET_ENCRYPTION_KEY:
       '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
     RESTATE_REQUEST_IDENTITY_PUBLIC_KEY: 'publickeyv1_w7YHemBctH5Ck2nQRQ47iBBqhNHy4FV7t2Usbye2A6f',

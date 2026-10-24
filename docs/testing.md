@@ -4,7 +4,7 @@ The repository uses Bun's native test runner. Keep tests deterministic, isolate 
 
 ## Milestone ownership
 
-- **M9** finishes and certifies the managed-cloud Railway + Neon + R2 + Restate profile.
+- **M9** finishes and certifies the managed-cloud Railway + PostgreSQL + R2 + Restate profile.
 - **M10** adds Local and Hosted deployment adapters/conformance.
 - **M11** rebuilds the complete validation program into deterministic release lanes and independently reruns all three profiles.
 - **M12** is the first live Adea/optional Cortana cross-product release gate; CP-M12 also includes the Local/Hosted deployment-profile substrate and the cross-product certification/release built on it, per the [2026-09-24 owner decision in #195](https://github.com/adea-ai/control-plane/issues/195#issuecomment-5822863459).
@@ -36,7 +36,7 @@ The following commands describe the repository as it exists today. M9.7/M9.8/M10
   replace the deployment topology.
 - `bun run test:m5-acceptance` runs the Runtime Gateway security, delivery, recovery, and protocol matrix.
 - `bun run test:m9-acceptance` runs the production-hardening/security/load evidence. It remains a
-  local gate; M9.6 additionally completed the required live Railway staging certification.
+  local gate; M9.6 additionally completed the required live Railway sandbox certification.
 - `bun run test:m10-conformance` runs the versioned Cloud/Local/Hosted semantic matrix plus the
   profile export/import, rollback, idempotency, and secret-canary suites.
 - `bun run test:m11-standalone` is the credential-free clean-state standalone matrix. It builds the
@@ -44,7 +44,7 @@ The following commands describe the repository as it exists today. M9.7/M9.8/M10
   managed-Pi/ACP, tools/models/sandbox, orchestration, and portability suites, then executes both
   supported Local adapter families through `DirectLocalRuntimeTransport`, the Local composition,
   SQLite persistence, filesystem Artifacts, and a restart/reopen recovery check. This lane never
-  starts a Runtime Gateway process and does not require Railway, Neon, R2, PostgreSQL, Cortana, or
+  starts a Runtime Gateway process and does not require Railway, PostgreSQL, R2, PostgreSQL, Cortana, or
   reusable provider credentials. It also reruns the no-provider, disabled-provider, fake alternate,
   repository-local Cortana-compatible fixture, encrypted relay, profile migration, and deployment
   conformance suites. Profile-portability's ordinary test command explicitly excludes PostgreSQL
@@ -66,7 +66,7 @@ The following commands describe the repository as it exists today. M9.7/M9.8/M10
 - `bun run test:recovery-matrix` runs current disposable recovery fixtures.
 
 The Railway manifest validator checks repository-owned service composition. A green local validation
-is not Railway staging evidence; the completed M9.6 activation record is the live reference.
+is not Railway sandbox evidence; the completed M9.6 activation record is the live reference.
 
 ## M9 validation record
 
@@ -74,11 +74,11 @@ M9.7–M9.13 established a reproducible managed-cloud validation path covering:
 
 - dependency-aware Railway service builds from a clean clone;
 - repository-owned Railway service configuration;
-- explicit Neon Drizzle migration and schema-version verification;
+- explicit PostgreSQL Drizzle migration and schema-version verification;
 - least-privilege runtime versus migration database authority;
 - Restate lifecycle/restart/redeploy/recovery;
 - R2 adapter operations;
-- staging-only Cloud certification execution with deterministic R2 write/get/head and replay;
+- sandbox-only Cloud certification execution with deterministic R2 write/get/head and replay;
 - Railway private service networking/public ingress boundaries;
 - service authentication/secrets/configuration;
 - health/readiness/draining;
@@ -86,7 +86,7 @@ M9.7–M9.13 established a reproducible managed-cloud validation path covering:
 - deterministic Profile/Skill resolution;
 - ContextProvider policy/cache/failure behavior;
 - operational retry/heartbeat/expiry/retention/payload defaults;
-- M9.1–M9.5 observability/security/recovery/performance evidence rerun against the real staging candidate.
+- M9.1–M9.5 observability/security/recovery/performance evidence rerun against the real sandbox candidate.
 
 M9.6 #73 closed after the complete bounded live Cloud path passed. Production certification remains
 a separate release gate.
@@ -111,10 +111,10 @@ M10 profile-aware conformance covers:
   profile, normalized digest, and divergence result for every case.
 
 PostgreSQL-backed cases run against an isolated database on the pinned local PostgreSQL fixture in
-the required integration and migration/profile lanes. The bounded Neon provider-compatibility proof
+the required integration and migration/profile lanes. The bounded PostgreSQL provider-compatibility proof
 is a separate live-provider check; it does not substitute for those cases. SQLite-backed cases use
 disposable database files. An in-memory cloud baseline is contract evidence only and never
-substitutes for the live PostgreSQL lane. Neon compatibility branches expire automatically and are
+substitutes for the live PostgreSQL lane. PostgreSQL compatibility branches expire automatically and are
 deleted after evidence is recorded.
 
 The required Code Foundry `Test/Integration` lane builds once, starts one runner-owned disposable
@@ -137,30 +137,30 @@ bounds each slice, and executes those names through Bun using the runner's actua
 reject missing or duplicate selection. The local integration lane runs
 cloud-remote and PostgreSQL recovery drills once after all shards finish.
 
-The trusted-main Neon lane creates one short-lived branch and checks pooled and direct application
+The trusted-main PostgreSQL lane creates one short-lived branch and checks pooled and direct application
 connections plus the direct migrator role, TLS, and transaction round trips. The compatibility
 check also runs a transaction as the migrator that creates a uniquely named table in `app`, writes
 and reads a marker, then drops the table. This narrow DDL probe checks provider permissions; it does
 not apply the application migration set. The lane does not run the portable integration suite,
-migrations, build, profile matrix, or Hosted Restate qualification on Neon. Its five-minute budget
+migrations, build, profile matrix, or Hosted Restate qualification on PostgreSQL. Its five-minute budget
 starts before branch creation and ends after exact branch lookup, deletion, and absence verification;
 the compatibility command itself has a 90-second timeout. A successful baseline requires the
 compatibility proof and every cleanup/budget step to succeed.
-Complete historical three-shard Neon runs remain accepted as stronger baselines while they are in
+Complete historical three-shard PostgreSQL runs remain accepted as stronger baselines while they are in
 the classifier lookback window. New full-suite files still need their single local owner, recorded
 in `tests/integration-shards.test.mjs`.
 The complete database budget-admission file runs on shard 1. In trusted-main run
 `37177353771`, that file took 955.20 seconds on shard 2, whose integration step took
 2,602 seconds without retries. Moving the file uses shard 1's spare capacity while
 keeping three branch owners and every case. This addresses imbalance near the job
-deadline; actual runner billing and Neon cost savings remain unmeasured. See
-[the timing evidence](evidence/m11-neon-budget-balance-2026-10-04.md).
+deadline; actual runner billing and PostgreSQL cost savings remain unmeasured. See
+[the timing evidence](evidence/m11-postgres-budget-balance-2026-10-04.md).
 The historical 2026-10-11 main run reached shard 2's 45-minute limit after its
 foundation, retention, and partial usage-store work. A shard-rebalance proposal
 then moved the measured tail files to shard 1 and the unmeasured workspace-scope
 file to shard 3; its censored durations remain lower bounds pending a complete
 hosted run. This is historical partition evidence, not the current trusted-main
-Neon workflow. See [the shard rebalance evidence](evidence/m11-neon-shard-rebalance-2026-10-11.md).
+PostgreSQL workflow. See [the shard rebalance evidence](evidence/m11-postgres-shard-rebalance-2026-10-11.md).
 Historical measurements explain why the full suite remains on the local lane. The complete trusted-
 main run [38198473355](https://github.com/adea-ai/control-plane/actions/runs/38198473355) measured
 791s/416s/1,047s of integration work on shards 1/2/3; Hosted Restate qualification took 31s on
@@ -168,7 +168,7 @@ shard 3. Later run [38209161123](https://github.com/adea-ai/control-plane/action
 measured 37m09s on shard 1 and 18m14s on shard 2 before shard 3 was canceled at 45m23s. All three
 branches were deleted and their absence verified. The former candidate that moved the 263.7s
 LangGraph inventory test was only a projection and did not solve this runtime. See the
-[compatibility budget evidence](evidence/m11-neon-compatibility-budget-2026-10-12.md) for current
+[compatibility budget evidence](evidence/m11-postgres-compatibility-budget-2026-10-12.md) for current
 scope and the local pull-request timing record.
 
 Preview cleanup resolves the exact run/attempt/branch name and validates the project, parent,
@@ -263,7 +263,7 @@ fixtures own their cleanup in the lane that created them.
 ## Integration fixture ownership
 
 A remote integration target is classified and validated before any Docker command;
-Neon verification does not require a local Docker engine. Local runs preserve an
+PostgreSQL verification does not require a local Docker engine. Local runs preserve an
 already running PostgreSQL service. When the runner starts its own fixture and no
 `COMPOSE_PROJECT_NAME` was supplied, it records a unique project name before startup
 and removes that project's containers, network and volume in `finally`, including
@@ -291,20 +291,49 @@ An explicit caller project remains caller-owned: the runner may stop the Postgre
 service it started, but does not delete that project's volume. The recovery matrix
 removes its own project in its outer cleanup. Pull-request PostgreSQL CI likewise
 uses a run/attempt-specific project and an `always()` cleanup step. These paths never
-prune unrelated resources or shared build caches. `SIGKILL`, daemon loss and machine
-shutdown cannot execute JavaScript `finally`. Explicit `SIGINT`/`SIGTERM` cleanup
-handlers are not implemented either; interrupted runs still need follow-up using
-the recorded project identity. Once the engine is available, the owning operator
-can use that exact `COMPOSE_PROJECT_NAME` with `docker compose down --volumes
---remove-orphans --timeout 60` from this repository; never substitute a shared
-project or global prune. No disk reclamation or full Docker acceptance is implied
-by the command-double lifecycle regression suite.
+prune unrelated resources or shared build caches. Runner-owned children stay in the
+runner's process group and are recorded, so installed `SIGINT`/`SIGTERM` handlers
+reap only those recorded children, refuse to start any new owned command after the
+first signal (the shared cleanup is exempt), and run the same owned cleanup once
+before the process exits with `128 + signal`; a recorded verification failure stays
+observable instead of being masked by the signal or by cleanup. A second signal
+stops immediately with the signal's status, and the bounded readiness probe
+observes a signal delivered during its blocking wait instead of surfacing it as a
+probe timeout. The image-configuration and pull commands are synchronous, so a
+signal delivered while one of them held the event loop is not yet visible to the
+next check; the pull path therefore yields one loop turn before every command it
+may start, and no configuration, canonical pull or fallback pull begins after the
+signal. A pending signal is reported as an interruption, never as a failed pull.
+The recorded child's whole owned tree is terminated — a nested
+build descendant that keeps the inherited pipes open is reaped with it, and a
+descendant that is still alive after the termination is reported as a survivor,
+because the direct child's exit is not proof that its tree was reaped. The
+completion of a terminated child is bounded, so a pipe that a survivor still
+holds can no longer keep the runner from finishing. The command-double lifecycle
+suite injects a frozen startup, readiness, test and cleanup command, spawns an
+owned descendant that holds the inherited pipes, and delivers a real signal to
+prove those paths. That suite's own harness holds itself to the same standard: it
+disposes of everything it spawned on every path — a passing case, a failing case
+and a settle timeout alike — reaping the fixture's recorded descendants by those
+exact PIDs and never by name or process group; a reap it cannot confirm retains
+the receipt that names them, rather than deleting the identity while the
+processes still run, and the failure is surfaced. A `SIGINT` during a
+rate-limited image-pull backoff ends the run without starting a further pull
+command, and the backoff wait ends with
+the interruption instead of being run out. `SIGKILL`, daemon loss and machine shutdown cannot execute
+JavaScript `finally`, so an interrupted run may still leave the owner-recorded
+project identity behind. Once the
+engine is available, the owning operator can use that exact `COMPOSE_PROJECT_NAME`
+with `docker compose down --volumes --remove-orphans --timeout 60` from this
+repository; never substitute a shared project or global prune. No disk reclamation
+or full Docker acceptance is implied by the command-double lifecycle regression
+suite.
 
 ## Current PostgreSQL integration fixture
 
 The repository currently starts a pinned local PostgreSQL service for integration testing. That remains useful for:
 
-- Neon/PostgreSQL-compatible domain behavior;
+- PostgreSQL-compatible domain behavior;
 - Hosted `server` behavior;
 - migration/transaction/recovery testing.
 
@@ -333,7 +362,7 @@ remain compatibility evidence, not a requirement to run Restate in the default L
 Secret canaries must cover:
 
 - Railway build/deploy/configuration output;
-- Neon connection/migration diagnostics;
+- PostgreSQL connection/migration diagnostics;
 - Restate state/logging;
 - R2 metadata/errors;
 - public API/SDK/events;
@@ -356,4 +385,4 @@ The complete unit report is emitted as LCOV for CI coverage publication.
 
 Every production-readiness result records exact commit, toolchain, deployment profile, persistence adapter/schema, Restate version, RuntimeAdapter/Driver/Transport, runtime/provider versions, relevant configuration digest, command, timestamp, environment, and outcome.
 
-Mocked or sampled evidence must be labeled. It cannot replace required concrete evidence when the milestone acceptance explicitly requires Railway, Neon, R2, Restate, SQLite, Compose, or another real implementation.
+Mocked or sampled evidence must be labeled. It cannot replace required concrete evidence when the milestone acceptance explicitly requires Railway, PostgreSQL, R2, Restate, SQLite, Compose, or another real implementation.

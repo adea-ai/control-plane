@@ -1,6 +1,6 @@
 {
   "name": "@control-plane/profile-adapters",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "private": true,
   "files": [
     "dist"
@@ -16,7 +16,7 @@
     }
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && tsc -p tsconfig.type-tests.json",
     "typecheck": "bun check -p tsconfig.json",
     "lint": "oxlint src",
     "test": "bun test src/*.test.mjs"
@@ -25,10 +25,11 @@
     "@control-plane/deployment": "workspace:*",
     "@control-plane/orchestration": "workspace:*",
     "@control-plane/runtime-sdk": "workspace:*",
-    "zod": "4.6.5"
+    "zod": "4.6.6"
   },
   "devDependencies": {
     "@control-plane/domain": "workspace:*",
+    "@control-plane/execution-plan": "workspace:*",
     "@control-plane/managed-pi-adapter": "workspace:*",
     "@control-plane/pi-durable-adapter": "workspace:*"
   },

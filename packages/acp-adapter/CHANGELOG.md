@@ -1,5 +1,40 @@
 # Changelog
 
+## [1.15.1](https://github.com/adea-ai/control-plane/compare/acp-adapter-v1.15.0...acp-adapter-v1.15.1) (2026-10-24)
+
+
+### Bug Fixes
+
+* reduce dependency closure and preserve budget checks ([#1270](https://github.com/adea-ai/control-plane/issues/1270)) ([01fa230](https://github.com/adea-ai/control-plane/commit/01fa230233cc796b6c7f93d020006212b89631f6))
+
+## [1.15.0](https://github.com/adea-ai/control-plane/compare/acp-adapter-v1.14.0...acp-adapter-v1.15.0) (2026-10-23)
+
+
+### Features
+
+* **pi-durable:** compose child reads and drain recovery ([#1204](https://github.com/adea-ai/control-plane/issues/1204)) ([2f1f9d1](https://github.com/adea-ai/control-plane/commit/2f1f9d1a4da48db09e2c8ee9dc08625fbb2bc7a5))
+
+## [1.14.0](https://github.com/adea-ai/control-plane/compare/acp-adapter-v1.13.0...acp-adapter-v1.14.0) (2026-10-23)
+
+
+### Features
+
+* **acp-adapter:** require current controller enrollment authority on secure remote route ([#1282](https://github.com/adea-ai/control-plane/issues/1282)) ([5da0e9f](https://github.com/adea-ai/control-plane/commit/5da0e9f92b82d3df779e94a85006208c8ab4013d))
+
+## [1.13.0](https://github.com/adea-ai/control-plane/compare/acp-adapter-v1.12.0...acp-adapter-v1.13.0) (2026-10-23)
+
+
+### Features
+
+* **acp-adapter:** qualify native routes and pre-effect controls (CP [#1021](https://github.com/adea-ai/control-plane/issues/1021)) ([#1253](https://github.com/adea-ai/control-plane/issues/1253)) ([d01d337](https://github.com/adea-ai/control-plane/commit/d01d33759540d8835331d7d17035b9d0e89c44e6))
+
+## [1.12.0](https://github.com/adea-ai/control-plane/compare/acp-adapter-v1.11.1...acp-adapter-v1.12.0) (2026-10-23)
+
+
+### Features
+
+* **acp-adapter:** add the production secure ACP remote wire and device agent ([#1023](https://github.com/adea-ai/control-plane/issues/1023)) ([#1238](https://github.com/adea-ai/control-plane/issues/1238)) ([52c3b36](https://github.com/adea-ai/control-plane/commit/52c3b36bccd04e3419b28945e8cfc97342b8612a))
+
 ## [1.11.1](https://github.com/adea-ai/control-plane/compare/acp-adapter-v1.11.0...acp-adapter-v1.11.1) (2026-10-19)
 
 

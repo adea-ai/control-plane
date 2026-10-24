@@ -1,6 +1,6 @@
 {
   "name": "@control-plane/cortana-context-adapter",
-  "version": "1.5.0",
+  "version": "1.5.1",
   "private": true,
   "files": [
     "dist",
@@ -27,7 +27,7 @@
     "@control-plane/context": "workspace:*",
     "@control-plane/contracts": "workspace:*",
     "@control-plane/runtime-gateway-protocol": "workspace:*",
-    "zod": "4.6.5"
+    "zod": "4.6.6"
   },
   "engines": {
     "node": "24.21.0"

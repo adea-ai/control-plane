@@ -7,7 +7,7 @@ The public boundary is distributed through versioned contract and SDK packages. 
 - `@control-plane/contracts` contains canonical versioned Zod request/response/event/error schemas, compatibility rules and deterministic fixtures.
 - `@control-plane/sdk` depends on the contracts package and provides the typed client, operation registry, generated OpenAPI artifact and deterministic testing harness.
 
-Neither package may export database models/Drizzle schemas, application modules, Restate or historical Temporal workflow types, LangGraph state, runtime adapters/drivers/transports, Railway/Neon/R2 implementation types, provider credentials, or secret-management implementations.
+Neither package may export database models/Drizzle schemas, application modules, Restate or historical Temporal workflow types, LangGraph state, runtime adapters/drivers/transports, Railway/PostgreSQL/R2 implementation types, provider credentials, or secret-management implementations.
 
 M9.10 #210 froze the v2 public contract. The location vocabulary change is a deliberate major
 boundary; M10 transports the same semantic envelopes over Cloud/Hosted/Local profile boundaries
@@ -35,7 +35,7 @@ A stub/fake is never evidence that the concrete Railway, Local or Hosted impleme
 
 ## Deterministic contract tests
 
-The SDK testing surface must remain runnable without Adea, Cortana, Railway, Neon, R2, Restate cloud infrastructure, paid model providers, or user credentials. Fixtures validate the same public schemas/compatibility behavior consumed by real deployments.
+The SDK testing surface must remain runnable without Adea, Cortana, Railway, PostgreSQL, R2, Restate cloud infrastructure, paid model providers, or user credentials. Fixtures validate the same public schemas/compatibility behavior consumed by real deployments.
 
 Cross-repository references are compatibility targets, not ordinary implementation dependencies. Live Adea/Cortana composition occurs only in M12.
 

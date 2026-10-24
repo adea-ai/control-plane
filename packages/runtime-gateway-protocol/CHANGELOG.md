@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.10.1](https://github.com/adea-ai/control-plane/compare/runtime-gateway-protocol-v1.10.0...runtime-gateway-protocol-v1.10.1) (2026-10-24)
+
+
+### Bug Fixes
+
+* reduce dependency closure and preserve budget checks ([#1270](https://github.com/adea-ai/control-plane/issues/1270)) ([01fa230](https://github.com/adea-ai/control-plane/commit/01fa230233cc796b6c7f93d020006212b89631f6))
+
+## [1.10.0](https://github.com/adea-ai/control-plane/compare/runtime-gateway-protocol-v1.9.0...runtime-gateway-protocol-v1.10.0) (2026-10-23)
+
+
+### Features
+
+* **acp-adapter:** add the production secure ACP remote wire and device agent ([#1023](https://github.com/adea-ai/control-plane/issues/1023)) ([#1238](https://github.com/adea-ai/control-plane/issues/1238)) ([52c3b36](https://github.com/adea-ai/control-plane/commit/52c3b36bccd04e3419b28945e8cfc97342b8612a))
+
 ## [1.9.0](https://github.com/adea-ai/control-plane/compare/runtime-gateway-protocol-v1.8.1...runtime-gateway-protocol-v1.9.0) (2026-10-17)
 
 

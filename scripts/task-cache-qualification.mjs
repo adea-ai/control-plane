@@ -79,7 +79,15 @@ export class MalformedSummaryError extends Error {
 /**
  * Why a task did not come from the cache.
  *
- * @typedef {{ reason: string, path: string | null, inputKind: string | null }} Invalidation
+ * `changes` names what differed in a changed spawn fingerprint and is set for
+ * that reason only.
+ *
+ * @typedef {{
+ *   reason: string,
+ *   path: string | null,
+ *   inputKind: string | null,
+ *   changes?: string[],
+ * }} Invalidation
  */
 
 /**
@@ -115,7 +123,13 @@ export class MalformedSummaryError extends Error {
 /**
  * An invalidation, with the place the changed input lives.
  *
- * @typedef {{ task: string, kind: string, path: string | null, package: string | null }} ClassifiedInvalidation
+ * @typedef {{
+ *   task: string,
+ *   kind: string,
+ *   path: string | null,
+ *   package: string | null,
+ *   changes?: string[],
+ * }} ClassifiedInvalidation
  */
 
 /**
@@ -183,6 +197,53 @@ export function toolchainOf(command) {
   return expected ? expected[1] : null
 }
 
+/** The payload-free spawn fingerprint changes the task runner writes as bare strings. */
+const SPAWN_CHANGES = new Set(['ProgramChanged', 'ArgsChanged', 'CwdChanged'])
+
+/** The spawn fingerprint changes that carry the name of an environment variable. */
+const ENV_CHANGES = new Set(['Added', 'Removed', 'Changed'])
+
+/**
+ * One entry of a `SpawnFingerprintChanged` miss: `ProgramChanged`,
+ * `ArgsChanged` or `CwdChanged` as bare strings, `{"Env":{"Added"|"Removed"|
+ * "Changed":{"name":…}}}` for a tracked variable, and
+ * `{"UntrackedEnvAdded"|"UntrackedEnvRemoved":{"name":…}}` for a passed-through
+ * one. Returns a stable label for the change.
+ *
+ * @param {unknown} change
+ * @param {string} label
+ * @returns {string}
+ */
+function parseSpawnChange(change, label) {
+  if (typeof change === 'string') {
+    if (SPAWN_CHANGES.has(change)) return change
+    throw new MalformedSummaryError(`${label} reports an unknown spawn change "${change}"`)
+  }
+  if (!isPlainObject(change) || Object.keys(change).length !== 1) {
+    throw new MalformedSummaryError(`${label} has a malformed spawn change`)
+  }
+  const kind = Object.keys(change)[0]
+  /** @param {unknown} body */
+  const variableName = (body) => {
+    if (!isPlainObject(body) || typeof body.name !== 'string' || body.name.length === 0) {
+      throw new MalformedSummaryError(`${label} reports a ${kind} change without a variable name`)
+    }
+    return body.name
+  }
+  if (kind === 'UntrackedEnvAdded' || kind === 'UntrackedEnvRemoved') {
+    return `${kind}:${variableName(change[kind])}`
+  }
+  if (kind === 'Env') {
+    const body = change.Env
+    const variants = isPlainObject(body) ? Object.keys(body) : []
+    if (variants.length !== 1 || !ENV_CHANGES.has(variants[0])) {
+      throw new MalformedSummaryError(`${label} reports an unknown environment change`)
+    }
+    return `Env${variants[0]}:${variableName(body[variants[0]])}`
+  }
+  throw new MalformedSummaryError(`${label} reports an unknown spawn change "${kind}"`)
+}
+
 /**
  * @param {unknown} miss
  * @param {string} label
@@ -190,9 +251,13 @@ export function toolchainOf(command) {
  */
 function parseMiss(miss, label) {
   if (typeof miss === 'string') {
-    if (miss !== 'NotFound')
-      throw new MalformedSummaryError(`${label} reports an unknown cache miss "${miss}"`)
-    return { reason: 'not-found', path: null, inputKind: null }
+    // The task runner writes a payload-free miss reason as a bare string:
+    // `NotFound` when no entry existed and `ConfigChanged` when the task's
+    // declared input configuration differs from the one the entry was stored
+    // under. Any other name is a form this parser has not been taught.
+    if (miss === 'NotFound') return { reason: 'not-found', path: null, inputKind: null }
+    if (miss === 'ConfigChanged') return { reason: 'config-changed', path: null, inputKind: null }
+    throw new MalformedSummaryError(`${label} reports an unknown cache miss "${miss}"`)
   }
   if (!isPlainObject(miss)) throw new MalformedSummaryError(`${label} has a malformed cache miss`)
   const kinds = Object.keys(miss)
@@ -201,6 +266,18 @@ function parseMiss(miss, label) {
   }
   const kind = kinds[0]
   if (kind === 'NotFound') return { reason: 'not-found', path: null, inputKind: null }
+  if (kind === 'SpawnFingerprintChanged') {
+    const body = miss.SpawnFingerprintChanged
+    if (!Array.isArray(body) || body.length === 0) {
+      throw new MalformedSummaryError(`${label} reports a spawn change without a cause`)
+    }
+    return {
+      reason: 'spawn-fingerprint-changed',
+      path: null,
+      inputKind: null,
+      changes: body.map((change) => parseSpawnChange(change, label)),
+    }
+  }
   if (kind === 'InputChanged') {
     const body = miss.InputChanged
     if (!isPlainObject(body) || typeof body.path !== 'string' || body.path.length === 0) {
@@ -370,9 +447,20 @@ const workspaceDirectories = (root) => {
 /**
  * @param {Invalidation | null} invalidation
  * @param {string[]} packages
- * @returns {{ kind: string, path: string | null, package: string | null }}
+ * @returns {Omit<ClassifiedInvalidation, 'task'>}
  */
 export function classifyInvalidation(invalidation, packages) {
+  if (invalidation?.reason === 'spawn-fingerprint-changed') {
+    return {
+      kind: 'spawn-fingerprint',
+      path: null,
+      package: null,
+      changes: invalidation.changes ?? [],
+    }
+  }
+  if (invalidation?.reason === 'config-changed') {
+    return { kind: 'input-config', path: null, package: null }
+  }
   if (!invalidation || invalidation.reason !== 'input-changed') {
     return { kind: 'cold', path: null, package: null }
   }
@@ -453,6 +541,12 @@ export function describeInvalidation(analysis, task) {
   const invalidation = analysis.invalidations.find((entry) => entry.task === task)
   if (!invalidation) return 'the summary does not say why'
   if (invalidation.kind === 'cold') return 'no cache entry existed'
+  if (invalidation.kind === 'spawn-fingerprint') {
+    return `the task's spawn fingerprint changed (${(invalidation.changes ?? []).join(', ')})`
+  }
+  if (invalidation.kind === 'input-config') {
+    return "the task's declared input configuration changed"
+  }
   return `the ${invalidation.kind} input "${invalidation.path}" changed`
 }
 
@@ -525,7 +619,7 @@ export function evaluateExpectation(analysis, expectation) {
   } else if (mode === 'invalidated') {
     for (const task of analysis.cached) {
       const invalidation = analysis.invalidations.find((entry) => entry.task === task)
-      if (!invalidation || invalidation.kind === 'cold') {
+      if (!invalidation || (invalidation.kind !== 'source' && invalidation.kind !== 'config')) {
         failures.push(`"${task}" was not invalidated by a changed input`)
       }
     }

@@ -1,6 +1,6 @@
 {
   "name": "@control-plane/execution-plan",
-  "version": "1.12.0",
+  "version": "1.12.1",
   "private": true,
   "files": [
     "dist"
@@ -31,7 +31,7 @@
     "@control-plane/contracts": "workspace:*",
     "@control-plane/domain": "workspace:*",
     "@control-plane/runtime-sdk": "workspace:*",
-    "zod": "4.6.5"
+    "zod": "4.6.6"
   },
   "engines": {
     "node": "24.21.0"

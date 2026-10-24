@@ -152,11 +152,12 @@ describe('contract version compatibility', () => {
   test('publishes the supported boundary and rejects an inverted deprecation window', () => {
     expect(PublicContractManifest).toEqual({
       name: 'agent-hq-control-plane',
-      current: { major: 3, minor: 0 },
+      current: { major: 3, minor: 1 },
       supported: [
         { major: 1, minor: 0 },
         { major: 2, minor: 0 },
         { major: 3, minor: 0 },
+        { major: 3, minor: 1 },
       ],
     })
     expect(
@@ -303,7 +304,7 @@ describe('versioned public envelopes', () => {
   test('keeps the public schema package independent of Control Plane implementation packages', async () => {
     const manifest = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'))
 
-    expect(manifest.dependencies).toEqual({ zod: '4.6.5' })
+    expect(manifest.dependencies).toEqual({ zod: '4.6.6' })
     expect(JSON.stringify(manifest)).not.toContain('@control-plane/domain')
     expect(JSON.stringify(manifest)).not.toContain('@control-plane/database')
   })

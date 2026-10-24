@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.6.0](https://github.com/adea-ai/control-plane/compare/tool-execution-v1.5.3...tool-execution-v1.6.0) (2026-10-23)
+
+
+### Features
+
+* **pi-durable:** compose child reads and drain recovery ([#1204](https://github.com/adea-ai/control-plane/issues/1204)) ([2f1f9d1](https://github.com/adea-ai/control-plane/commit/2f1f9d1a4da48db09e2c8ee9dc08625fbb2bc7a5))
+
+## [1.5.3](https://github.com/adea-ai/control-plane/compare/tool-execution-v1.5.2...tool-execution-v1.5.3) (2026-10-22)
+
+
+### Maintenance
+
+* pin Bun 1.4.4 and use native SDK consumer checking ([#1255](https://github.com/adea-ai/control-plane/issues/1255)) ([176d2d6](https://github.com/adea-ai/control-plane/commit/176d2d61571ef89263e017ddb911b4315aa07234))
+
 ## [1.5.2](https://github.com/adea-ai/control-plane/compare/tool-execution-v1.5.1...tool-execution-v1.5.2) (2026-10-17)
 
 

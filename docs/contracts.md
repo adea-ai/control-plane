@@ -130,10 +130,23 @@ stack traces, queries, or persistence details.
 
 ## Compatibility and negotiation
 
-The current boundary is `3.0`. The workspace catalog administration envelopes
+The current boundary is `3.1`. The workspace catalog administration envelopes
 (`catalog.skill.*` and `catalog.profile.*`; see [`api.md`](api.md#workspace-catalog-administration))
 and their `catalog:read`, `catalog:publish` and `catalog:manage` scopes are additive within major
 `3`; the OpenAPI compatibility baseline verifies that no existing operation changed.
+
+Version `3.1` adds one field: the pi-durable runtime-observed generation, an optional
+`observedTarget.generation` on the lead receipt and an optional
+`status.observedGeneration` on the runtime execution status. The pre-3.1 target and
+runtime-status shapes are strict, so a consumer that predates this version rejects an
+unknown key and reports an invalid response. The producer therefore publishes the
+observed generation only to a consumer whose negotiated contract version includes it
+(`supportsPiDurableObservedGeneration`): a consumer that advertised `3.0` receives the
+same response without the field and keeps parsing, and a consumer that advertised `3.1`
+receives it. The pre-3.1 strict shapes are kept verbatim in
+`apps/control-api/src/pi-durable/lead-pre-change-client.fixture.mjs` as the installed
+consumer's real validation, and the compatibility tests parse a current server response
+with them.
 
 - A major version change is breaking. Removing or renaming fields, making an optional field required,
   narrowing valid values, or adding a closed-enum value requires a major version.

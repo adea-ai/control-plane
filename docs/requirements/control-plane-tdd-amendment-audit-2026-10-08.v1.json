@@ -178,7 +178,7 @@
       "historicalBlockSha256": "7ba9f19ae11ea53a6b26dc9670b97f221425e8cc383e0b0f402a4c8b8053fb71",
       "observedBlockSha256": "db2051bafd77756e7e9c1d6aa2a92dd358fca82a0afffe1cb7d6b3c97f0016eb",
       "disposition": "historical-profile-baseline-retained-obligations",
-      "interpretation": "Paragraph split retains prior Railway/Neon/R2/Restate and Local/Hosted requirements. Cloud future substrate is superseded only by dated Pi amendment; current one-API Railway deployment does not qualify full cloud profile. Local no-Restate and self-hosted parity obligations remain.",
+      "interpretation": "Paragraph split retains prior Railway/PostgreSQL/R2/Restate and Local/Hosted requirements. Cloud future substrate is superseded only by dated Pi amendment; current one-API Railway deployment does not qualify full cloud profile. Local no-Restate and self-hosted parity obligations remain.",
       "owners": [186, 195],
       "implementationAcceptance": "not-established"
     },
