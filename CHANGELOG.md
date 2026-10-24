@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.114.3](https://github.com/adea-ai/control-plane/compare/workspace-v1.114.2...workspace-v1.114.3) (2026-10-24)
+
+
+### Bug Fixes
+
+* **pi:** classify cancellation publication uncertainty after native commit ([#1305](https://github.com/adea-ai/control-plane/issues/1305)) ([f727f7a](https://github.com/adea-ai/control-plane/commit/f727f7aec45418fda49bd243d13dc1e8ed1b22fc))
+
 ## [1.114.2](https://github.com/adea-ai/control-plane/compare/workspace-v1.114.1...workspace-v1.114.2) (2026-10-24)
 
 
