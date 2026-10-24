@@ -59,20 +59,20 @@ current-candidate test pass is claimed here.
 
 The published scope is the diff from the base `ab931d068142a0c5629ed4d6cc2c96a1b377a986`
 to the published head, which is the head that carries this section. The complete changed scope is
-**259 paths: 80 added, 179 modified**; no path was deleted.
+**276 paths: 90 added, 186 modified**; no path was deleted.
 `tests/pi-durable-cp1048-evidence-discipline.test.mjs` checks this list, these counts and this
 area table against the repository, so the published scope cannot drift away from the code
 without that lane failing.
 
 | Area                                | Added | Modified | Total |
 | ----------------------------------- | ----- | -------- | ----- |
-| `(repository root)`                 | 0     | 4        | 4     |
-| `apps/control-api`                  | 17    | 25       | 42    |
+| `(repository root)`                 | 0     | 6        | 6     |
+| `apps/control-api`                  | 18    | 25       | 43    |
 | `apps/hosted-control-plane`         | 2     | 5        | 7     |
 | `apps/local-control-plane`          | 0     | 1        | 1     |
 | `apps/runtime-worker`               | 0     | 1        | 1     |
 | `apps/workflow-worker`              | 0     | 6        | 6     |
-| `docs`                              | 8     | 4        | 12    |
+| `docs`                              | 10    | 4        | 14    |
 | `docs/architecture`                 | 0     | 2        | 2     |
 | `docs/evals`                        | 0     | 1        | 1     |
 | `docs/evidence`                     | 4     | 0        | 4     |
@@ -81,7 +81,7 @@ without that lane failing.
 | `packages/acp-adapter`              | 0     | 4        | 4     |
 | `packages/config`                   | 0     | 4        | 4     |
 | `packages/context`                  | 0     | 1        | 1     |
-| `packages/contracts`                | 1     | 7        | 8     |
+| `packages/contracts`                | 1     | 8        | 9     |
 | `packages/control-sdk`              | 2     | 8        | 10    |
 | `packages/cortana-context-adapter`  | 0     | 1        | 1     |
 | `packages/credential-vault`         | 0     | 1        | 1     |
@@ -93,15 +93,15 @@ without that lane failing.
 | `packages/managed-pi-adapter`       | 0     | 1        | 1     |
 | `packages/memory-writeback`         | 0     | 1        | 1     |
 | `packages/model-gateway`            | 0     | 1        | 1     |
-| `packages/orchestration`            | 0     | 4        | 4     |
+| `packages/orchestration`            | 0     | 5        | 5     |
 | `packages/pi-durable-adapter`       | 23    | 20       | 43    |
 | `packages/policy`                   | 0     | 5        | 5     |
-| `packages/production-readiness`     | 0     | 1        | 1     |
+| `packages/production-readiness`     | 7     | 1        | 8     |
 | `packages/profile-adapters`         | 3     | 6        | 9     |
 | `packages/profile-portability`      | 0     | 1        | 1     |
 | `packages/remote-control-relay`     | 0     | 1        | 1     |
 | `packages/runtime-gateway-protocol` | 0     | 1        | 1     |
-| `packages/runtime-sdk`              | 0     | 3        | 3     |
+| `packages/runtime-sdk`              | 0     | 4        | 4     |
 | `packages/sandbox`                  | 0     | 1        | 1     |
 | `packages/sqlite-persistence`       | 0     | 7        | 7     |
 | `packages/tool-execution`           | 0     | 4        | 4     |
@@ -109,7 +109,7 @@ without that lane failing.
 | `packages/usage-ledger`             | 0     | 1        | 1     |
 | `packages/workflow-runtime`         | 0     | 1        | 1     |
 | `patches`                           | 2     | 0        | 2     |
-| `scripts`                           | 1     | 6        | 7     |
+| `scripts`                           | 1     | 8        | 9     |
 | `tests`                             | 16    | 22       | 38    |
 
 The complete path list, as published:
@@ -121,6 +121,7 @@ M  apps/control-api/CHANGELOG.md
 M  apps/control-api/package.json
 M  apps/control-api/src/app.module.ts
 M  apps/control-api/src/executions/execution-acceptance.service.ts
+A  apps/control-api/src/fastify-logging-compatibility.test.mjs
 M  apps/control-api/src/index.ts
 A  apps/control-api/src/models/production-cancellation-authority.test.mjs
 M  apps/control-api/src/models/production-child-configuration.test.mjs
@@ -174,7 +175,10 @@ M  apps/workflow-worker/src/cloud-composition.ts
 M  apps/workflow-worker/src/index.test.mjs
 M  apps/workflow-worker/src/runtime-attempt-router.test.mjs
 M  apps/workflow-worker/src/runtime-attempt-router.ts
+M  budgets.json
 M  bun.lock
+A  docs/1230-dependency-budget-attribution.md
+A  docs/405-runtime-audit.md
 M  docs/architecture/control-plane-architecture.md
 M  docs/architecture/control-plane-architecture.v1.json
 M  docs/evals/skill-evals/skill-eval-harness.mts
@@ -215,6 +219,7 @@ M  packages/contracts/src/decision-resolution.ts
 M  packages/contracts/src/index.test.mjs
 M  packages/contracts/src/index.ts
 A  packages/contracts/src/pi-child-publication.ts
+M  packages/contracts/src/workspace-catalog.ts
 M  packages/control-sdk/CHANGELOG.md
 M  packages/control-sdk/openapi/control-plane.v3.json
 M  packages/control-sdk/package.json
@@ -246,6 +251,7 @@ M  packages/memory-writeback/package.json
 M  packages/model-gateway/package.json
 M  packages/orchestration/CHANGELOG.md
 M  packages/orchestration/package.json
+M  packages/orchestration/src/delegation-tool-admission.ts
 M  packages/orchestration/src/delegation.test.mjs
 M  packages/orchestration/src/delegation.ts
 M  packages/pi-durable-adapter/CHANGELOG.md
@@ -296,7 +302,14 @@ M  packages/policy/package.json
 M  packages/policy/src/decision-resolution.test.mjs
 M  packages/policy/src/decision-resolution.ts
 M  packages/policy/src/index.ts
+A  packages/production-readiness/fixtures/dependency-after-bun143.txt
+A  packages/production-readiness/fixtures/dependency-before-bun143.txt
 M  packages/production-readiness/package.json
+A  packages/production-readiness/src/audit-slice-closure.test.mjs
+A  packages/production-readiness/src/budget-regression.test.mjs
+A  packages/production-readiness/src/dependency-budget-scope.test.mjs
+A  packages/production-readiness/src/startup-budget-probe.mjs
+A  packages/production-readiness/src/startup-budget.test.mjs
 M  packages/profile-adapters/README.md
 M  packages/profile-adapters/package.json
 M  packages/profile-adapters/src/guards.ts
@@ -312,6 +325,7 @@ M  packages/runtime-gateway-protocol/package.json
 M  packages/runtime-sdk/package.json
 M  packages/runtime-sdk/src/index.test.mjs
 M  packages/runtime-sdk/src/pi-durable-lead.test.mjs
+M  packages/runtime-sdk/src/pi-durable-lead.ts
 M  packages/sandbox/package.json
 M  packages/sqlite-persistence/CHANGELOG.md
 M  packages/sqlite-persistence/package.json
@@ -329,6 +343,8 @@ M  packages/usage-ledger/package.json
 M  packages/workflow-runtime/package.json
 A  patches/@earendil-works%2Fpi-durable@1.1.0.patch
 A  patches/pi-durable-1.1.0-NOTICE.md
+M  scripts/check-budgets.mjs
+M  scripts/check-startup-budget.mjs
 M  scripts/docker-pull-backoff.mjs
 M  scripts/integration-shards.mjs
 M  scripts/pull-postgres-image.mjs
@@ -374,6 +390,7 @@ A  tests/profile-recovery-selfhosted-server-wake-replay.boundary.test.mjs
 M  tests/repository.test.mjs
 A  tests/runner-cleanup.test.mjs
 M  tests/workspace-tooling.test.mjs
+M  tsconfig.base.json
 ```
 
 Constraints observed in that scope, re-derived from the diff rather than from a summary:
