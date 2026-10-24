@@ -62,6 +62,8 @@ function removeOwned(base, owned) {
 }
 
 const owned = []
+// Every in-memory database the Durable Object double creates, so afterAll can prove each one was disposed.
+const doubles = []
 // layers: the candidate patches to stack on the compatibility patch, in order.
 async function loadSdk(candidates) {
   mkdirSync(scratchBase, { recursive: true })
@@ -97,6 +99,9 @@ beforeAll(async () => {
 })
 afterAll(() => {
   removeOwned(scratchBase, owned)
+  const leaked = doubles.filter((stand) => !stand.isDisposed())
+  if (leaked.length > 0)
+    throw new Error(`${leaked.length} Durable Object double database(s) not disposed`)
 })
 
 const path = (name) => join(dir, `${name}-${counter++}`)
@@ -161,13 +166,14 @@ const methods = (cls) => Object.getOwnPropertyNames(cls.prototype).toSorted()
 // models none of the platform's gates, eviction, or failure behavior.
 function durableObjectDouble() {
   const database = new DatabaseSync(':memory:')
+  let disposed = false
   const toBinding = (value) => (value instanceof ArrayBuffer ? new Uint8Array(value) : value)
   const toValue = (value) => {
     if (typeof value === 'bigint') return Number(value)
     if (value instanceof Uint8Array) return value.slice().buffer
     return value
   }
-  return {
+  const stand = {
     sql: {
       exec(query, ...bindings) {
         const reads = /^\s*(select|pragma|with)\b/i.test(query)
@@ -188,6 +194,13 @@ function durableObjectDouble() {
         return { toArray: () => rows }
       },
     },
+    // The SDK's storage.close does not own this stand-in database, so each test disposes it itself, in a finally.
+    dispose() {
+      if (disposed) return
+      disposed = true
+      database.close()
+    },
+    isDisposed: () => disposed,
     async transaction(closure) {
       database.exec('BEGIN')
       try {
@@ -200,6 +213,8 @@ function durableObjectDouble() {
       }
     },
   }
+  doubles.push(stand)
+  return stand
 }
 
 describe('candidate surface by backend (methods only)', () => {
@@ -285,14 +300,19 @@ describe('Node SQLite, candidate stack', () => {
     const storage = await stack.node.openNodeSqliteStorage(path('node') + '.sqlite')
     await storage.acquireWriterFence(holder)
     const { harness, root } = await openHarness(stack, storage)
-    const abort = await root.commitAbort(abortRequest('parity:node'), context)
-    expect(abort.requestId).toBe('parity:node')
-    const receipt = await harness.closeWriters({ mutationId: 'parity:node:close' }, context)
-    expect(receipt.schemaVersion).toBe('pi-writer-closure-receipt/v1')
-    expect(await code(harness.root(context))).toBe('Harness is closed')
+    try {
+      const abort = await root.commitAbort(abortRequest('parity:node'), context)
+      expect(abort.requestId).toBe('parity:node')
+      const receipt = await harness.closeWriters({ mutationId: 'parity:node:close' }, context)
+      expect(receipt.schemaVersion).toBe('pi-writer-closure-receipt/v1')
+      expect(await code(harness.root(context))).toBe('Harness is closed')
+    } finally {
+      // closeWriters already closed the Harness and its storage; this only matters if an assertion above failed first.
+      await harness.close(context).catch(() => {})
+    }
   })
 
-  test('read-only open: a closed store reads, and every write path is refused', async () => {
+  test('read-only open: a closed store reads, and each mutating entry point is refused directly', async () => {
     const file = path('node-ro') + '.sqlite'
     const writer = await stack.node.openNodeSqliteStorage(file)
     const id = await writeConversation(writer)
@@ -300,8 +320,16 @@ describe('Node SQLite, candidate stack', () => {
     const reader = await stack.node.openNodeSqliteStorage(file, { mode: 'read-only' })
     try {
       expect((await reader.conversation(id, context)).id).toBe(id)
-      expect(await code(writeConversation(reader))).toBe('PI_STORE_READ_ONLY')
+      // Each call below is made directly with a valid pre-existing ID, so the refusal cannot come from mintId failing first.
+      const write = [{ type: 'conversation', value: { id } }]
+      expect(await code(reader.commit(write, context))).toBe('PI_STORE_READ_ONLY')
+      expect(await code(reader.commitGuarded(write, () => {}, context))).toBe('PI_STORE_READ_ONLY')
       expect(await code(reader.acquireWriterFence(holder))).toBe('PI_STORE_READ_ONLY')
+      expect(await code(reader.closeWriterFence({ mutationId: 'parity:readonly' }))).toBe(
+        'PI_STORE_READ_ONLY'
+      )
+      // Distinct from the above: minting an ID is itself refused.
+      expect(await code(reader.mintId())).toBe('PI_STORE_READ_ONLY')
     } finally {
       await reader.close(context)
     }
@@ -330,24 +358,36 @@ describe('MemoryStorage and JsonlStorage refusal behavior (candidate stack appli
     test(`${name}: guarded abort and Session.closeWriters are refused, and the Harness stays usable`, async () => {
       const storage = await open()
       const { harness, root } = await openHarness(stack, storage)
-      expect(await code(root.commitAbort(abortRequest('parity:refused'), context))).toBe(
-        'PI_GUARDED_COMMIT_UNAVAILABLE'
-      )
-      expect(
-        await code(harness.closeWriters({ mutationId: 'parity:refused:close' }, context))
-      ).toBe('PI_SESSION_CLOSE_WRITERS_UNAVAILABLE')
-      // Not sealed: the Harness still serves the root, and a later close is the ordinary one.
-      expect(await code(harness.root(context))).toBe('no error')
-      await harness.close(context)
+      try {
+        expect(await code(root.commitAbort(abortRequest('parity:refused'), context))).toBe(
+          'PI_GUARDED_COMMIT_UNAVAILABLE'
+        )
+        expect(
+          await code(harness.closeWriters({ mutationId: 'parity:refused:close' }, context))
+        ).toBe('PI_SESSION_CLOSE_WRITERS_UNAVAILABLE')
+        // Not sealed: the Harness still serves the root, and a later close is the ordinary one.
+        expect(await code(harness.root(context))).toBe('no error')
+      } finally {
+        await harness.close(context)
+      }
     })
 
-    test(`${name}: nothing fences a writer, so a commit after a refused closure is accepted`, async () => {
+    test(`${name}: a refused closeWriters seals nothing, so a write on the same storage and Harness afterwards is accepted`, async () => {
       const storage = await open()
+      const { harness } = await openHarness(stack, storage)
       try {
-        await writeConversation(storage)
-        expect(await code(writeConversation(storage))).toBe('no error')
+        const before = await writeConversation(storage)
+        expect(
+          await code(harness.closeWriters({ mutationId: 'parity:refused:then-write' }, context))
+        ).toBe('PI_SESSION_CLOSE_WRITERS_UNAVAILABLE')
+        // The same storage object the Harness holds, after the refusal: nothing is fenced or sealed.
+        const after = await writeConversation(storage)
+        expect(after).not.toBe(before)
+        expect((await storage.conversation(before, context)).id).toBe(before)
+        expect((await storage.conversation(after, context)).id).toBe(after)
+        expect(await code(harness.root(context))).toBe('no error')
       } finally {
-        await storage.close(context)
+        await harness.close(context)
       }
     })
   }
@@ -387,8 +427,20 @@ describe('MemoryStorage and JsonlStorage refusal behavior (candidate stack appli
 })
 
 describe('Durable Object SQLite TEST DOUBLE (not Cloudflare evidence), candidate stack applied to the SDK copy', () => {
+  test('the double`s dispose closes its in-memory database, and the SDK storage close does not', async () => {
+    const stand = durableObjectDouble()
+    const storage = await stack.cloudflare.openDurableObjectSqliteStorage(stand)
+    await storage.close(context)
+    expect(stand.isDisposed()).toBe(false)
+    expect(() => stand.sql.exec('SELECT 1')).not.toThrow()
+    stand.dispose()
+    expect(stand.isDisposed()).toBe(true)
+    expect(() => stand.sql.exec('SELECT 1')).toThrow()
+  })
+
   test('the fence, closure receipt and post-closure refusal work through the double`s transaction', async () => {
-    const storage = await stack.cloudflare.openDurableObjectSqliteStorage(durableObjectDouble())
+    const stand = durableObjectDouble()
+    const storage = await stack.cloudflare.openDurableObjectSqliteStorage(stand)
     try {
       await writeConversation(storage)
       expect((await storage.acquireWriterFence(holder)).epoch).toBe(1)
@@ -397,41 +449,63 @@ describe('Durable Object SQLite TEST DOUBLE (not Cloudflare evidence), candidate
       expect(await code(writeConversation(storage))).toBe('PI_STORE_FENCED')
     } finally {
       await storage.close(context)
+      stand.dispose()
     }
   })
 
   test('the adapter has no guarded transaction, so a guarded commit and a guarded abort receipt are unavailable', async () => {
-    const storage = await stack.cloudflare.openDurableObjectSqliteStorage(durableObjectDouble())
-    await storage.acquireWriterFence(holder)
-    expect(typeof storage.commitGuarded).toBe('function')
-    expect(
-      await code(
-        storage.commitGuarded(
-          [{ type: 'conversation', value: { id: await storage.mintId() } }],
-          () => {},
-          context
+    const stand = durableObjectDouble()
+    const storage = await stack.cloudflare.openDurableObjectSqliteStorage(stand)
+    let harness
+    try {
+      await storage.acquireWriterFence(holder)
+      expect(typeof storage.commitGuarded).toBe('function')
+      expect(
+        await code(
+          storage.commitGuarded(
+            [{ type: 'conversation', value: { id: await storage.mintId() } }],
+            () => {},
+            context
+          )
         )
+      ).toBe('PI_GUARDED_COMMIT_UNAVAILABLE')
+      const opened = await openHarness(stack, storage)
+      harness = opened.harness
+      expect(await code(opened.root.commitAbort(abortRequest('parity:double'), context))).toBe(
+        'PI_GUARDED_COMMIT_UNAVAILABLE'
       )
-    ).toBe('PI_GUARDED_COMMIT_UNAVAILABLE')
-    const { harness, root } = await openHarness(stack, storage)
-    expect(await code(root.commitAbort(abortRequest('parity:double'), context))).toBe(
-      'PI_GUARDED_COMMIT_UNAVAILABLE'
-    )
-    // Session.closeWriters itself needs only the fence and the closure, so it succeeds over the double.
-    const receipt = await harness.closeWriters({ mutationId: 'parity:double:close' }, context)
-    expect(receipt.schemaVersion).toBe('pi-writer-closure-receipt/v1')
+      // Session.closeWriters itself needs only the fence and the closure, so it succeeds over the double.
+      const receipt = await harness.closeWriters({ mutationId: 'parity:double:close' }, context)
+      expect(receipt.schemaVersion).toBe('pi-writer-closure-receipt/v1')
+    } finally {
+      // closeWriters closes the Harness and its storage; these only matter if an assertion above failed first.
+      if (harness !== undefined) await harness.close(context).catch(() => {})
+      else await storage.close(context).catch(() => {})
+      stand.dispose()
+    }
   })
 
   test('SqliteStorage.openReadOnly accepts any database facade, including the double`s, and checks nothing about owners or sidecars', async () => {
     const stand = durableObjectDouble()
     const writer = await stack.cloudflare.openDurableObjectSqliteStorage(stand)
-    const id = await writeConversation(writer)
-    const reader = await stack.sqlite.SqliteStorage.openReadOnly(
-      new stack.cloudflare.DurableObjectSqliteDatabase(stand)
-    )
-    expect((await reader.conversation(id, context)).id).toBe(id)
-    expect(await code(writeConversation(reader))).toBe('PI_STORE_READ_ONLY')
-    // The writer is still open and still holds the same store: nothing refused the second handle.
-    expect(await code(writeConversation(writer))).toBe('no error')
+    let reader
+    try {
+      const id = await writeConversation(writer)
+      reader = await stack.sqlite.SqliteStorage.openReadOnly(
+        new stack.cloudflare.DurableObjectSqliteDatabase(stand)
+      )
+      expect((await reader.conversation(id, context)).id).toBe(id)
+      // Direct calls with the existing ID, so the refusal is not mintId failing first.
+      expect(await code(reader.commit([{ type: 'conversation', value: { id } }], context))).toBe(
+        'PI_STORE_READ_ONLY'
+      )
+      expect(await code(reader.mintId())).toBe('PI_STORE_READ_ONLY')
+      // The writer is still open and still holds the same store: nothing refused the second handle.
+      expect(await code(writeConversation(writer))).toBe('no error')
+    } finally {
+      if (reader !== undefined) await reader.close(context)
+      await writer.close(context)
+      stand.dispose()
+    }
   })
 })

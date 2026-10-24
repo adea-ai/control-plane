@@ -10,7 +10,7 @@ c4b candidates are built on. It changes no backend, adds no SDK patch, and decid
 - No SDK adoption, issuer, capture method, activation, or live-store use. The candidate patches stay uncompiled and are
   applied only to temporary copies of the installed SDK.
 
-The test is `packages/pi-durable-adapter/src/candidate-backend-parity.test.mjs` (17 tests). It copies the installed
+The test is `packages/pi-durable-adapter/src/candidate-backend-parity.test.mjs` (18 tests). It copies the installed
 `@earendil-works/pi-durable@1.1.0` twice into a scratch directory next to the install: once with the compatibility patch
 only, and once with the compatibility patch plus the C2, C4, C7 and c4b candidates in that order. It runs on disposable
 SQLite files, temporary JSONL directories and in-memory objects, and removes only the directories it created.
@@ -19,16 +19,16 @@ SQLite files, temporary JSONL directories and in-memory objects, and removes onl
 
 "Candidate stack" means the compatibility patch plus C2, C4, C7 and c4b. Cells name what the test observed.
 
-| Operation                               | Node SQLite, compat patch only     | Node SQLite, candidate stack                                             | MemoryStorage                                                | JsonlStorage                                                              | Durable Object SQLite **test double** (candidate stack)    |
-| --------------------------------------- | ---------------------------------- | ------------------------------------------------------------------------ | ------------------------------------------------------------ | ------------------------------------------------------------------------- | ---------------------------------------------------------- |
-| Writer fence `acquireWriterFence` (C2)  | method absent                      | works; epoch 1                                                           | method absent                                                | method absent                                                             | works; epoch 1                                             |
-| Closure receipt `closeWriterFence` (C4) | method absent                      | works; receipt `pi-writer-closure-receipt/v1`, epoch 2                   | method absent                                                | method absent                                                             | works; same receipt shape                                  |
-| Commit after a closure                  | no closure to take                 | `PI_STORE_FENCED`                                                        | accepted (nothing fences a writer)                           | accepted (nothing fences a writer)                                        | `PI_STORE_FENCED`                                          |
-| `commitGuarded`                         | method present; not exercised here | works                                                                    | method absent                                                | method absent                                                             | method present; `PI_GUARDED_COMMIT_UNAVAILABLE`            |
-| Guarded abort receipt (`commitAbort`)   | not exercised here                 | commits                                                                  | `PI_GUARDED_COMMIT_UNAVAILABLE`                              | `PI_GUARDED_COMMIT_UNAVAILABLE`                                           | `PI_GUARDED_COMMIT_UNAVAILABLE`                            |
-| `Session.closeWriters` (c4b)            | not applied                        | returns the receipt; Harness is then closed                              | `PI_SESSION_CLOSE_WRITERS_UNAVAILABLE`; Harness stays usable | `PI_SESSION_CLOSE_WRITERS_UNAVAILABLE`; Harness stays usable              | returns the receipt (needs only the fence and the closure) |
-| Read-only open (C7)                     | `openReadOnly` absent              | reads a closed store; writes and fence acquire give `PI_STORE_READ_ONLY` | no such API                                                  | no such API; an unsupported `mode: 'read-only'` option is ignored (see 1) | no exported read-only facade (see 2)                       |
-| Survives close and reopen               | not exercised here                 | yes                                                                      | no: a new instance is empty                                  | yes                                                                       | not characterized (the double is in memory)                |
+| Operation                               | Node SQLite, compat patch only     | Node SQLite, candidate stack                                                                                                          | MemoryStorage                                                | JsonlStorage                                                              | Durable Object SQLite **test double** (candidate stack)    |
+| --------------------------------------- | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ | ------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| Writer fence `acquireWriterFence` (C2)  | method absent                      | works; epoch 1                                                                                                                        | method absent                                                | method absent                                                             | works; epoch 1                                             |
+| Closure receipt `closeWriterFence` (C4) | method absent                      | works; receipt `pi-writer-closure-receipt/v1`, epoch 2                                                                                | method absent                                                | method absent                                                             | works; same receipt shape                                  |
+| Commit after a closure                  | no closure to take                 | `PI_STORE_FENCED`                                                                                                                     | accepted (nothing fences a writer)                           | accepted (nothing fences a writer)                                        | `PI_STORE_FENCED`                                          |
+| `commitGuarded`                         | method present; not exercised here | works                                                                                                                                 | method absent                                                | method absent                                                             | method present; `PI_GUARDED_COMMIT_UNAVAILABLE`            |
+| Guarded abort receipt (`commitAbort`)   | not exercised here                 | commits                                                                                                                               | `PI_GUARDED_COMMIT_UNAVAILABLE`                              | `PI_GUARDED_COMMIT_UNAVAILABLE`                                           | `PI_GUARDED_COMMIT_UNAVAILABLE`                            |
+| `Session.closeWriters` (c4b)            | not applied                        | returns the receipt; Harness is then closed                                                                                           | `PI_SESSION_CLOSE_WRITERS_UNAVAILABLE`; Harness stays usable | `PI_SESSION_CLOSE_WRITERS_UNAVAILABLE`; Harness stays usable              | returns the receipt (needs only the fence and the closure) |
+| Read-only open (C7)                     | `openReadOnly` absent              | reads a closed store; `commit`, `commitGuarded`, `acquireWriterFence`, `closeWriterFence` and `mintId` each give `PI_STORE_READ_ONLY` | no such API                                                  | no such API; an unsupported `mode: 'read-only'` option is ignored (see 1) | no exported read-only facade (see 2)                       |
+| Survives close and reopen               | not exercised here                 | yes                                                                                                                                   | no: a new instance is empty                                  | yes                                                                       | not characterized (the double is in memory)                |
 
 Two cells need more than a table row:
 
@@ -38,8 +38,10 @@ Two cells need more than a table row:
    repository opens a JSONL store.
 2. **Durable Object read-only.** The SDK's Durable Object entry exports only `DurableObjectSqliteDatabase` and
    `openDurableObjectSqliteStorage`. `SqliteStorage.openReadOnly(facade)` (C7) accepts any database facade, including a
-   facade over the double, and refuses writes with `PI_STORE_READ_ONLY`. The sidecar and live-owner checks C7 performs belong
-   to the Node opener, so nothing equivalent runs over a Durable Object facade. In the test a second handle opens while the
+   facade over the double, and refuses writes with `PI_STORE_READ_ONLY`. The Node opener's check belongs to the Node opener: it looks for
+   `-wal`, `-shm` and `-journal` files at the canonical path and checks the schema, and it does not establish owner or process
+   liveness or quiescence (the same limit `docs/pi-durable-c7-read-only-open-spec.md` and the C4 README now state). Nothing
+   equivalent runs over a Durable Object facade, so even that check is absent there. In the test a second handle opens while the
    first writer is still open and committing. That is a statement about the SDK code, not about Cloudflare.
 
 ## What the Durable Object column is
@@ -87,5 +89,6 @@ From `packages/pi-durable-adapter`, with the repository's pinned Bun (1.4.4):
 bun test src/candidate-backend-parity.test.mjs
 ```
 
-While writing it, the test was run with c4b left out of the stack (4 tests failed) and with C7 and c4b left out (7 tests
-failed), to confirm it can fail. Those mutated copies are not part of this change.
+While writing it, the test was run with c4b left out of the stack (6 tests failed), with the Node read-only open switched to
+read-write (the read-only test failed), and with one `dispose()` removed (the after-all disposal check failed), to confirm it can
+fail. Those mutated copies are not part of this change.
