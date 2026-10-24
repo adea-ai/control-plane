@@ -77,7 +77,9 @@ export class InMemoryDelegationToolAdmissionRepository implements DelegationTool
     this.#workspaceId = IdentifierSchemas.workspaceId.parse(workspaceId)
   }
 
-  async retain(input: DelegationToolAdmission) {
+  async retain(
+    input: DelegationToolAdmission
+  ): Promise<{ admission: DelegationToolAdmission; replayed: boolean }> {
     const admission = DelegationToolAdmissionSchema.parse(input)
     if (admission.request.workspaceId !== this.#workspaceId)
       throw new Error('DELEGATION_TOOL_ADMISSION_SCOPE_DENIED')
@@ -95,7 +97,7 @@ export class InMemoryDelegationToolAdmissionRepository implements DelegationTool
     return { admission: structuredClone(admission), replayed: false }
   }
 
-  async getByRequestId(requestId: string) {
+  async getByRequestId(requestId: string): Promise<DelegationToolAdmission | undefined> {
     IdentifierSchemas.requestId.parse(requestId)
     const record = this.#records.get(requestId)
     return record && structuredClone(record)
@@ -112,7 +114,7 @@ export class CanonicalDelegationCommandResolver {
     }
   ) {}
 
-  async resolve(input: ToolExecutionRequest) {
+  async resolve(input: ToolExecutionRequest): Promise<DelegationToolAdmission['command']> {
     const request = ToolExecutionRequestSchema.parse(input)
     const stored = await this.options.admissions.getByRequestId(request.requestId)
     if (!stored) throw new Error('DELEGATION_TOOL_ADMISSION_MISSING')
