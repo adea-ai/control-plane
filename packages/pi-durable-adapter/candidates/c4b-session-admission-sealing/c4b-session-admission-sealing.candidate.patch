@@ -28,7 +28,7 @@ index 8586b83..93ea00b 100644
       * Runs inside every transaction that creates or forks a conversation, after the conversation record is staged. A
       * plain Session stages nothing; a Harness stages its built-in documents.
 diff --git a/dist/session/session.js b/dist/session/session.js
-index 922bfdf..a1a5fac 100644
+index 922bfdf..99f3427 100644
 --- a/dist/session/session.js
 +++ b/dist/session/session.js
 @@ -24,6 +24,7 @@ export class SessionImpl {
@@ -39,7 +39,7 @@ index 922bfdf..a1a5fac 100644
      #poison;
      constructor(storage, now = Date.now) {
          this.#storage = storage;
-@@ -223,6 +224,63 @@ export class SessionImpl {
+@@ -223,6 +224,68 @@ export class SessionImpl {
          }
          return awaitWithContext(this.#closing, context);
      }
@@ -51,7 +51,8 @@ index 922bfdf..a1a5fac 100644
 +     */
 +    closeWriters(request, context) {
 +        const mutationId = request?.mutationId;
-+        if (typeof mutationId !== "string" || mutationId.length === 0)
++        // Same rule as the storage closure (C4), checked before sealing so an ID the storage would refuse cannot seal the Session.
++        if (typeof mutationId !== "string" || mutationId.length === 0 || mutationId.length > 8192 || mutationId.trim() !== mutationId)
 +            return Promise.reject(new Error("PI_SESSION_CLOSE_WRITERS_REQUEST_INVALID"));
 +        if (this.#writerClosure !== undefined) {
 +            return this.#writerClosure.mutationId === mutationId
@@ -72,10 +73,14 @@ index 922bfdf..a1a5fac 100644
 +        let receipt;
 +        let failure;
 +        // Admission is sealed synchronously here; the closure is taken only after admitted commits on the line settled.
++        // A join that rejects (the documented contract says it must not) skips the closure but never skips cleanup.
 +        this.#closing = Promise.resolve()
 +            .then(() => this.beforeClose())
-+            .then(() => this.#enqueue(async () => {
++            .then(() => undefined, (error) => ({ error }))
++            .then((joinFailure) => this.#enqueue(async () => {
 +            try {
++                if (joinFailure !== undefined)
++                    throw joinFailure.error;
 +                receipt = await this.#storage.closeWriterFence({ mutationId });
 +            }
 +            catch (error) {

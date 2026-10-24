@@ -17,7 +17,7 @@ import { createRequire } from 'node:module'
 import { DatabaseSync } from 'node:sqlite'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { BACKGROUND_CONTEXT as context } from '@earendil-works/chord/context'
+import { BACKGROUND_CONTEXT as context, withAbortSignal } from '@earendil-works/chord/context'
 import { createModels } from '@earendil-works/pi-ai/models'
 import { assertPiWriterClosureReceipt } from './cancellation-registration.ts'
 
@@ -392,6 +392,189 @@ describe('candidate Session admission sealing (disposable SQLite, patched SDK co
     await late.harness.close(context)
     expect(receipts.length).toBe(3)
     expect(await code(storage.document('x', 'current', context))).toBe('SqliteStorage is closed')
+  })
+
+  test('pre-seal validation matches the storage closure: every ID C4 refuses leaves the Session usable, and a corrected retry works', async () => {
+    const invalid = [' padded', 'padded ', '\ttabbed', 'new\nline\n', 'x'.repeat(8193), 5, null]
+    // Parity: the storage closure itself refuses each of them.
+    const probePath = dbPath()
+    const probe = await node.openNodeSqliteStorage(probePath)
+    await probe.acquireWriterFence(holder())
+    for (const mutationId of invalid)
+      expect(await code(probe.closeWriterFence({ mutationId }))).toBe(
+        'PI_STORE_CLOSURE_REQUEST_INVALID'
+      )
+    await probe.close(context)
+
+    const { path, harness, root } = await open()
+    for (const mutationId of invalid)
+      expect(await code(harness.closeWriters({ mutationId }, context))).toBe(
+        'PI_SESSION_CLOSE_WRITERS_REQUEST_INVALID'
+      )
+    // Nothing sealed: the Session still commits and still opens conversations.
+    expect((await root.commitAbort(abortRequest('cancel:still-open'), context)).requestId).toBe(
+      'cancel:still-open'
+    )
+    expect(await harness.root(context)).toBeDefined()
+    // The longest accepted ID (8192 characters) is accepted by both layers.
+    const longest = 'x'.repeat(8192)
+    const receipt = await harness.closeWriters({ mutationId: longest }, context)
+    expect(receipt.mutationId).toBe(longest)
+    expect(inspect(path).closures).toBe(1)
+  })
+
+  test('a running task is aborted at the seal and joined before the closure is taken', async () => {
+    const log = []
+    const GatedTask = sdk.defineTask({
+      name: 'candidate.gated',
+      version: 1,
+      initial: () => ({ phase: 'wait' }),
+      phases: {
+        wait: async (_task, _runtime, taskContext) => {
+          log.push('task-started')
+          await new Promise((resolveAbort) =>
+            taskContext.abortSignal.addEventListener('abort', resolveAbort, { once: true })
+          )
+          await new Promise((resolveDelay) => setTimeout(resolveDelay, 40))
+          log.push('task-ended')
+        },
+      },
+      abort: async () => {},
+    })
+    const registry = sdk.createRegistry()
+    registry.install({ name: 'candidate', tasks: [GatedTask] })
+    const path = dbPath()
+    const storage = await node.openNodeSqliteStorage(path)
+    await storage.acquireWriterFence(holder())
+    const closeWriterFence = storage.closeWriterFence.bind(storage)
+    storage.closeWriterFence = (request) => (log.push('closure'), closeWriterFence(request))
+    const harness = await sdk.Harness.open(
+      storage,
+      { models: createModels(), registry, settings: { compaction: { enabled: false } } },
+      context
+    )
+    const root = await harness.root(context)
+    harness.resume()
+    await harness.commit(
+      (tx) =>
+        tx.createTask(
+          GatedTask,
+          {},
+          { ownership: { kind: 'conversation' }, conversationId: root.id }
+        ),
+      context
+    )
+    await tick()
+    expect(log).toEqual(['task-started'])
+    log.push('closeWriters')
+    const receipt = await harness.closeWriters({ mutationId: 'mutation:task' }, context)
+    expect(log).toEqual(['task-started', 'closeWriters', 'task-ended', 'closure'])
+    expect(receipt.lastSeq).toBe(inspect(path).lastSeq)
+  })
+
+  test('the real Harness join cannot reject: a task that throws while being aborted does not stop the closure', async () => {
+    const ThrowingTask = sdk.defineTask({
+      name: 'candidate.throwing',
+      version: 1,
+      initial: () => ({ phase: 'wait' }),
+      phases: {
+        wait: async (_task, _runtime, taskContext) => {
+          await new Promise((resolveAbort) =>
+            taskContext.abortSignal.addEventListener('abort', resolveAbort, { once: true })
+          )
+          throw new Error('task exploded')
+        },
+      },
+      abort: async () => {},
+    })
+    const registry = sdk.createRegistry()
+    registry.install({ name: 'candidate-throwing', tasks: [ThrowingTask] })
+    const path = dbPath()
+    const storage = await node.openNodeSqliteStorage(path)
+    await storage.acquireWriterFence(holder())
+    const harness = await sdk.Harness.open(
+      storage,
+      {
+        models: createModels(),
+        registry,
+        settings: { compaction: { enabled: false } },
+        onReport: () => {},
+      },
+      context
+    )
+    const root = await harness.root(context)
+    harness.resume()
+    await harness.commit(
+      (tx) =>
+        tx.createTask(
+          ThrowingTask,
+          {},
+          { ownership: { kind: 'conversation' }, conversationId: root.id }
+        ),
+      context
+    )
+    await tick()
+    const receipt = await harness.closeWriters({ mutationId: 'mutation:throwing' }, context)
+    expect(receipt.mutationId).toBe('mutation:throwing')
+    expect(inspect(path).closures).toBe(1)
+  })
+
+  test('a join that rejects (injected; the real Harness join cannot) skips the closure but still closes Session and storage', async () => {
+    const path = dbPath()
+    const storage = await node.openNodeSqliteStorage(path)
+    await storage.acquireWriterFence(holder())
+    const session = sdk.createSession(storage)
+    session.beforeClose = () => Promise.reject(new Error('join exploded'))
+    expect(await code(session.closeWriters({ mutationId: 'mutation:join' }, context))).toBe(
+      'join exploded'
+    )
+    expect(await code(session.commit(async () => 1, context))).toBe('Session is closed')
+    expect(await code(storage.document('x', 'current', context))).toBe('SqliteStorage is closed')
+    expect(listing(path)).toEqual([path.split('/').at(-1)])
+    expect(inspect(path).closures).toBe(0)
+    expect(inspect(path).epoch).toBe(1) // acquisition epoch: no closure was taken
+    expect(await code(session.closeWriters({ mutationId: 'mutation:join' }, context))).toBe(
+      'join exploded'
+    ) // memoized outcome
+  })
+
+  test("cancelling the caller's context does not cancel the closure: a retry with the same mutationId gets the receipt", async () => {
+    const { path, root, harness } = await open()
+    const held = gate()
+    const pending = root.commitAbort(gatedRequest('cancel:one', held), context)
+    await tick()
+    const controller = new AbortController()
+    const closing = harness.closeWriters(
+      { mutationId: 'mutation:cancel' },
+      withAbortSignal(controller.signal, context)
+    )
+    controller.abort(new Error('caller gave up'))
+    expect(await code(closing)).toBe('caller gave up')
+    // Sealed and still pending: nothing new gets in, and the closure has not been taken.
+    expect(await code(harness.commit(async () => 1, context))).toBe('Session is closed')
+    held.release()
+    expect((await pending).requestId).toBe('cancel:one')
+    const receipt = await harness.closeWriters({ mutationId: 'mutation:cancel' }, context)
+    expect(receipt.mutationId).toBe('mutation:cancel')
+    expect(inspect(path).closures).toBe(1)
+    expect(inspect(path).lastSeq).toBe(receipt.lastSeq)
+
+    // A context that is already aborted still seals and closes, and its result is still retrievable.
+    const second = await open()
+    const already = new AbortController()
+    already.abort(new Error('already gone'))
+    expect(
+      await code(
+        second.harness.closeWriters(
+          { mutationId: 'mutation:aborted' },
+          withAbortSignal(already.signal, context)
+        )
+      )
+    ).toBe('already gone')
+    expect(
+      (await second.harness.closeWriters({ mutationId: 'mutation:aborted' }, context)).mutationId
+    ).toBe('mutation:aborted')
+    expect(inspect(second.path).closures).toBe(1)
   })
 
   test("cleanup removes only this run's own directories: a sibling run's sentinel under the same base survives", () => {
