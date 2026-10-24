@@ -31,6 +31,10 @@ const ids = {
   profile: 'prf_01JABCDEF0123456789ABCDEFG',
   execution: 'exe_01JABCDEF0123456789ABCDEFG',
   otherExecution: 'exe_01JABCDEF0123456789ABCDEFH',
+  // Its own execution: tests share one isolated database, so a fixture row on ids.execution would
+  // otherwise show up in the idempotency test's exact listByExecution(ids.execution) assertion
+  // whenever test order puts it first.
+  taggedExecution: 'exe_01JABCDEF0123456789ABCDEFJ',
   attempt: 'att_01JABCDEF0123456789ABCDEFG',
   otherAttempt: 'att_01JABCDEF0123456789ABCDEFH',
   request: 'req_01JABCDEF0123456789ABCDEFG',
@@ -451,6 +455,7 @@ describe.skipIf(!integrationEnabled)('PostgreSQL tool storage', () => {
       const repository = new PostgresToolCallRepository(connection.database, workspaceId)
       const tagged = call({
         toolCallId: 'tlc_01JABCDEF0123456789ABCDEFF',
+        executionId: ids.taggedExecution,
         idempotencyKey: 'tool-tag-immutability-pg-0001',
         requestDigestVersion: 2,
         inputDigestVersion: 2,
