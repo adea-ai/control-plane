@@ -47,7 +47,11 @@ the row can still be read, but nothing here re-attaches it to a caller.
 ## What the receipt is, and is not
 
 It is evidence that, at that epoch, the store accepted no commit after `lastSeq` from the old holder or from any
-other writer without the new token. It is committed in the store and SELECT-readable through a separate read-only connection to the live database file (the tests do this; a true detached snapshot, taken from a copy of the file, is not exercised in this slice).
+other writer without the new token. It is committed in the store and SELECT-readable through a separate read-only connection to the live database file (this slice's tests do this).
+Two later offline candidates build on that, both test-only on temporary SDK copies and disposable files: the C7 read-only open
+(`../c7-read-only-open/`, #1318) reads a cleanly closed store without writing, and a proof test (#1319) shows the receipt ledger
+read that way equals the ledger a read-write reopen of a byte copy reads, at the closure's `lastSeq`. Neither is a capture method:
+a store with a live owner or an uncheckpointed WAL is refused, and no issuer, quiescent-capture method or live use exists.
 It grants no authority. A caller still checks it against what it independently holds with
 `assertPiWriterClosureReceipt`.
 
@@ -55,18 +59,22 @@ It grants no authority. A caller still checks it against what it independently h
 
 - **Session admission sealing.** The contract's `closeWriters` also seals Session admission and settles
   admitted commits at the Session level. This patch settles at the storage level only (commits are serialized by
-  the transaction). Admission sealing is a later slice and needs its own design against `Session.close`.
+  the transaction), so an admitted commit that loses the race to a storage-level closure fails `PI_STORE_FENCED`.
+  Session-level sealing is the separate stacked offline candidate `../c4b-session-admission-sealing/` (#1321), which
+  adds `Session.closeWriters` on top of this patch; this patch alone does not contain it.
 - **Retry safety across storages and processes.** Replay works on the same storage object only (see above). A caller
   whose storage object was dropped has no replay path; the receipt row can be read but the mutation cannot be
   re-attached. The reference model does not prove otherwise.
-- C1 (writer-surface declaration), other backends (C6) and the read-only open (C7).
+- C1 (writer-surface declaration) and other backends (C6). The read-only open (C7) is the separate offline candidate
+  `../c7-read-only-open/` (#1318).
 
 ## Rollback status: NOT rollback-safe
 
 Migration 3 raises the store schema to version 3. The unmodified SDK, the compatibility patch and the C2
 candidate refuse such a store ("schema version 3 is newer than supported version 2"). The only rollback target for
 a store is a byte-identical copy preserved **before** a candidate first opens it. No downgrade path exists and none
-is claimed. Applying migration 3 is an open-time write to an older store; C7's read-only open must not migrate.
+is claimed. Applying migration 3 is an open-time write to an older store; the C7 candidate's read-only open never migrates and reads
+schemas 1, 2 and 3 as they are.
 
 ## Test
 
