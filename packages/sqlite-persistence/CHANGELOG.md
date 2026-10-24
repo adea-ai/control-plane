@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.44.2](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.44.1...sqlite-persistence-v1.44.2) (2026-10-24)
+
+
+### Tests
+
+* **#1018:** retry admission fences across database reopen + serialized e2e inventory ([#1284](https://github.com/adea-ai/control-plane/issues/1284)) ([557c61e](https://github.com/adea-ai/control-plane/commit/557c61ea3d70005922694f824474557f162cb206))
+
 ## [1.44.1](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.44.0...sqlite-persistence-v1.44.1) (2026-10-24)
 
 

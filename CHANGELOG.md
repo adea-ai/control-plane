@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.114.6](https://github.com/adea-ai/control-plane/compare/workspace-v1.114.5...workspace-v1.114.6) (2026-10-24)
+
+
+### Tests
+
+* **#1018:** retry admission fences across database reopen + serialized e2e inventory ([#1284](https://github.com/adea-ai/control-plane/issues/1284)) ([557c61e](https://github.com/adea-ai/control-plane/commit/557c61ea3d70005922694f824474557f162cb206))
+
 ## [1.114.5](https://github.com/adea-ai/control-plane/compare/workspace-v1.114.4...workspace-v1.114.5) (2026-10-24)
 
 
