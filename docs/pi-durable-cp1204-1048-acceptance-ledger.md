@@ -59,7 +59,7 @@ current-candidate test pass is claimed here.
 
 The published scope is the diff from the base `ab931d068142a0c5629ed4d6cc2c96a1b377a986`
 to the published head, which is the head that carries this section. The complete changed scope is
-**280 paths: 90 added, 190 modified**; no path was deleted.
+**305 paths: 93 added, 212 modified**; no path was deleted.
 `tests/pi-durable-cp1048-evidence-discipline.test.mjs` checks this list, these counts and this
 area table against the repository, so the published scope cannot drift away from the code
 without that lane failing.
@@ -68,9 +68,9 @@ without that lane failing.
 | ----------------------------------- | ----- | -------- | ----- |
 | `(repository root)`                 | 0     | 6        | 6     |
 | `apps/control-api`                  | 18    | 25       | 43    |
-| `apps/hosted-control-plane`         | 2     | 5        | 7     |
-| `apps/local-control-plane`          | 0     | 1        | 1     |
-| `apps/runtime-worker`               | 0     | 1        | 1     |
+| `apps/hosted-control-plane`         | 2     | 6        | 8     |
+| `apps/local-control-plane`          | 0     | 2        | 2     |
+| `apps/runtime-worker`               | 0     | 2        | 2     |
 | `apps/workflow-worker`              | 0     | 6        | 6     |
 | `docs`                              | 10    | 4        | 14    |
 | `docs/architecture`                 | 0     | 2        | 2     |
@@ -80,34 +80,34 @@ without that lane failing.
 | `infrastructure`                    | 0     | 2        | 2     |
 | `packages/acp-adapter`              | 0     | 4        | 4     |
 | `packages/config`                   | 0     | 4        | 4     |
-| `packages/context`                  | 0     | 1        | 1     |
+| `packages/context`                  | 0     | 2        | 2     |
 | `packages/contracts`                | 1     | 9        | 10    |
 | `packages/control-sdk`              | 2     | 8        | 10    |
-| `packages/cortana-context-adapter`  | 0     | 1        | 1     |
-| `packages/credential-vault`         | 0     | 1        | 1     |
+| `packages/cortana-context-adapter`  | 0     | 2        | 2     |
+| `packages/credential-vault`         | 0     | 2        | 2     |
 | `packages/database`                 | 1     | 4        | 5     |
 | `packages/domain`                   | 0     | 8        | 8     |
-| `packages/events`                   | 0     | 1        | 1     |
-| `packages/execution-plan`           | 0     | 1        | 1     |
-| `packages/langgraph-adapter`        | 0     | 1        | 1     |
-| `packages/managed-pi-adapter`       | 0     | 1        | 1     |
-| `packages/memory-writeback`         | 0     | 1        | 1     |
-| `packages/model-gateway`            | 0     | 1        | 1     |
+| `packages/events`                   | 0     | 2        | 2     |
+| `packages/execution-plan`           | 0     | 2        | 2     |
+| `packages/langgraph-adapter`        | 0     | 2        | 2     |
+| `packages/managed-pi-adapter`       | 0     | 2        | 2     |
+| `packages/memory-writeback`         | 0     | 2        | 2     |
+| `packages/model-gateway`            | 0     | 2        | 2     |
 | `packages/orchestration`            | 0     | 5        | 5     |
-| `packages/pi-durable-adapter`       | 23    | 20       | 43    |
+| `packages/pi-durable-adapter`       | 26    | 20       | 46    |
 | `packages/policy`                   | 0     | 5        | 5     |
-| `packages/production-readiness`     | 7     | 1        | 8     |
-| `packages/profile-adapters`         | 3     | 6        | 9     |
-| `packages/profile-portability`      | 0     | 1        | 1     |
-| `packages/remote-control-relay`     | 0     | 1        | 1     |
-| `packages/runtime-gateway-protocol` | 0     | 1        | 1     |
-| `packages/runtime-sdk`              | 0     | 4        | 4     |
-| `packages/sandbox`                  | 0     | 1        | 1     |
+| `packages/production-readiness`     | 7     | 2        | 9     |
+| `packages/profile-adapters`         | 3     | 7        | 10    |
+| `packages/profile-portability`      | 0     | 2        | 2     |
+| `packages/remote-control-relay`     | 0     | 2        | 2     |
+| `packages/runtime-gateway-protocol` | 0     | 2        | 2     |
+| `packages/runtime-sdk`              | 0     | 5        | 5     |
+| `packages/sandbox`                  | 0     | 2        | 2     |
 | `packages/sqlite-persistence`       | 0     | 8        | 8     |
 | `packages/tool-execution`           | 0     | 4        | 4     |
-| `packages/tool-sdk`                 | 0     | 1        | 1     |
-| `packages/usage-ledger`             | 0     | 1        | 1     |
-| `packages/workflow-runtime`         | 0     | 1        | 1     |
+| `packages/tool-sdk`                 | 0     | 2        | 2     |
+| `packages/usage-ledger`             | 0     | 2        | 2     |
+| `packages/workflow-runtime`         | 0     | 2        | 2     |
 | `patches`                           | 2     | 0        | 2     |
 | `scripts`                           | 1     | 8        | 9     |
 | `tests`                             | 16    | 22       | 38    |
@@ -160,6 +160,7 @@ A  apps/control-api/src/pi-durable/postgres-cancellation-test-database.fixture.m
 A  apps/control-api/src/pi-durable/postgres-cancellation-test-database.test.mjs
 M  apps/control-api/src/pi-durable/runtime-authority-router.ts
 M  apps/control-api/src/pi-durable/sqlite-publication-reader.ts
+M  apps/hosted-control-plane/CHANGELOG.md
 M  apps/hosted-control-plane/package.json
 M  apps/hosted-control-plane/src/composition.ts
 A  apps/hosted-control-plane/src/hosted-model-forwarding.integration.test.mjs
@@ -167,7 +168,9 @@ M  apps/hosted-control-plane/src/index.test.mjs
 M  apps/hosted-control-plane/src/index.ts
 M  apps/hosted-control-plane/src/reconciliation-wiring.test.mjs
 A  apps/hosted-control-plane/src/reconciliation-workflow-submitter.ts
+M  apps/local-control-plane/CHANGELOG.md
 M  apps/local-control-plane/package.json
+M  apps/runtime-worker/CHANGELOG.md
 M  apps/runtime-worker/package.json
 M  apps/workflow-worker/CHANGELOG.md
 M  apps/workflow-worker/package.json
@@ -210,6 +213,7 @@ M  packages/config/CHANGELOG.md
 M  packages/config/package.json
 M  packages/config/src/managed-cloud.test.mjs
 M  packages/config/src/managed-cloud.ts
+M  packages/context/CHANGELOG.md
 M  packages/context/package.json
 M  packages/contracts/CHANGELOG.md
 M  packages/contracts/package.json
@@ -231,7 +235,9 @@ M  packages/control-sdk/src/index.test.mjs
 A  packages/control-sdk/src/openapi-model-id-parity.test.mjs
 M  packages/control-sdk/src/operations.ts
 A  packages/control-sdk/src/pi-child-publication.test.mjs
+M  packages/cortana-context-adapter/CHANGELOG.md
 M  packages/cortana-context-adapter/package.json
+M  packages/credential-vault/CHANGELOG.md
 M  packages/credential-vault/package.json
 M  packages/database/CHANGELOG.md
 M  packages/database/package.json
@@ -246,11 +252,17 @@ M  packages/domain/src/execution-lifecycle.test.mjs
 M  packages/domain/src/execution-lifecycle.ts
 M  packages/domain/src/versioned-catalog.ts
 M  packages/domain/src/workspace-catalog.ts
+M  packages/events/CHANGELOG.md
 M  packages/events/package.json
+M  packages/execution-plan/CHANGELOG.md
 M  packages/execution-plan/package.json
+M  packages/langgraph-adapter/CHANGELOG.md
 M  packages/langgraph-adapter/package.json
+M  packages/managed-pi-adapter/CHANGELOG.md
 M  packages/managed-pi-adapter/package.json
+M  packages/memory-writeback/CHANGELOG.md
 M  packages/memory-writeback/package.json
+M  packages/model-gateway/CHANGELOG.md
 M  packages/model-gateway/package.json
 M  packages/orchestration/CHANGELOG.md
 M  packages/orchestration/package.json
@@ -280,6 +292,9 @@ M  packages/pi-durable-adapter/src/journal.test.mjs
 M  packages/pi-durable-adapter/src/journal.ts
 A  packages/pi-durable-adapter/src/native-cancellation-boundary.test.mjs
 A  packages/pi-durable-adapter/src/native-cancellation-boundary.ts
+A  packages/pi-durable-adapter/src/native-cancellation-publication.fixture.mjs
+A  packages/pi-durable-adapter/src/native-cancellation-publication.node.fixture.mjs
+A  packages/pi-durable-adapter/src/native-cancellation-publication.test.mjs
 A  packages/pi-durable-adapter/src/native-fence-public-api-probe.test.mjs
 A  packages/pi-durable-adapter/src/native-guarded-abort-compat.test.mjs
 A  packages/pi-durable-adapter/src/pi-engine-receipt-observer.test.mjs
@@ -305,6 +320,7 @@ M  packages/policy/package.json
 M  packages/policy/src/decision-resolution.test.mjs
 M  packages/policy/src/decision-resolution.ts
 M  packages/policy/src/index.ts
+M  packages/production-readiness/CHANGELOG.md
 A  packages/production-readiness/fixtures/dependency-after-bun143.txt
 A  packages/production-readiness/fixtures/dependency-before-bun143.txt
 M  packages/production-readiness/package.json
@@ -313,6 +329,7 @@ A  packages/production-readiness/src/budget-regression.test.mjs
 A  packages/production-readiness/src/dependency-budget-scope.test.mjs
 A  packages/production-readiness/src/startup-budget-probe.mjs
 A  packages/production-readiness/src/startup-budget.test.mjs
+M  packages/profile-adapters/CHANGELOG.md
 M  packages/profile-adapters/README.md
 M  packages/profile-adapters/package.json
 M  packages/profile-adapters/src/guards.ts
@@ -322,13 +339,18 @@ A  packages/profile-adapters/src/wake-restart.worker.mjs
 M  packages/profile-adapters/src/wake.ts
 A  packages/profile-adapters/tsconfig.type-tests.json
 A  packages/profile-adapters/type-tests/retained-wake-repository-assignment.ts
+M  packages/profile-portability/CHANGELOG.md
 M  packages/profile-portability/package.json
+M  packages/remote-control-relay/CHANGELOG.md
 M  packages/remote-control-relay/package.json
+M  packages/runtime-gateway-protocol/CHANGELOG.md
 M  packages/runtime-gateway-protocol/package.json
+M  packages/runtime-sdk/CHANGELOG.md
 M  packages/runtime-sdk/package.json
 M  packages/runtime-sdk/src/index.test.mjs
 M  packages/runtime-sdk/src/pi-durable-lead.test.mjs
 M  packages/runtime-sdk/src/pi-durable-lead.ts
+M  packages/sandbox/CHANGELOG.md
 M  packages/sandbox/package.json
 M  packages/sqlite-persistence/CHANGELOG.md
 M  packages/sqlite-persistence/package.json
@@ -342,8 +364,11 @@ M  packages/tool-execution/CHANGELOG.md
 M  packages/tool-execution/package.json
 M  packages/tool-execution/src/tool-execution.test.mjs
 M  packages/tool-execution/src/tool-execution.ts
+M  packages/tool-sdk/CHANGELOG.md
 M  packages/tool-sdk/package.json
+M  packages/usage-ledger/CHANGELOG.md
 M  packages/usage-ledger/package.json
+M  packages/workflow-runtime/CHANGELOG.md
 M  packages/workflow-runtime/package.json
 A  patches/@earendil-works%2Fpi-durable@1.1.0.patch
 A  patches/pi-durable-1.1.0-NOTICE.md

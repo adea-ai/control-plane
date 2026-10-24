@@ -536,54 +536,60 @@ export class PiDurableRuntimeAdapter implements RuntimeAdapter {
       nativePreparation && guardedCancellation
         ? await guardedCancellation.commit(nativePreparation)
         : undefined
-    if (nativeReceipt) {
-      if (
-        nativeReceipt.requestId !== key ||
+    if (
+      nativeReceipt &&
+      (nativeReceipt.requestId !== key ||
         nativeReceipt.requestDigest !== digest(request) ||
-        nativeReceipt.metadata?.['targetDigest'] !== nativeTargetDigest
-      )
-        fail('PI_NATIVE_CANCELLATION_RECEIPT_INVALID', 'conflict')
-      // N already committed; never reinterpret a lost/racing publication as
-      // zero native effect or rewrite a successor. The retained SDK receipt is
-      // historical evidence for a separately authorized recovery path.
-      const current = this.#record(handle)
-      if (
-        current.epoch !== record.epoch ||
-        canonicalJsonStringify(current.detail) !== canonicalJsonStringify(record.detail)
-      )
-        fail('PI_NATIVE_CANCELLATION_PUBLICATION_UNKNOWN', 'conflict')
-      record = current
-    }
-    const epoch = this.#claim(record)
-    const cancellationPending =
-      targetKind === 'active_generation' ||
-      record.detail['inferencePending'] === true ||
-      this.#active.has(handle.handleId)
-    const state = cancellationPending ? 'cancelling' : 'cancelled'
-    const retainedCancellationIntent =
-      state === 'cancelled' && targetKind === 'no_active_generation'
-        ? {
-            ...cancellationIntent,
-            resolution: 'safe_to_resume' as const,
-            confirmedAt: this.#now(),
-          }
-        : cancellationIntent
-    this.journal.update(
-      record.handleId,
-      epoch,
-      {
-        state,
-        detail: {
-          ...record.detail,
-          observedAt: this.#now(),
-          actions: { ...actions, [key]: digest(request) },
-          cancellationIntent: retainedCancellationIntent,
-          ...(nativeReceipt ? { nativeCancellationReceipt: structuredClone(nativeReceipt) } : {}),
-          inferencePending: state === 'cancelling',
-        },
-      },
-      { type: 'status', data: { state }, at: this.#now() }
+        nativeReceipt.metadata?.['targetDigest'] !== nativeTargetDigest)
     )
+      fail('PI_NATIVE_CANCELLATION_RECEIPT_INVALID', 'conflict')
+    try {
+      if (nativeReceipt) {
+        // N already committed; never reinterpret a lost/racing publication as
+        // zero native effect or rewrite a successor. The retained SDK receipt is
+        // historical evidence for a separately authorized recovery path.
+        const current = this.#record(handle)
+        if (
+          current.epoch !== record.epoch ||
+          canonicalJsonStringify(current.detail) !== canonicalJsonStringify(record.detail)
+        )
+          fail('PI_NATIVE_CANCELLATION_PUBLICATION_UNKNOWN', 'conflict')
+        record = current
+      }
+      const epoch = this.#claim(record)
+      const cancellationPending =
+        targetKind === 'active_generation' ||
+        record.detail['inferencePending'] === true ||
+        this.#active.has(handle.handleId)
+      const state = cancellationPending ? 'cancelling' : 'cancelled'
+      const retainedCancellationIntent =
+        state === 'cancelled' && targetKind === 'no_active_generation'
+          ? {
+              ...cancellationIntent,
+              resolution: 'safe_to_resume' as const,
+              confirmedAt: this.#now(),
+            }
+          : cancellationIntent
+      this.journal.update(
+        record.handleId,
+        epoch,
+        {
+          state,
+          detail: {
+            ...record.detail,
+            observedAt: this.#now(),
+            actions: { ...actions, [key]: digest(request) },
+            cancellationIntent: retainedCancellationIntent,
+            ...(nativeReceipt ? { nativeCancellationReceipt: structuredClone(nativeReceipt) } : {}),
+            inferencePending: state === 'cancelling',
+          },
+        },
+        { type: 'status', data: { state }, at: this.#now() }
+      )
+    } catch (error) {
+      if (nativeReceipt) fail('PI_NATIVE_CANCELLATION_PUBLICATION_UNKNOWN', 'conflict')
+      throw error
+    }
     // Retain and fence cancellation before abort can complete, fail or crash.
     if (active && !nativeReceipt) {
       try {
