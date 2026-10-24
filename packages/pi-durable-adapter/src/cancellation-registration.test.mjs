@@ -509,10 +509,14 @@ for (const operation of ['unregister', 'rebind']) {
               scopes: ['scope:unaffected'],
             })
           )
-    await gate.reading
+    const settled = pending.then(
+      () => undefined,
+      () => undefined
+    )
     let cut
     let epochs
     try {
+      await gate.reading
       cut = await f.coordinator.beginMutation(mutation())
       epochs = f.database.prepare('SELECT * FROM pi_cancel_proto_epochs ORDER BY owner_key').all()
       expect(cut.owners.map(({ owner: retained }) => retained)).toEqual([original])
@@ -520,6 +524,7 @@ for (const operation of ['unregister', 'rebind']) {
       expect(cut.qualifiedAuthorization).toBe(false)
     } finally {
       gate.resume()
+      await settled
     }
     await expect(pending).rejects.toThrow('PI_CANCELLATION_SCOPE_CLOSED')
     expect(await f.coordinator.readEvidence('mutation:one')).toEqual(cut)
@@ -560,15 +565,23 @@ for (const operation of ['register', 'unregister']) {
     const suspended = f.connect(f.native, gate.authority).coordinator
     const pending =
       operation === 'register' ? suspended.register(input) : suspended.unregister(input)
-    await gate.reading
-    input.ownerId = alias.ownerId
-    input.processClaimId = alias.processClaimId
-    input.ownerEpoch = 99
-    input.generation.lineageId = 'lineage:forged'
-    input.generation.restoreGeneration = 'G:forged'
-    input.generation.revision = 99
-    input.scopes.splice(0, input.scopes.length, 'scope:alias')
-    gate.resume()
+    const settled = pending.then(
+      () => undefined,
+      () => undefined
+    )
+    try {
+      await gate.reading
+      input.ownerId = alias.ownerId
+      input.processClaimId = alias.processClaimId
+      input.ownerEpoch = 99
+      input.generation.lineageId = 'lineage:forged'
+      input.generation.restoreGeneration = 'G:forged'
+      input.generation.revision = 99
+      input.scopes.splice(0, input.scopes.length, 'scope:alias')
+    } finally {
+      gate.resume()
+      await settled
+    }
     await pending
     const retained = f.database
       .prepare('SELECT body FROM pi_cancel_proto_owners ORDER BY owner_id')

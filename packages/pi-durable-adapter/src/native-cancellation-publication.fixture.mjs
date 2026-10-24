@@ -128,11 +128,35 @@ export async function withPublicationFault(mode, use, { Adapter, createEngine })
       },
     }
   }
-  adapter = new Adapter(options)
-  originalGet = adapter.journal.get.bind(adapter.journal)
-  originalClaim = adapter.journal.claim.bind(adapter.journal)
-  originalUpdate = adapter.journal.update.bind(adapter.journal)
+  let primaryFailure
+  const cleanup = async () => {
+    // If construction never returned a handle, preserve its state rather than
+    // assume any partially initialized SQLite owner has closed.
+    if (adapter) {
+      try {
+        if (originalGet) adapter.journal.get = originalGet
+        if (originalClaim) adapter.journal.claim = originalClaim
+        if (originalUpdate) adapter.journal.update = originalUpdate
+        await adapter.close()
+        await rm(directory, { recursive: true, force: true })
+      } catch (error) {
+        if (primaryFailure !== undefined)
+          throw new AggregateError(
+            [primaryFailure, error],
+            'Native publication test cleanup failed',
+            {
+              cause: error,
+            }
+          )
+        throw error
+      }
+    }
+  }
   try {
+    adapter = new Adapter(options)
+    originalGet = adapter.journal.get.bind(adapter.journal)
+    originalClaim = adapter.journal.claim.bind(adapter.journal)
+    originalUpdate = adapter.journal.update.bind(adapter.journal)
     const handle = await adapter.start(request)
     await Promise.race([
       providerEntered.promise,
@@ -165,13 +189,12 @@ export async function withPublicationFault(mode, use, { Adapter, createEngine })
       providerRequests: () => faux.state.callCount,
       streamAborts: () => streamAborts,
     })
+  } catch (error) {
+    primaryFailure = error
+    throw error
   } finally {
-    adapter.journal.get = originalGet
-    adapter.journal.claim = originalClaim
-    adapter.journal.update = originalUpdate
     releaseProvider.resolve()
     releaseAdapterRun.resolve()
-    await adapter.close()
-    await rm(directory, { recursive: true, force: true })
+    await cleanup()
   }
 }
