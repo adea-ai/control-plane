@@ -1,0 +1,123 @@
+diff --git a/dist/harness/harness.js b/dist/harness/harness.js
+index 1ae24ef..ba7f966 100644
+--- a/dist/harness/harness.js
++++ b/dist/harness/harness.js
+@@ -212,6 +212,9 @@ class HarnessImpl extends SessionImpl {
+         this.#closed = true;
+         return super.close(context);
+     }
++    admissionSealed() {
++        this.#closed = true;
++    }
+     /** Join task invocations after admission is sealed and before Storage closes; writes no task outcome. */
+     beforeClose() {
+         return this.#tasks.join();
+diff --git a/dist/session/session.d.ts b/dist/session/session.d.ts
+index 8586b83..93ea00b 100644
+--- a/dist/session/session.d.ts
++++ b/dist/session/session.d.ts
+@@ -54,6 +54,10 @@ export declare class SessionImpl implements Session {
+     snapshotAsOf<T extends JsonObject>(token: RewindableConversationDocToken<T>, conversationId: ConversationId, at: EntryId, context: Context): Promise<Readonly<T> | undefined>;
+     snapshotAsOf<T extends JsonObject, I extends JsonValue>(token: RewindableConversationDocFamilyToken<T, I>, conversationId: ConversationId, key: string, at: EntryId, context: Context): Promise<Readonly<T> | undefined>;
+     close(context: Context): Promise<void>;
++    closeWriters(request: {
++        readonly mutationId: string;
++    }, context: Context): Promise<unknown>;
++    protected admissionSealed(): void;
+     /**
+      * Runs inside every transaction that creates or forks a conversation, after the conversation record is staged. A
+      * plain Session stages nothing; a Harness stages its built-in documents.
+diff --git a/dist/session/session.js b/dist/session/session.js
+index 922bfdf..a1a5fac 100644
+--- a/dist/session/session.js
++++ b/dist/session/session.js
+@@ -24,6 +24,7 @@ export class SessionImpl {
+     #host;
+     #tail = Promise.resolve();
+     #closing;
++    #writerClosure;
+     #poison;
+     constructor(storage, now = Date.now) {
+         this.#storage = storage;
+@@ -223,6 +224,63 @@ export class SessionImpl {
+         }
+         return awaitWithContext(this.#closing, context);
+     }
++    /**
++     * Seal admission, settle every already-admitted commit, take the storage writer closure (C4) on the mutation line,
++     * then complete the close. Always ends in a closed Session once accepted; resolves with the closure receipt only if the
++     * closure committed. Same `mutationId` again returns the same receipt; another `mutationId`, or a Session that
++     * `close()` already started closing, is rejected with no closure taken.
++     */
++    closeWriters(request, context) {
++        const mutationId = request?.mutationId;
++        if (typeof mutationId !== "string" || mutationId.length === 0)
++            return Promise.reject(new Error("PI_SESSION_CLOSE_WRITERS_REQUEST_INVALID"));
++        if (this.#writerClosure !== undefined) {
++            return this.#writerClosure.mutationId === mutationId
++                ? awaitWithContext(this.#writerClosure.done, context)
++                : Promise.reject(new Error("PI_SESSION_CLOSURE_CONFLICT"));
++        }
++        if (this.#closing !== undefined)
++            return Promise.reject(new Error("PI_SESSION_CLOSING"));
++        try {
++            this.#assertHealthy();
++        }
++        catch (error) {
++            return Promise.reject(error);
++        }
++        if (typeof this.#storage.closeWriterFence !== "function")
++            return Promise.reject(new Error("PI_SESSION_CLOSE_WRITERS_UNAVAILABLE"));
++        const cleanup = withoutAbortSignal(context);
++        let receipt;
++        let failure;
++        // Admission is sealed synchronously here; the closure is taken only after admitted commits on the line settled.
++        this.#closing = Promise.resolve()
++            .then(() => this.beforeClose())
++            .then(() => this.#enqueue(async () => {
++            try {
++                receipt = await this.#storage.closeWriterFence({ mutationId });
++            }
++            catch (error) {
++                failure = { error };
++            }
++            this.#commitListeners.clear();
++            this.#documents.clear();
++            await this.#storage.close(cleanup);
++        }));
++        const done = this.#closing.then(() => {
++            if (failure !== undefined)
++                throw failure.error;
++            return receipt;
++        });
++        this.#writerClosure = { mutationId, done };
++        this.admissionSealed();
++        const listeners = [...this.#closeListeners];
++        this.#closeListeners.clear();
++        for (const listener of listeners)
++            listener();
++        return awaitWithContext(done, context);
++    }
++    /** Runs synchronously once `closeWriters` has sealed admission; a Harness mirrors it in its own state. */
++    admissionSealed() { }
+     /**
+      * Runs inside every transaction that creates or forks a conversation, after the conversation record is staged. A
+      * plain Session stages nothing; a Harness stages its built-in documents.
+diff --git a/dist/types.d.ts b/dist/types.d.ts
+index 99c4edc..261ad61 100644
+--- a/dist/types.d.ts
++++ b/dist/types.d.ts
+@@ -782,6 +782,13 @@ export interface Session extends DocumentObserver {
+     commit<T>(change: (tx: Tx) => T | Promise<T>, context: Context): Promise<T>;
+     /** Seal admission, settle admitted commits, then close storage. */
+     close(context: Context): Promise<void>;
++    /**
++     * Seal admission, settle admitted commits, take the storage writer closure on the mutation line, then close storage.
++     * Requires a storage with `closeWriterFence`; rejects before sealing otherwise. Resolves with the closure receipt.
++     */
++    closeWriters(request: {
++        readonly mutationId: string;
++    }, context: Context): Promise<unknown>;
+     /** Observe complete commits synchronously after adoption. The listener must not throw, block, or call Session APIs. */
+     subscribeCommits(listener: (publication: CommitPublication, context: Context) => void): () => void;
+     /** Observe close synchronously when it begins. The listener must not throw, block, or call Session APIs. */
