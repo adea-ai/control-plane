@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.114.2](https://github.com/adea-ai/control-plane/compare/workspace-v1.114.1...workspace-v1.114.2) (2026-10-24)
+
+
+### Tests
+
+* batch Pi scope evidence after main integration ([#1302](https://github.com/adea-ai/control-plane/issues/1302)) ([8a16b94](https://github.com/adea-ai/control-plane/commit/8a16b94740fbadb87cf278eba4ee3e1486a1b414))
+
 ## [1.114.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.114.0...workspace-v1.114.1) (2026-10-24)
 
 
