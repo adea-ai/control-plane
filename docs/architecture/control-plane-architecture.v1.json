@@ -9,7 +9,7 @@
     {
       "name": "@control-plane/acp-adapter",
       "path": "packages/acp-adapter",
-      "version": "1.11.1",
+      "version": "1.14.0",
       "lockVersion": "1.11.1",
       "kind": "package",
       "private": true,
@@ -29,7 +29,7 @@
     {
       "name": "@control-plane/bootstrap",
       "path": "packages/bootstrap",
-      "version": "1.3.2",
+      "version": "1.3.4",
       "lockVersion": "1.3.2",
       "kind": "package",
       "private": true,
@@ -44,7 +44,7 @@
     {
       "name": "@control-plane/config",
       "path": "packages/config",
-      "version": "1.12.0",
+      "version": "1.12.1",
       "lockVersion": "1.12.0",
       "kind": "package",
       "private": true,
@@ -59,7 +59,7 @@
     {
       "name": "@control-plane/context",
       "path": "packages/context",
-      "version": "1.11.0",
+      "version": "1.12.0",
       "lockVersion": "1.11.0",
       "kind": "package",
       "private": true,
@@ -74,7 +74,7 @@
     {
       "name": "@control-plane/contracts",
       "path": "packages/contracts",
-      "version": "1.21.4",
+      "version": "1.21.6",
       "lockVersion": "1.21.4",
       "kind": "package",
       "private": false,
@@ -89,8 +89,8 @@
     {
       "name": "@control-plane/control-api",
       "path": "apps/control-api",
-      "version": "1.34.3",
-      "lockVersion": "1.34.1",
+      "version": "1.35.0",
+      "lockVersion": "1.34.3",
       "kind": "application",
       "private": true,
       "browser": false,
@@ -161,7 +161,7 @@
     {
       "name": "@control-plane/credential-vault",
       "path": "packages/credential-vault",
-      "version": "1.4.1",
+      "version": "1.4.2",
       "lockVersion": "1.4.1",
       "kind": "package",
       "private": true,
@@ -176,7 +176,7 @@
     {
       "name": "@control-plane/database",
       "path": "packages/database",
-      "version": "1.52.1",
+      "version": "1.53.0",
       "lockVersion": "1.52.1",
       "kind": "package",
       "private": true,
@@ -210,7 +210,7 @@
       "name": "@control-plane/deployment",
       "path": "packages/deployment",
       "version": "1.10.8",
-      "lockVersion": "1.10.7",
+      "lockVersion": "1.10.8",
       "kind": "package",
       "private": true,
       "browser": false,
@@ -224,7 +224,7 @@
     {
       "name": "@control-plane/domain",
       "path": "packages/domain",
-      "version": "1.32.0",
+      "version": "1.33.0",
       "lockVersion": "1.32.0",
       "kind": "package",
       "private": true,
@@ -286,7 +286,7 @@
     {
       "name": "@control-plane/hosted-control-plane",
       "path": "apps/hosted-control-plane",
-      "version": "1.21.3",
+      "version": "1.21.4",
       "lockVersion": "1.21.3",
       "kind": "application",
       "private": true,
@@ -306,6 +306,7 @@
         "@control-plane/memory-writeback",
         "@control-plane/object-store",
         "@control-plane/orchestration",
+        "@control-plane/profile-adapters",
         "@control-plane/remote-control-relay",
         "@control-plane/restate-runtime",
         "@control-plane/secrets",
@@ -355,8 +356,8 @@
     {
       "name": "@control-plane/local-control-plane",
       "path": "apps/local-control-plane",
-      "version": "1.36.3",
-      "lockVersion": "1.36.2",
+      "version": "1.38.0",
+      "lockVersion": "1.36.3",
       "kind": "application",
       "private": true,
       "browser": false,
@@ -390,13 +391,7 @@
         "@control-plane/workflow-runtime",
         "@control-plane/workflow-worker"
       ],
-      "externalDependencies": [
-        "@nestjs/common",
-        "@restatedev/restate-server",
-        "fastify",
-        "semver",
-        "zod"
-      ],
+      "externalDependencies": ["@restatedev/restate-server", "semver", "zod"],
       "developmentWorkspaceDependencies": [],
       "developmentExternalDependencies": [],
       "layer": "composition-root"
@@ -440,7 +435,7 @@
       "name": "@control-plane/model-gateway",
       "path": "packages/model-gateway",
       "version": "1.6.2",
-      "lockVersion": "1.6.1",
+      "lockVersion": "1.6.2",
       "kind": "package",
       "private": true,
       "browser": false,
@@ -480,8 +475,8 @@
     {
       "name": "@control-plane/orchestration",
       "path": "packages/orchestration",
-      "version": "1.11.0",
-      "lockVersion": "1.10.3",
+      "version": "1.12.0",
+      "lockVersion": "1.11.0",
       "kind": "package",
       "private": true,
       "browser": false,
@@ -521,7 +516,7 @@
     {
       "name": "@control-plane/pi-durable-adapter",
       "path": "packages/pi-durable-adapter",
-      "version": "0.10.4",
+      "version": "0.10.5",
       "lockVersion": "0.10.4",
       "kind": "package",
       "private": true,
@@ -566,7 +561,7 @@
     {
       "name": "@control-plane/production-readiness",
       "path": "packages/production-readiness",
-      "version": "1.5.1",
+      "version": "1.5.2",
       "lockVersion": "1.5.1",
       "kind": "package",
       "private": true,
@@ -595,6 +590,7 @@
       "externalDependencies": ["zod"],
       "developmentWorkspaceDependencies": [
         "@control-plane/domain",
+        "@control-plane/execution-plan",
         "@control-plane/managed-pi-adapter",
         "@control-plane/pi-durable-adapter"
       ],
@@ -604,7 +600,7 @@
     {
       "name": "@control-plane/profile-portability",
       "path": "packages/profile-portability",
-      "version": "1.7.2",
+      "version": "1.7.3",
       "lockVersion": "1.7.2",
       "kind": "package",
       "private": true,
@@ -658,8 +654,8 @@
     {
       "name": "@control-plane/runtime-gateway",
       "path": "apps/runtime-gateway",
-      "version": "1.9.1",
-      "lockVersion": "1.9.0",
+      "version": "1.10.0",
+      "lockVersion": "1.9.1",
       "kind": "application",
       "private": true,
       "browser": false,
@@ -690,7 +686,7 @@
     {
       "name": "@control-plane/runtime-gateway-protocol",
       "path": "packages/runtime-gateway-protocol",
-      "version": "1.9.0",
+      "version": "1.10.0",
       "lockVersion": "1.9.0",
       "kind": "package",
       "private": false,
@@ -705,7 +701,7 @@
     {
       "name": "@control-plane/runtime-sdk",
       "path": "packages/runtime-sdk",
-      "version": "1.17.0",
+      "version": "1.17.1",
       "lockVersion": "1.17.0",
       "kind": "package",
       "private": false,
@@ -720,7 +716,7 @@
     {
       "name": "@control-plane/runtime-worker",
       "path": "apps/runtime-worker",
-      "version": "1.9.2",
+      "version": "1.9.3",
       "lockVersion": "1.9.2",
       "kind": "application",
       "private": true,
@@ -761,7 +757,7 @@
     {
       "name": "@control-plane/sdk",
       "path": "packages/control-sdk",
-      "version": "1.20.0",
+      "version": "1.20.1",
       "lockVersion": "1.20.0",
       "kind": "package",
       "private": false,
@@ -791,8 +787,8 @@
     {
       "name": "@control-plane/sqlite-persistence",
       "path": "packages/sqlite-persistence",
-      "version": "1.42.3",
-      "lockVersion": "1.42.1",
+      "version": "1.43.0",
+      "lockVersion": "1.42.3",
       "kind": "package",
       "private": true,
       "browser": false,
@@ -826,7 +822,7 @@
       "name": "@control-plane/telemetry",
       "path": "packages/telemetry",
       "version": "1.8.2",
-      "lockVersion": "1.8.1",
+      "lockVersion": "1.8.2",
       "kind": "package",
       "private": false,
       "browser": false,
@@ -845,7 +841,7 @@
       "name": "@control-plane/testing",
       "path": "packages/testing",
       "version": "1.2.5",
-      "lockVersion": "1.2.4",
+      "lockVersion": "1.2.5",
       "kind": "package",
       "private": true,
       "browser": false,
@@ -859,7 +855,7 @@
     {
       "name": "@control-plane/tool-execution",
       "path": "packages/tool-execution",
-      "version": "1.5.2",
+      "version": "1.5.3",
       "lockVersion": "1.5.2",
       "kind": "package",
       "private": true,
@@ -880,7 +876,7 @@
     {
       "name": "@control-plane/tool-gateway",
       "path": "apps/tool-gateway",
-      "version": "1.5.1",
+      "version": "1.5.2",
       "lockVersion": "1.5.1",
       "kind": "application",
       "private": true,
@@ -947,8 +943,8 @@
     {
       "name": "@control-plane/workflow-worker",
       "path": "apps/workflow-worker",
-      "version": "1.18.2",
-      "lockVersion": "1.18.1",
+      "version": "1.18.4",
+      "lockVersion": "1.18.2",
       "kind": "application",
       "private": true,
       "browser": false,
@@ -972,7 +968,7 @@
         "@control-plane/usage-ledger",
         "@control-plane/workflow-runtime"
       ],
-      "externalDependencies": ["@opentelemetry/api", "@restatedev/restate-sdk"],
+      "externalDependencies": ["@opentelemetry/api"],
       "developmentWorkspaceDependencies": [],
       "developmentExternalDependencies": [],
       "layer": "composition-root"
@@ -2663,6 +2659,49 @@
       "controllerReachable": true
     },
     {
+      "id": "OP-PI-DURABLE-CHILD-PUBLICATION-CURRENT",
+      "name": "getPiDurableChildPublication",
+      "operation": "pi-durable.child.publication.current",
+      "method": "POST",
+      "path": "/v1/pi-durable/child-publication/current",
+      "classification": "partially_verified",
+      "trace": {
+        "auth": "Existing execution:read service authentication, exact workspace and transport principal, final lock-safe current CP grant",
+        "service": "PiChildPublicationController -> PiChildPublicationService -> exact canonical parent receipt, child record and retained terminal J1 inbox event",
+        "persistence": "Two matching reads of retained SQLite parent and child metadata and persistent parent inbox; no writes",
+        "execution": "No runtime start, product callback, provider call, spending reservation or artifact content read",
+        "delivery": "Bounded terminal metadata with exact parent/child attempt, publication receipt and short current authority expiry",
+        "cleanup": "No acknowledgment or deletion of J1 inbox; independent Adea audience and publication receipt required"
+      },
+      "assessment": "Focused source and SDK tests cover exact retained J1 event, mismatched/out-of-order event, stale attempt and revoked grant. Adea PostgreSQL publisher has an independent receipt; installed SDK, authorized artifact content and combined desktop acceptance remain unqualified.",
+      "evidence": [
+        {
+          "kind": "test",
+          "path": "apps/control-api/src/pi-durable/child-publication-current.test.mjs"
+        },
+        {
+          "kind": "test",
+          "path": "packages/control-sdk/src/pi-child-publication.test.mjs"
+        },
+        {
+          "kind": "documentation",
+          "path": "docs/pi-durable-report-back.md"
+        }
+      ],
+      "gap": {
+        "issue": 931,
+        "severity": "high",
+        "owner": "Pi Durable implementation owner",
+        "disposition": "Qualify installed SDK and combined Adea/CP J1-to-timeline delivery, authorized result content and live restart/revocation acceptance before closing child progress delivery."
+      },
+      "inOpenApi": true,
+      "openApiOperationId": "pi-durable.child.publication.current",
+      "openApiResponseStatuses": ["200", "default"],
+      "openApiSecured": true,
+      "openApiHasRequestSchema": true,
+      "controllerReachable": true
+    },
+    {
       "id": "OP-PI-DURABLE-LEAD-CANCEL",
       "name": "cancelPiDurableLead",
       "operation": "pi-durable.lead.cancel",
@@ -3338,7 +3377,7 @@
         "owner": "managed-cloud-runtime",
         "disposition": "Verify the explicit remote composition with authenticated Gateway/RuntimeNode execution, Artifact and usage delivery, recovery and provider boundaries from the frozen deployed candidate before claiming general Cloud execution readiness."
       },
-      "sourceDigest": "sha256:765541d709c05f1c6687bd80e866e6c075938ad1767dca05c7ade21db781ca27"
+      "sourceDigest": "sha256:1f08e5ea04ec05618f32ed0d8d0ad396d0dc8b7e594b8ebf5fa36078369a6935"
     },
     {
       "id": "hosted-server",
@@ -3377,7 +3416,7 @@
         "owner": "hosted-runtime",
         "disposition": "Compose the approved RuntimeNode identity source and Artifact-backed WebSocket bridge, then certify the Hosted Server restart matrix."
       },
-      "sourceDigest": "sha256:6bd56cef0f50263177010fcf01ab37bad3d420ff7a64217df777813febbdb58f"
+      "sourceDigest": "sha256:ffd1429f9c5fe4033b80af1b19d72246fdfaaa442326305953f49e4e2b8cfc10"
     },
     {
       "id": "hosted-simple",

@@ -1,6 +1,6 @@
 {
   "name": "@control-plane/credential-vault",
-  "version": "1.4.2",
+  "version": "1.4.3",
   "private": true,
   "files": [
     "dist"
@@ -29,7 +29,7 @@
   "dependencies": {
     "@control-plane/contracts": "workspace:*",
     "@control-plane/policy": "workspace:*",
-    "zod": "4.6.5"
+    "zod": "4.6.6"
   },
   "engines": {
     "node": "24.21.0"

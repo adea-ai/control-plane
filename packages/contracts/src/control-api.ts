@@ -7,6 +7,7 @@ import {
 } from './graphs.js'
 import { ServiceCallerAssertionSchema, ServiceScopeSchema } from './authentication.js'
 import { executionScopeFields, validateExecutionScopeFields } from './execution-scope.js'
+import { ModelIdSchema } from './decision-resolution.js'
 import { CorrelationMetadataSchema } from './envelopes.js'
 import { IdentifierSchemas } from './identifiers.js'
 import { CursorSchema } from './pagination.js'
@@ -32,40 +33,40 @@ const CapabilityNameSchema = z
   .regex(/^[a-z][a-z0-9.-]*$/)
 
 const RequestContextSchema = z.object({
-  caller: ServiceCallerAssertionSchema,
-  contractVersion: ContractVersionSchema,
-  requestId: IdentifierSchemas.requestId,
-  workspaceId: IdentifierSchemas.workspaceId,
+  caller: ServiceCallerAssertionSchema as typeof ServiceCallerAssertionSchema,
+  contractVersion: ContractVersionSchema as typeof ContractVersionSchema,
+  requestId: IdentifierSchemas.requestId as typeof IdentifierSchemas.requestId,
+  workspaceId: IdentifierSchemas.workspaceId as typeof IdentifierSchemas.workspaceId,
   projectId: IdentifierSchemas.projectId.optional(),
-  correlation: CorrelationMetadataSchema,
+  correlation: CorrelationMetadataSchema as typeof CorrelationMetadataSchema,
 })
 
 const CommandContextSchema = RequestContextSchema.extend({
-  commandId: IdentifierSchemas.commandId,
-  idempotencyKey: IdempotencyKeySchema,
-  payloadHash: PayloadHashSchema,
+  commandId: IdentifierSchemas.commandId as typeof IdentifierSchemas.commandId,
+  idempotencyKey: IdempotencyKeySchema as typeof IdempotencyKeySchema,
+  payloadHash: PayloadHashSchema as typeof PayloadHashSchema,
 })
 
 const ResponseContextSchema = z.object({
-  contractVersion: ContractVersionSchema,
-  requestId: IdentifierSchemas.requestId,
-  correlation: CorrelationMetadataSchema,
+  contractVersion: ContractVersionSchema as typeof ContractVersionSchema,
+  requestId: IdentifierSchemas.requestId as typeof IdentifierSchemas.requestId,
+  correlation: CorrelationMetadataSchema as typeof CorrelationMetadataSchema,
 })
 
 const successResponse = <Data extends z.ZodType>(data: Data) =>
   ResponseContextSchema.extend({ data })
 
 export const ProjectStateReferenceSchema = z.object({
-  workspaceId: IdentifierSchemas.workspaceId,
-  projectId: IdentifierSchemas.projectId,
+  workspaceId: IdentifierSchemas.workspaceId as typeof IdentifierSchemas.workspaceId,
+  projectId: IdentifierSchemas.projectId as typeof IdentifierSchemas.projectId,
   revision: z.number().int().nonnegative(),
 })
 
 export type ProjectStateReference = z.output<typeof ProjectStateReferenceSchema>
 
 export const ContextPackagePublicReferenceSchema = z.object({
-  contextPackageId: IdentifierSchemas.contextPackageId,
-  contentDigest: DigestSchema,
+  contextPackageId: IdentifierSchemas.contextPackageId as typeof IdentifierSchemas.contextPackageId,
+  contentDigest: DigestSchema as typeof DigestSchema,
   schemaVersion: z.number().int().positive(),
   compilerVersion: z.string().min(1).max(64),
 })
@@ -78,7 +79,7 @@ export const ContextAuthoringInputsSchema = z.strictObject({
   candidates: z
     .array(
       z.strictObject({
-        itemId: IdentifierSchemas.projectStateItemId,
+        itemId: IdentifierSchemas.projectStateItemId as typeof IdentifierSchemas.projectStateItemId,
         itemRevision: z.number().int().positive(),
         required: z.boolean(),
         priority: z.number().int(),
@@ -98,21 +99,21 @@ export type ContextAuthoringInputs = z.output<typeof ContextAuthoringInputsSchem
 export const PolicySnapshotPublicReferenceSchema = z.object({
   policySnapshotId: z.string().min(1).max(256),
   revision: z.number().int().positive(),
-  contentDigest: DigestSchema,
+  contentDigest: DigestSchema as typeof DigestSchema,
 })
 
 export type PolicySnapshotPublicReference = z.output<typeof PolicySnapshotPublicReferenceSchema>
 
 export const ExecutionPlanPublicReferenceSchema = z.object({
-  executionPlanId: IdentifierSchemas.executionPlanId,
-  contentDigest: DigestSchema,
+  executionPlanId: IdentifierSchemas.executionPlanId as typeof IdentifierSchemas.executionPlanId,
+  contentDigest: DigestSchema as typeof DigestSchema,
 })
 
 export type ExecutionPlanPublicReference = z.output<typeof ExecutionPlanPublicReferenceSchema>
 
 export const ServiceAuthenticationRequestSchema = RequestContextSchema.extend({
   operation: z.literal('authentication.verify'),
-  requestedAt: TimestampSchema,
+  requestedAt: TimestampSchema as typeof TimestampSchema,
 })
 
 export const ServiceAuthenticationResponseSchema = successResponse(
@@ -130,9 +131,9 @@ export const ServiceAuthenticationResponseSchema = successResponse(
 
 export const ProfileResolutionRequestSchema = RequestContextSchema.extend({
   operation: z.literal('profile.resolve'),
-  requestedAt: TimestampSchema,
+  requestedAt: TimestampSchema as typeof TimestampSchema,
   parameters: z.object({
-    profileId: IdentifierSchemas.profileId,
+    profileId: IdentifierSchemas.profileId as typeof IdentifierSchemas.profileId,
     profileVersionId: IdentifierSchemas.profileVersionId.optional(),
   }),
 })
@@ -140,12 +141,13 @@ export const ProfileResolutionRequestSchema = RequestContextSchema.extend({
 export const ProfileResolutionResponseSchema = successResponse(
   z.object({
     profile: z.object({
-      profileId: IdentifierSchemas.profileId,
-      profileVersionId: IdentifierSchemas.profileVersionId,
+      profileId: IdentifierSchemas.profileId as typeof IdentifierSchemas.profileId,
+      profileVersionId:
+        IdentifierSchemas.profileVersionId as typeof IdentifierSchemas.profileVersionId,
       version: z.number().int().positive(),
       revision: z.number().int().positive(),
       schemaVersion: z.number().int().positive(),
-      contentDigest: DigestSchema,
+      contentDigest: DigestSchema as typeof DigestSchema,
       lifecycle: z.literal('published'),
     }),
     skillVersionIds: z.array(IdentifierSchemas.skillVersionId).max(128),
@@ -155,7 +157,7 @@ export const ProfileResolutionResponseSchema = successResponse(
 const GraphMutationContextSchema = CommandContextSchema.omit({ projectId: true })
 const GraphLifecyclePayloadSchema = z
   .object({
-    reference: GraphReferenceSchema,
+    reference: GraphReferenceSchema as typeof GraphReferenceSchema,
     expectedRevision: z.number().int().positive(),
     reason: z.string().min(1).max(1024),
   })
@@ -163,23 +165,23 @@ const GraphLifecyclePayloadSchema = z
 
 export const GraphDefinitionPublishRequestSchema = GraphMutationContextSchema.extend({
   operation: z.literal('graph.publish'),
-  issuedAt: TimestampSchema,
+  issuedAt: TimestampSchema as typeof TimestampSchema,
   payload: z.object({ definition: GraphDefinitionContentSchema }).strict(),
 }).strict()
 export const GraphDefinitionDeprecationRequestSchema = GraphMutationContextSchema.extend({
   operation: z.literal('graph.deprecate'),
-  issuedAt: TimestampSchema,
-  payload: GraphLifecyclePayloadSchema,
+  issuedAt: TimestampSchema as typeof TimestampSchema,
+  payload: GraphLifecyclePayloadSchema as typeof GraphLifecyclePayloadSchema,
 }).strict()
 export const GraphDefinitionRevocationRequestSchema = GraphMutationContextSchema.extend({
   operation: z.literal('graph.revoke'),
-  issuedAt: TimestampSchema,
-  payload: GraphLifecyclePayloadSchema,
+  issuedAt: TimestampSchema as typeof TimestampSchema,
+  payload: GraphLifecyclePayloadSchema as typeof GraphLifecyclePayloadSchema,
 }).strict()
 export const GraphDefinitionResolutionRequestSchema = RequestContextSchema.omit({ projectId: true })
   .extend({
     operation: z.literal('graph.resolve'),
-    requestedAt: TimestampSchema,
+    requestedAt: TimestampSchema as typeof TimestampSchema,
     parameters: z.object({ reference: GraphReferenceSchema }).strict(),
   })
   .strict()
@@ -229,9 +231,9 @@ export const CredentialSecretValueSchema = z
 /** Public connector-credential metadata. It never contains secret material or references. */
 export const CredentialPublicMetadataSchema = z
   .object({
-    credentialId: IdentifierSchemas.credentialId,
-    workspaceId: IdentifierSchemas.workspaceId,
-    connectorRef: CredentialReferenceSchema,
+    credentialId: IdentifierSchemas.credentialId as typeof IdentifierSchemas.credentialId,
+    workspaceId: IdentifierSchemas.workspaceId as typeof IdentifierSchemas.workspaceId,
+    connectorRef: CredentialReferenceSchema as typeof CredentialReferenceSchema,
     provider: z
       .string()
       .min(1)
@@ -239,7 +241,7 @@ export const CredentialPublicMetadataSchema = z
       .regex(/^[a-z][a-z0-9.-]*$/),
     status: z.enum(['active', 'revoked', 'expired', 'secret_required']),
     revision: z.number().int().positive(),
-    createdAt: TimestampSchema,
+    createdAt: TimestampSchema as typeof TimestampSchema,
     createdBy: CredentialReferenceSchema.optional(),
     rotatedAt: TimestampSchema.optional(),
     expiresAt: TimestampSchema.optional(),
@@ -253,40 +255,40 @@ const CredentialReadContextSchema = RequestContextSchema.omit({ projectId: true 
 
 export const CredentialCreateRequestSchema = CredentialCommandContextSchema.extend({
   operation: z.literal('credential.create'),
-  issuedAt: TimestampSchema,
+  issuedAt: TimestampSchema as typeof TimestampSchema,
   payload: z
     .object({
-      connectorRef: CredentialReferenceSchema,
+      connectorRef: CredentialReferenceSchema as typeof CredentialReferenceSchema,
       provider: CredentialPublicMetadataSchema.shape.provider,
-      secret: CredentialSecretValueSchema,
+      secret: CredentialSecretValueSchema as typeof CredentialSecretValueSchema,
       expiresAt: TimestampSchema.optional(),
     })
     .strict(),
 }).strict()
 export const CredentialRotateRequestSchema = CredentialCommandContextSchema.extend({
   operation: z.literal('credential.rotate'),
-  issuedAt: TimestampSchema,
+  issuedAt: TimestampSchema as typeof TimestampSchema,
   payload: z
     .object({
-      credentialId: IdentifierSchemas.credentialId,
+      credentialId: IdentifierSchemas.credentialId as typeof IdentifierSchemas.credentialId,
       expectedRevision: z.number().int().positive(),
-      secret: CredentialSecretValueSchema,
+      secret: CredentialSecretValueSchema as typeof CredentialSecretValueSchema,
     })
     .strict(),
 }).strict()
 export const CredentialRevokeRequestSchema = CredentialCommandContextSchema.extend({
   operation: z.literal('credential.revoke'),
-  issuedAt: TimestampSchema,
+  issuedAt: TimestampSchema as typeof TimestampSchema,
   payload: z.object({ credentialId: IdentifierSchemas.credentialId }).strict(),
 }).strict()
 export const CredentialGetRequestSchema = CredentialReadContextSchema.extend({
   operation: z.literal('credential.get'),
-  requestedAt: TimestampSchema,
+  requestedAt: TimestampSchema as typeof TimestampSchema,
   parameters: z.object({ credentialId: IdentifierSchemas.credentialId }).strict(),
 }).strict()
 export const CredentialListRequestSchema = CredentialReadContextSchema.extend({
   operation: z.literal('credential.list'),
-  requestedAt: TimestampSchema,
+  requestedAt: TimestampSchema as typeof TimestampSchema,
   parameters: z
     .object({
       limit: z.number().int().min(1).max(100).optional(),
@@ -323,7 +325,7 @@ const RuntimeNodeCredentialIdSchema = z
   .regex(/^rgc_[A-Za-z0-9_-]+$/)
 export const RuntimeNodeCredentialRevokeRequestSchema = CredentialCommandContextSchema.extend({
   operation: z.literal('runtime-node-credential.revoke'),
-  issuedAt: TimestampSchema,
+  issuedAt: TimestampSchema as typeof TimestampSchema,
   payload: z.object({ credentialId: RuntimeNodeCredentialIdSchema }).strict(),
 }).strict()
 export const RuntimeNodeCredentialRevocationResponseSchema = successResponse(
@@ -331,11 +333,11 @@ export const RuntimeNodeCredentialRevocationResponseSchema = successResponse(
     .object({
       credential: z
         .object({
-          credentialId: RuntimeNodeCredentialIdSchema,
+          credentialId: RuntimeNodeCredentialIdSchema as typeof RuntimeNodeCredentialIdSchema,
           nodeId: z.string().regex(/^rnr_[0-9A-HJKMNP-TV-Z]{26}$/),
-          workspaceId: IdentifierSchemas.workspaceId,
+          workspaceId: IdentifierSchemas.workspaceId as typeof IdentifierSchemas.workspaceId,
           revocationVersion: z.number().int().positive(),
-          revokedAt: TimestampSchema,
+          revokedAt: TimestampSchema as typeof TimestampSchema,
         })
         .strict(),
     })
@@ -350,7 +352,7 @@ export type RuntimeNodeCredentialRevocationResponse = z.output<
 
 export const ProjectStateResolutionRequestSchema = RequestContextSchema.extend({
   operation: z.literal('project-state.resolve'),
-  requestedAt: TimestampSchema,
+  requestedAt: TimestampSchema as typeof TimestampSchema,
   parameters: z.object({ revision: z.number().int().nonnegative().optional() }),
 })
 
@@ -364,9 +366,9 @@ export const ProjectStateResolutionResponseSchema = successResponse(
  * the Control Plane owns the initial content and creation time.
  */
 export const ProjectStateInitializationRequestSchema = CommandContextSchema.extend({
-  projectId: IdentifierSchemas.projectId,
+  projectId: IdentifierSchemas.projectId as typeof IdentifierSchemas.projectId,
   operation: z.literal('project-state.initialize'),
-  issuedAt: TimestampSchema,
+  issuedAt: TimestampSchema as typeof TimestampSchema,
   payload: z.object({}).strict(),
 })
 
@@ -374,14 +376,14 @@ export const ProjectStateInitializationResponseSchema = successResponse(
   z.object({
     projectState: ProjectStateReferenceSchema.extend({ revision: z.literal(0) }),
     /** The command that created revision zero; an exact retry returns the original. */
-    commandId: IdentifierSchemas.commandId,
-    initializedAt: TimestampSchema,
+    commandId: IdentifierSchemas.commandId as typeof IdentifierSchemas.commandId,
+    initializedAt: TimestampSchema as typeof TimestampSchema,
   })
 )
 
 export const ContextPackageResolutionRequestSchema = RequestContextSchema.extend({
   operation: z.literal('context-package.resolve'),
-  requestedAt: TimestampSchema,
+  requestedAt: TimestampSchema as typeof TimestampSchema,
   parameters: z.object({ contextPackageId: IdentifierSchemas.contextPackageId }),
 })
 
@@ -393,7 +395,7 @@ const MarketplacePluginReferenceContractSchema = z
   .object({
     pluginId: z.string().regex(/^plugin:[a-z0-9-]+:[a-z0-9][a-z0-9-]{1,127}$/),
     releaseId: z.string().regex(/^release:[a-f0-9]{64}$/),
-    canonicalContentDigest: DigestSchema,
+    canonicalContentDigest: DigestSchema as typeof DigestSchema,
   })
   .strict()
 
@@ -441,9 +443,9 @@ const MarketplaceInstallationIdSchema = z.string().regex(/^ins_[a-z0-9]{1,124}$/
 
 export const MarketplaceCatalogRequestSchema = RequestContextSchema.extend({
   operation: z.literal('marketplace.catalog.read'),
-  requestedAt: TimestampSchema,
+  requestedAt: TimestampSchema as typeof TimestampSchema,
   parameters: z.object({
-    workspaceIdentity: MarketplaceIdentitySchema,
+    workspaceIdentity: MarketplaceIdentitySchema as typeof MarketplaceIdentitySchema,
     // Additive 3.x filter: only installations whose recorded installer (the
     // `workspaceIdentity.userId` of the install request) matches. Omitted,
     // every active installation in the workspace is returned, as before.
@@ -456,7 +458,7 @@ export const MarketplaceCatalogResponseSchema = successResponse(
     catalogId: z.string().regex(/^catalog:[a-f0-9]{64}$/),
     releaseId: z.string().regex(/^catalog:[a-f0-9]{64}$/),
     state: z.enum(['ready', 'stale']),
-    artifacts: MarketplaceArtifactsSchema,
+    artifacts: MarketplaceArtifactsSchema as typeof MarketplaceArtifactsSchema,
     installations: z.array(
       MarketplacePluginReferenceContractSchema.extend({
         // Additive 3.x field: the handle for the installation get and
@@ -472,11 +474,11 @@ export const MarketplaceCatalogResponseSchema = successResponse(
 
 export const MarketplaceInstallRequestSchema = CommandContextSchema.extend({
   operation: z.literal('marketplace.install.request'),
-  issuedAt: TimestampSchema,
+  issuedAt: TimestampSchema as typeof TimestampSchema,
   payload: MarketplacePluginReferenceContractSchema.extend({
     requestedHarness: z.string().min(1).max(128),
     installationInstanceId: z.string().min(1).max(256).optional(),
-    workspaceIdentity: MarketplaceIdentitySchema,
+    workspaceIdentity: MarketplaceIdentitySchema as typeof MarketplaceIdentitySchema,
   }),
 })
 
@@ -500,20 +502,21 @@ export const MarketplaceInstallationSchema = z.object({
   installationInstanceId: z.string().min(1).max(256).optional(),
   packageDigest: DigestSchema.optional(),
   requestedHarness: z.string().min(1).max(128),
-  state: MarketplaceInstallationLifecycleStateSchema,
+  state:
+    MarketplaceInstallationLifecycleStateSchema as typeof MarketplaceInstallationLifecycleStateSchema,
   installedBy: z.string().min(1).max(256),
-  installedAt: TimestampSchema,
-  updatedAt: TimestampSchema,
+  installedAt: TimestampSchema as typeof TimestampSchema,
+  updatedAt: TimestampSchema as typeof TimestampSchema,
   uninstalledBy: z.string().min(1).max(256).optional(),
   uninstalledAt: TimestampSchema.optional(),
 })
 
 export const MarketplaceInstallationGetRequestSchema = RequestContextSchema.extend({
   operation: z.literal('marketplace.installation.get'),
-  requestedAt: TimestampSchema,
+  requestedAt: TimestampSchema as typeof TimestampSchema,
   parameters: z.object({
-    installationId: MarketplaceInstallationIdSchema,
-    workspaceIdentity: MarketplaceIdentitySchema,
+    installationId: MarketplaceInstallationIdSchema as typeof MarketplaceInstallationIdSchema,
+    workspaceIdentity: MarketplaceIdentitySchema as typeof MarketplaceIdentitySchema,
   }),
 })
 
@@ -523,16 +526,16 @@ export const MarketplaceInstallationGetResponseSchema = successResponse(
 
 export const MarketplaceInstallationUninstallRequestSchema = CommandContextSchema.extend({
   operation: z.literal('marketplace.installation.uninstall'),
-  issuedAt: TimestampSchema,
+  issuedAt: TimestampSchema as typeof TimestampSchema,
   payload: z.object({
-    installationId: MarketplaceInstallationIdSchema,
-    workspaceIdentity: MarketplaceIdentitySchema,
+    installationId: MarketplaceInstallationIdSchema as typeof MarketplaceInstallationIdSchema,
+    workspaceIdentity: MarketplaceIdentitySchema as typeof MarketplaceIdentitySchema,
   }),
 })
 
 export const MarketplaceInstallationUninstallResponseSchema = successResponse(
   z.object({
-    installation: MarketplaceInstallationSchema,
+    installation: MarketplaceInstallationSchema as typeof MarketplaceInstallationSchema,
     // True when the installation was already uninstalled, by this or an
     // earlier command; the original uninstall actor and time are returned.
     replayed: z.boolean(),
@@ -562,13 +565,13 @@ export type MarketplaceInstallationUninstallResponse = z.output<
 
 export const MarketplaceInstallPlanRequestSchema = CommandContextSchema.extend({
   operation: z.literal('marketplace.install.plan'),
-  issuedAt: TimestampSchema,
+  issuedAt: TimestampSchema as typeof TimestampSchema,
   payload: z.object({
     pluginId: z.string().regex(/^plugin:[a-z0-9-]+:[a-z0-9][a-z0-9-]{1,127}$/),
     releaseId: z.string().regex(/^release:[a-f0-9]{64}$/),
     instanceId: z.string().min(1).max(256),
     requestedHarness: z.string().min(1).max(128),
-    workspaceIdentity: MarketplaceIdentitySchema,
+    workspaceIdentity: MarketplaceIdentitySchema as typeof MarketplaceIdentitySchema,
   }),
 })
 
@@ -594,13 +597,14 @@ export type MarketplaceInstallPlanRequest = z.output<typeof MarketplaceInstallPl
 export type MarketplaceInstallPlanResponse = z.output<typeof MarketplaceInstallPlanResponseSchema>
 
 export const RuntimeReadModelSchema = z.object({
-  runtimeNodeRefId: IdentifierSchemas.runtimeNodeRefId,
+  runtimeNodeRefId: IdentifierSchemas.runtimeNodeRefId as typeof IdentifierSchemas.runtimeNodeRefId,
   runtimeConnectionId: IdentifierSchemas.runtimeConnectionId.optional(),
-  runtimeDefinitionId: IdentifierSchemas.runtimeDefinitionId,
+  runtimeDefinitionId:
+    IdentifierSchemas.runtimeDefinitionId as typeof IdentifierSchemas.runtimeDefinitionId,
   family: z.string().min(1).max(64),
   location: z.enum(['local_device', 'remote_host', 'agent_hq_cloud']),
   status: z.enum(['available', 'degraded', 'unavailable', 'revoked']),
-  observedAt: TimestampSchema,
+  observedAt: TimestampSchema as typeof TimestampSchema,
   capabilities: z.array(CapabilityNameSchema).max(128),
   limitations: z.array(z.string().min(1).max(512)).max(64),
 })
@@ -609,7 +613,7 @@ export type RuntimeReadModel = z.output<typeof RuntimeReadModelSchema>
 
 export const RuntimeListRequestSchema = RequestContextSchema.extend({
   operation: z.literal('runtime.list'),
-  requestedAt: TimestampSchema,
+  requestedAt: TimestampSchema as typeof TimestampSchema,
   parameters: z.object({
     status: z.enum(['available', 'degraded', 'unavailable', 'revoked']).optional(),
     requiredCapabilities: z.array(CapabilityNameSchema).max(128),
@@ -622,27 +626,28 @@ export const RuntimeListResponseSchema = successResponse(
 
 const ExecutionValidationPayloadSchema = z.object({
   graph: GraphSelectionSchema.optional(),
-  taskId: IdentifierSchemas.taskId,
-  agentId: IdentifierSchemas.agentId,
-  profileVersionId: IdentifierSchemas.profileVersionId,
+  taskId: IdentifierSchemas.taskId as typeof IdentifierSchemas.taskId,
+  agentId: IdentifierSchemas.agentId as typeof IdentifierSchemas.agentId,
+  profileVersionId: IdentifierSchemas.profileVersionId as typeof IdentifierSchemas.profileVersionId,
   skillVersionIds: z.array(IdentifierSchemas.skillVersionId).max(128),
-  projectState: ProjectStateReferenceSchema,
-  policySnapshot: PolicySnapshotPublicReferenceSchema,
+  projectState: ProjectStateReferenceSchema as typeof ProjectStateReferenceSchema,
+  policySnapshot: PolicySnapshotPublicReferenceSchema as typeof PolicySnapshotPublicReferenceSchema,
   runtimeRequirements: z.array(CapabilityNameSchema).max(128),
   outputContractRef: z.string().min(1).max(512),
 })
 
 export const ExecutionRequestValidationRequestSchema = CommandContextSchema.extend({
   operation: z.literal('execution.validate'),
-  issuedAt: TimestampSchema,
+  issuedAt: TimestampSchema as typeof TimestampSchema,
   payload: z.union([
     ExecutionValidationPayloadSchema.extend({
-      contextPackage: ContextPackagePublicReferenceSchema,
+      contextPackage:
+        ContextPackagePublicReferenceSchema as typeof ContextPackagePublicReferenceSchema,
       contextInputs: z.never().optional(),
     }),
     ExecutionValidationPayloadSchema.extend({
       contextPackage: z.never().optional(),
-      contextInputs: ContextAuthoringInputsSchema,
+      contextInputs: ContextAuthoringInputsSchema as typeof ContextAuthoringInputsSchema,
     }),
   ]),
 }).superRefine((request, context) => {
@@ -661,20 +666,26 @@ export const ExecutionRequestValidationRequestSchema = CommandContextSchema.exte
 export const ExecutionRequestValidationResponseSchema = successResponse(
   z.object({
     valid: z.literal(true),
-    executionPlan: ExecutionPlanPublicReferenceSchema,
+    executionPlan: ExecutionPlanPublicReferenceSchema as typeof ExecutionPlanPublicReferenceSchema,
   })
 )
 
 export const ExecutionAcceptanceRequestSchema = CommandContextSchema.extend({
-  projectId: IdentifierSchemas.projectId,
+  projectId: IdentifierSchemas.projectId as typeof IdentifierSchemas.projectId,
   operation: z.literal('execution.accept'),
-  issuedAt: TimestampSchema,
+  issuedAt: TimestampSchema as typeof TimestampSchema,
   payload: z.object({
-    taskId: IdentifierSchemas.taskId,
-    agentId: IdentifierSchemas.agentId,
+    taskId: IdentifierSchemas.taskId as typeof IdentifierSchemas.taskId,
+    agentId: IdentifierSchemas.agentId as typeof IdentifierSchemas.agentId,
     executionPlan: ExecutionPlanPublicReferenceSchema.extend({
       schemaVersion: z.number().int().positive(),
     }),
+    /**
+     * The model the caller accepted for this execution (M12/#678). It is
+     * recorded in the execution read model so routing can map it to a harness
+     * through the deployment's per-model map. Absent keeps today's behavior.
+     */
+    modelId: ModelIdSchema.optional(),
     marketplacePluginReferences: z
       .array(
         z
@@ -689,14 +700,14 @@ export const ExecutionAcceptanceRequestSchema = CommandContextSchema.extend({
       .optional(),
     parentExecutionId: IdentifierSchemas.executionId.optional(),
     deadlineAt: TimestampSchema.optional(),
-    retentionExpiresAt: TimestampSchema,
+    retentionExpiresAt: TimestampSchema as typeof TimestampSchema,
   }),
 })
 
 export const ExecutionAcceptanceResponseSchema = successResponse(
   z.object({
-    commandId: IdentifierSchemas.commandId,
-    executionId: IdentifierSchemas.executionId,
+    commandId: IdentifierSchemas.commandId as typeof IdentifierSchemas.commandId,
+    executionId: IdentifierSchemas.executionId as typeof IdentifierSchemas.executionId,
     executionPlan: ExecutionPlanPublicReferenceSchema.extend({
       schemaVersion: z.number().int().positive(),
     }),
@@ -711,7 +722,7 @@ export const ExecutionAcceptanceResponseSchema = successResponse(
 export const ExecutionCancellationCommandSchema = CommandContextSchema.extend({
   ...executionScopeFields,
   operation: z.literal('execution.cancel'),
-  issuedAt: TimestampSchema,
+  issuedAt: TimestampSchema as typeof TimestampSchema,
   payload: z.strictObject({ executionId: IdentifierSchemas.executionId }),
 })
   .strict()
@@ -720,8 +731,8 @@ export const ExecutionCancellationCommandSchema = CommandContextSchema.extend({
 /** Confirms signal acceptance only, never that native work has stopped. */
 export const ExecutionCancellationCommandResultSchema = successResponse(
   z.strictObject({
-    commandId: IdentifierSchemas.commandId,
-    executionId: IdentifierSchemas.executionId,
+    commandId: IdentifierSchemas.commandId as typeof IdentifierSchemas.commandId,
+    executionId: IdentifierSchemas.executionId as typeof IdentifierSchemas.executionId,
     status: z.literal('accepted'),
     replayed: z.boolean(),
   })
@@ -747,9 +758,9 @@ export const AdmissionStopReasonClassSchema = z.enum([
  */
 export const AdmissionStopCommandSchema = CommandContextSchema.extend({
   operation: z.literal('execution.admission-stop'),
-  issuedAt: TimestampSchema,
+  issuedAt: TimestampSchema as typeof TimestampSchema,
   payload: z.strictObject({
-    reasonClass: AdmissionStopReasonClassSchema,
+    reasonClass: AdmissionStopReasonClassSchema as typeof AdmissionStopReasonClassSchema,
     reason: z
       .string()
       .min(1)
@@ -778,8 +789,8 @@ export const AdmissionResumeCommandSchema = AdmissionStopCommandSchema.extend({
  */
 export const AdmissionControlCommandResultSchema = successResponse(
   z.strictObject({
-    commandId: IdentifierSchemas.commandId,
-    workspaceId: IdentifierSchemas.workspaceId,
+    commandId: IdentifierSchemas.commandId as typeof IdentifierSchemas.commandId,
+    workspaceId: IdentifierSchemas.workspaceId as typeof IdentifierSchemas.workspaceId,
     operation: z.enum(['execution.admission-stop', 'execution.admission-resume']),
     outcome: z.enum(['applied', 'duplicate', 'replayed']),
     admission: z.enum(['stopped', 'open']),
@@ -790,14 +801,14 @@ export type AdmissionResumeCommand = z.input<typeof AdmissionResumeCommandSchema
 export type AdmissionControlCommandResult = z.output<typeof AdmissionControlCommandResultSchema>
 
 export const InteractionResponseCommandSchema = CommandContextSchema.extend({
-  projectId: IdentifierSchemas.projectId,
+  projectId: IdentifierSchemas.projectId as typeof IdentifierSchemas.projectId,
   operation: z.literal('interaction.respond'),
-  issuedAt: TimestampSchema,
+  issuedAt: TimestampSchema as typeof TimestampSchema,
   payload: z
     .strictObject({
-      executionId: IdentifierSchemas.executionId,
-      attemptId: IdentifierSchemas.attemptId,
-      interactionId: IdentifierSchemas.interactionId,
+      executionId: IdentifierSchemas.executionId as typeof IdentifierSchemas.executionId,
+      attemptId: IdentifierSchemas.attemptId as typeof IdentifierSchemas.attemptId,
+      interactionId: IdentifierSchemas.interactionId as typeof IdentifierSchemas.interactionId,
       expectedVersion: z.number().int().positive(),
       action: z.enum(['approve', 'deny', 'input', 'grant', 'resume', 'cancel']),
       value: z.json().optional(),
@@ -816,11 +827,11 @@ export const InteractionResponseCommandSchema = CommandContextSchema.extend({
 /** Acknowledges durable signal acceptance, not execution completion. */
 export const InteractionResponseCommandResultSchema = successResponse(
   z.strictObject({
-    commandId: IdentifierSchemas.commandId,
-    responseId: IdentifierSchemas.commandId,
-    executionId: IdentifierSchemas.executionId,
-    attemptId: IdentifierSchemas.attemptId,
-    interactionId: IdentifierSchemas.interactionId,
+    commandId: IdentifierSchemas.commandId as typeof IdentifierSchemas.commandId,
+    responseId: IdentifierSchemas.commandId as typeof IdentifierSchemas.commandId,
+    executionId: IdentifierSchemas.executionId as typeof IdentifierSchemas.executionId,
+    attemptId: IdentifierSchemas.attemptId as typeof IdentifierSchemas.attemptId,
+    interactionId: IdentifierSchemas.interactionId as typeof IdentifierSchemas.interactionId,
     status: z.literal('accepted'),
     replayed: z.boolean(),
   })

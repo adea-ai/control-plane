@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test'
+import { RuntimeConnectionDiscoveryReadModelSchema } from '@control-plane/contracts'
 import { createExecutionPlanTestFixture } from '@control-plane/execution-plan/testing'
 import { RuntimeDiscoveryAttemptRouter } from './index.js'
 
@@ -225,7 +226,7 @@ describe('accepted harness hard filter before ranking (#678)', () => {
   })
 })
 
-function execution(plan) {
+function execution(plan, modelId) {
   return {
     executionId: ids.executionId,
     state: 'queued',
@@ -236,6 +237,10 @@ function execution(plan) {
       contentDigest: plan.contentDigest,
       schemaVersion: plan.schemaVersion,
     },
+    // The accepted model is the carrier the per-model map is resolved from
+    // (M12/#678). Historical executions carry no model and keep today's
+    // routing exactly.
+    ...(modelId === undefined ? {} : { modelId }),
     attemptCount: 0,
     acceptedAt: '2026-08-28T11:59:59.000Z',
     queuedAt: '2026-08-28T12:00:00.000Z',
@@ -315,6 +320,147 @@ describe('no implicit cloud rerouting (TDD-A377)', () => {
     await expect(
       router.resolve({ execution: execution(plan), executionPlan: plan })
     ).rejects.toThrow('WORKFLOW_RUNTIME_LOCAL_UNAVAILABLE_NO_FALLBACK')
+  })
+
+  test('an offline enrolled remote_host is never silently replaced by the cloud service', async () => {
+    const plan = createExecutionPlanTestFixture()
+    const router = new RuntimeDiscoveryAttemptRouter({
+      discovery: {
+        listRuntimeConnections: async () => [offlineRemoteHostDevice(), cloudRuntime()],
+      },
+      now: () => '2026-08-28T12:00:00.000Z',
+    })
+
+    await expect(
+      router.resolve({ execution: execution(plan), executionPlan: plan })
+    ).rejects.toThrow('WORKFLOW_RUNTIME_REMOTE_HOST_UNAVAILABLE_NO_FALLBACK')
+  })
+
+  test('a revoked enrolled remote_host is never silently replaced by the cloud service', async () => {
+    const plan = createExecutionPlanTestFixture()
+    const router = new RuntimeDiscoveryAttemptRouter({
+      discovery: {
+        listRuntimeConnections: async () => [revokedRemoteHostDevice(), cloudRuntime()],
+      },
+      now: () => '2026-08-28T12:00:00.000Z',
+    })
+
+    await expect(
+      router.resolve({ execution: execution(plan), executionPlan: plan })
+    ).rejects.toThrow('WORKFLOW_RUNTIME_REMOTE_HOST_UNAVAILABLE_NO_FALLBACK')
+  })
+
+  test('cloud remains eligible when a remote_host cannot serve the plan', async () => {
+    const plan = createExecutionPlanTestFixture()
+    const cloud = cloudRuntime()
+    const excludedRemoteHosts = [
+      remoteHostDevice({ compatibility: { state: 'incompatible', limitations: [] } }),
+      remoteHostDevice({
+        capabilities: ['filesystem.read'],
+        capabilityDetails: [{ name: 'filesystem.read', support: 'supported' }],
+      }),
+    ]
+
+    for (const remoteHost of excludedRemoteHosts) {
+      const router = new RuntimeDiscoveryAttemptRouter({
+        discovery: { listRuntimeConnections: async () => [remoteHost, cloud] },
+        now: () => '2026-08-28T12:00:00.000Z',
+      })
+
+      const selected = await router.resolve({ execution: execution(plan), executionPlan: plan })
+
+      expect(selected.runtimeConnectionId).toBe(cloud.runtimeConnectionId)
+    }
+  })
+
+  test('every fixture connection satisfies the runtime discovery schema', () => {
+    const fixtures = [
+      localDevice(),
+      offlineLocalDevice(),
+      revokedLocalDevice(),
+      remoteHostDevice(),
+      offlineRemoteHostDevice(),
+      revokedRemoteHostDevice(),
+      cloudRuntime(),
+    ]
+    for (const fixture of fixtures) {
+      expect(RuntimeConnectionDiscoveryReadModelSchema.safeParse(fixture).success).toBe(true)
+    }
+    expect(remoteHostDevice()).toMatchObject({
+      location: 'local_device',
+      node: { location: 'remote_host' },
+    })
+  })
+
+  test('an offline or revoked remote_host that matches the harness pin still blocks cloud', async () => {
+    const plan = createExecutionPlanTestFixture()
+    for (const remoteHost of [offlineRemoteHostDevice(), revokedRemoteHostDevice()]) {
+      const router = new RuntimeDiscoveryAttemptRouter({
+        discovery: { listRuntimeConnections: async () => [remoteHost, cloudRuntime()] },
+        now: () => '2026-08-28T12:00:00.000Z',
+        pinnedHarnessId: 'pi',
+      })
+
+      await expect(
+        router.resolve({ execution: execution(plan), executionPlan: plan })
+      ).rejects.toThrow('WORKFLOW_RUNTIME_REMOTE_HOST_UNAVAILABLE_NO_FALLBACK')
+    }
+  })
+
+  test('an offline or revoked remote_host with a different harness family does not block cloud', async () => {
+    const plan = createExecutionPlanTestFixture({ runtimeFamilies: ['pi', 'managed-pi'] })
+    const cloud = cloudRuntime()
+    for (const remoteHost of [
+      offlineRemoteHostDevice({ family: 'managed-pi' }),
+      revokedRemoteHostDevice({ family: 'managed-pi' }),
+    ]) {
+      const router = new RuntimeDiscoveryAttemptRouter({
+        discovery: { listRuntimeConnections: async () => [remoteHost, cloud] },
+        now: () => '2026-08-28T12:00:00.000Z',
+        pinnedHarnessId: 'pi',
+      })
+
+      const selected = await router.resolve({ execution: execution(plan), executionPlan: plan })
+
+      expect(selected.runtimeConnectionId).toBe(cloud.runtimeConnectionId)
+    }
+  })
+
+  test('a mapped harness excludes unrelated offline remote hosts from the no-fallback fence', async () => {
+    const plan = createExecutionPlanTestFixture({ runtimeFamilies: ['pi', 'managed-pi'] })
+    const cloud = cloudRuntime()
+    for (const remoteHost of [
+      offlineRemoteHostDevice({ family: 'managed-pi' }),
+      revokedRemoteHostDevice({ family: 'managed-pi' }),
+    ]) {
+      const router = new RuntimeDiscoveryAttemptRouter({
+        discovery: { listRuntimeConnections: async () => [remoteHost, cloud] },
+        now: () => '2026-08-28T12:00:00.000Z',
+        harnessByModel: { 'deepseek-flash': 'pi' },
+      })
+
+      const selected = await router.resolve({
+        execution: { ...execution(plan), modelId: 'deepseek-flash' },
+        executionPlan: plan,
+      })
+
+      expect(selected.runtimeConnectionId).toBe(cloud.runtimeConnectionId)
+    }
+  })
+
+  test('an offline or revoked local device that matches the harness pin still blocks cloud', async () => {
+    const plan = createExecutionPlanTestFixture()
+    for (const local of [offlineLocalDevice(), revokedLocalDevice()]) {
+      const router = new RuntimeDiscoveryAttemptRouter({
+        discovery: { listRuntimeConnections: async () => [local, cloudRuntime()] },
+        now: () => '2026-08-28T12:00:00.000Z',
+        pinnedHarnessId: 'pi',
+      })
+
+      await expect(
+        router.resolve({ execution: execution(plan), executionPlan: plan })
+      ).rejects.toThrow('WORKFLOW_RUNTIME_LOCAL_UNAVAILABLE_NO_FALLBACK')
+    }
   })
 
   test('an offline local device with no remote alternative stays unavailable', async () => {
@@ -488,6 +634,35 @@ function revokedLocalDevice() {
   })
 }
 
+function remoteHostDevice(overrides = {}) {
+  // Discovery locations are local_device | agent_hq_cloud; an enrolled remote host is a
+  // local_device connection whose node location is remote_host.
+  return runtimeConnection('rtc_01JABCDEF0123456789ABCDEFC', {
+    location: 'local_device',
+    node: runtimeNode({ location: 'remote_host' }),
+    ...overrides,
+  })
+}
+
+function offlineRemoteHostDevice(overrides = {}) {
+  return remoteHostDevice({
+    status: 'unavailable',
+    node: runtimeNode({ location: 'remote_host', status: 'offline', health: 'offline' }),
+    connection: { status: 'disconnected', health: 'unavailable', availability: 'offline' },
+    ...overrides,
+  })
+}
+
+function revokedRemoteHostDevice(overrides = {}) {
+  return remoteHostDevice({
+    status: 'revoked',
+    node: runtimeNode({ location: 'remote_host', status: 'revoked', health: 'revoked' }),
+    connection: { status: 'revoked', health: 'unavailable', availability: 'revoked' },
+    compatibility: { state: 'revoked', limitations: [] },
+    ...overrides,
+  })
+}
+
 function cloudRuntime(runtimeConnectionId = 'rtc_01JABCDEF0123456789ABCDEFB') {
   return runtimeConnection(runtimeConnectionId, {
     // The reroute fence is location-based; the accepted contract keeps exact
@@ -503,3 +678,130 @@ function cloudRuntime(runtimeConnectionId = 'rtc_01JABCDEF0123456789ABCDEFB') {
     },
   })
 }
+
+describe('per-model harness mapping (M12/#678)', () => {
+  const now = () => '2026-08-28T12:00:00.000Z'
+  const allowed = {
+    access: {
+      localProjectGrant: { required: false, state: 'not_required' },
+      entitlement: { state: 'allowed' },
+    },
+  }
+  const piRuntime = () =>
+    runtimeConnection('rtc_01JABCDEF0123456789ABCDEFB', { family: 'pi', ...allowed })
+  const managedRuntime = () =>
+    runtimeConnection('rtc_01JABCDEF0123456789ABCDEFA', { family: 'managed-pi', ...allowed })
+  const routerFor = (connections, options) =>
+    new RuntimeDiscoveryAttemptRouter({
+      discovery: { listRuntimeConnections: async () => connections },
+      now,
+      ...options,
+    })
+  const plan = () => createExecutionPlanTestFixture({ runtimeFamilies: ['pi', 'managed-pi'] })
+
+  test('a mapped model routes only to a runtime exposing the mapped harness', async () => {
+    const selected = await routerFor([managedRuntime(), piRuntime()], {
+      harnessByModel: { 'deepseek-flash': 'pi' },
+    }).resolve({ execution: execution(plan(), 'deepseek-flash'), executionPlan: plan() })
+    expect(selected.runtimeConnectionId).toBe('rtc_01JABCDEF0123456789ABCDEFB')
+    expect(selected.routingDecision.reasonCodes).toEqual(['RUNTIME_SELECTED', 'HARNESS_MAPPED'])
+  })
+
+  test('the map lookup preserves the case of the accepted model', async () => {
+    // A map keyed with the exact model id serves the execution.
+    const selected = await routerFor([piRuntime()], {
+      harnessByModel: { 'DeepSeek-V3': 'pi' },
+    }).resolve({ execution: execution(plan(), 'DeepSeek-V3'), executionPlan: plan() })
+    expect(selected.runtimeConnectionId).toBe('rtc_01JABCDEF0123456789ABCDEFB')
+
+    // A map keyed with another case does not silently substitute the harness:
+    // the model is unmapped and the attempt is denied.
+    await expect(
+      routerFor([piRuntime()], { harnessByModel: { 'deepseek-v3': 'pi' } }).resolve({
+        execution: execution(plan(), 'DeepSeek-V3'),
+        executionPlan: plan(),
+      })
+    ).rejects.toMatchObject({ code: 'HARNESS_MAP_MODEL_UNMAPPED' })
+  })
+
+  test('a model the map does not name is denied', async () => {
+    await expect(
+      routerFor([piRuntime()], { harnessByModel: { 'deepseek-flash': 'pi' } }).resolve({
+        execution: execution(plan(), 'glm-4'),
+        executionPlan: plan(),
+      })
+    ).rejects.toMatchObject({ code: 'HARNESS_MAP_MODEL_UNMAPPED' })
+  })
+
+  test('a configured map denies an execution without a model', async () => {
+    await expect(
+      routerFor([piRuntime()], { harnessByModel: { 'deepseek-flash': 'pi' } }).resolve({
+        execution: execution(plan()),
+        executionPlan: plan(),
+      })
+    ).rejects.toMatchObject({ code: 'HARNESS_MAP_MODEL_ABSENT' })
+  })
+
+  test('a runtime that does not expose the mapped harness denies the attempt', async () => {
+    await expect(
+      routerFor([managedRuntime()], { harnessByModel: { 'deepseek-flash': 'pi' } }).resolve({
+        execution: execution(plan(), 'deepseek-flash'),
+        executionPlan: plan(),
+      })
+    ).rejects.toMatchObject({ code: 'NO_COMPATIBLE_RUNTIME' })
+  })
+
+  test('a model id that names an inherited property is unmapped, not a harness', async () => {
+    for (const modelId of ['constructor', 'toString', 'valueOf', 'hasOwnProperty']) {
+      await expect(
+        routerFor([piRuntime()], { harnessByModel: { 'deepseek-flash': 'pi' } }).resolve({
+          execution: execution(plan(), modelId),
+          executionPlan: plan(),
+        })
+      ).rejects.toMatchObject({ code: 'HARNESS_MAP_MODEL_UNMAPPED' })
+    }
+  })
+
+  test('an existing pin that agrees with the map keeps the deployment working', async () => {
+    const selected = await routerFor([piRuntime()], {
+      pinnedHarnessId: 'pi',
+      harnessByModel: { 'deepseek-flash': 'pi' },
+    }).resolve({ execution: execution(plan(), 'deepseek-flash'), executionPlan: plan() })
+    expect(selected.runtimeConnectionId).toBe('rtc_01JABCDEF0123456789ABCDEFB')
+    expect(selected.routingDecision.reasonCodes).toEqual([
+      'RUNTIME_SELECTED',
+      'HARNESS_PINNED',
+      'HARNESS_MAPPED',
+    ])
+  })
+
+  test('an explicit pin that contradicts the map is denied', async () => {
+    await expect(
+      routerFor([piRuntime(), managedRuntime()], {
+        pinnedHarnessId: 'managed-pi',
+        harnessByModel: { 'deepseek-flash': 'pi' },
+      }).resolve({ execution: execution(plan(), 'deepseek-flash'), executionPlan: plan() })
+    ).rejects.toMatchObject({ code: 'HARNESS_MAP_CONFLICTS_WITH_PIN' })
+  })
+
+  test('without a map an execution without a model routes exactly as it did', async () => {
+    const selected = await routerFor([managedRuntime(), piRuntime()], {}).resolve({
+      execution: execution(plan()),
+      executionPlan: plan(),
+    })
+    expect(selected.runtimeConnectionId).toBe('rtc_01JABCDEF0123456789ABCDEFA')
+    expect(selected.routingDecision.reasonCodes).toEqual(['RUNTIME_SELECTED'])
+  })
+
+  test('the mapped harness is bound into the routing input digest', async () => {
+    const connections = [managedRuntime(), piRuntime()]
+    const mapped = await routerFor(connections, {
+      harnessByModel: { 'deepseek-flash': 'pi' },
+    }).resolve({ execution: execution(plan(), 'deepseek-flash'), executionPlan: plan() })
+    const pinned = await routerFor(connections, { pinnedHarnessId: 'pi' }).resolve({
+      execution: execution(plan()),
+      executionPlan: plan(),
+    })
+    expect(mapped.routingDecision.inputDigest).toBe(pinned.routingDecision.inputDigest)
+  })
+})

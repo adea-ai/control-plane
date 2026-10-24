@@ -1,5 +1,38 @@
 # Changelog
 
+## [0.11.3](https://github.com/adea-ai/control-plane/compare/pi-durable-adapter-v0.11.2...pi-durable-adapter-v0.11.3) (2026-10-24)
+
+
+### Tests
+
+* **pi:** cover crash after native cancellation before journal publication ([#1307](https://github.com/adea-ai/control-plane/issues/1307)) ([8265104](https://github.com/adea-ai/control-plane/commit/8265104c0c4ffea5e74586b5863e6799b60f0906))
+
+## [0.11.2](https://github.com/adea-ai/control-plane/compare/pi-durable-adapter-v0.11.1...pi-durable-adapter-v0.11.2) (2026-10-24)
+
+
+### Bug Fixes
+
+* **pi:** classify cancellation publication uncertainty after native commit ([#1305](https://github.com/adea-ai/control-plane/issues/1305)) ([f727f7a](https://github.com/adea-ai/control-plane/commit/f727f7aec45418fda49bd243d13dc1e8ed1b22fc))
+
+## [0.11.1](https://github.com/adea-ai/control-plane/compare/pi-durable-adapter-v0.11.0...pi-durable-adapter-v0.11.1) (2026-10-24)
+
+
+### Bug Fixes
+
+* reduce dependency closure and preserve budget checks ([#1270](https://github.com/adea-ai/control-plane/issues/1270)) ([01fa230](https://github.com/adea-ai/control-plane/commit/01fa230233cc796b6c7f93d020006212b89631f6))
+
+
+### Tests
+
+* **profiles:** prove profile recovery and fenced rollback evidence ([#1048](https://github.com/adea-ai/control-plane/issues/1048)) ([da1a38c](https://github.com/adea-ai/control-plane/commit/da1a38cbb4f20da086313451077593d8df3e283d))
+
+## [0.11.0](https://github.com/adea-ai/control-plane/compare/pi-durable-adapter-v0.10.5...pi-durable-adapter-v0.11.0) (2026-10-23)
+
+
+### Features
+
+* **pi-durable:** compose child reads and drain recovery ([#1204](https://github.com/adea-ai/control-plane/issues/1204)) ([2f1f9d1](https://github.com/adea-ai/control-plane/commit/2f1f9d1a4da48db09e2c8ee9dc08625fbb2bc7a5))
+
 ## [0.10.5](https://github.com/adea-ai/control-plane/compare/pi-durable-adapter-v0.10.4...pi-durable-adapter-v0.10.5) (2026-10-22)
 
 

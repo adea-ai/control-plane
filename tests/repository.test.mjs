@@ -233,6 +233,9 @@ test('repository memory fixtures use declared workspace dependencies', async () 
   const dependencies = { ...manifest.dependencies, ...manifest.devDependencies }
   for (const path of [
     'tests/memory-process-loss.integration.test.mjs',
+    'tests/profile-recovery-postgres-restore.integration.test.mjs',
+    'tests/profile-recovery-self-hosted-simple-sigkill.integration.test.mjs',
+    'tests/profile-recovery-self-hosted-simple.integration.test.mjs',
     'tests/fixtures/memory-root-process-loss.mjs',
   ]) {
     const source = parse(await readFile(new URL(`../${path}`, import.meta.url), 'utf8'), {
@@ -287,11 +290,13 @@ test('discovers disjoint Bun test groups for Code Foundry', async () => {
   assert.deepEqual(integration, [
     'apps/control-api/src/budget-admission.integration.test.mjs',
     'apps/control-api/src/marketplace-installation.integration.test.mjs',
+    'apps/control-api/src/pi-durable/postgres-cancellation-requests.integration.test.mjs',
     'apps/control-api/src/validation-replay.integration.test.mjs',
     'apps/hosted-control-plane/src/hosted-graph-cancellation.integration.test.mjs',
     'apps/hosted-control-plane/src/hosted-graph-legacy-fence.integration.test.mjs',
     'apps/hosted-control-plane/src/hosted-graph.integration.test.mjs',
     'apps/hosted-control-plane/src/hosted-http.integration.test.mjs',
+    'apps/hosted-control-plane/src/hosted-model-forwarding.integration.test.mjs',
     'apps/hosted-control-plane/src/reconciliation-metrics.integration.test.mjs',
     'apps/hosted-control-plane/src/reconciliation-projection.integration.test.mjs',
     'apps/runtime-gateway/src/runtime-node-credential-binding.integration.test.mjs',
@@ -314,6 +319,7 @@ test('discovers disjoint Bun test groups for Code Foundry', async () => {
     'packages/database/src/model-selection-repository.integration.test.mjs',
     'packages/database/src/operations-measurements.integration.test.mjs',
     'packages/database/src/pool-teardown.integration.test.mjs',
+    'packages/database/src/project-state-digest-postgres.integration.test.mjs',
     'packages/database/src/project-state-initialization.integration.test.mjs',
     'packages/database/src/retention-ancestry.integration.test.mjs',
     'packages/database/src/retention-claim-budget.integration.test.mjs',
@@ -341,6 +347,9 @@ test('discovers disjoint Bun test groups for Code Foundry', async () => {
     'tests/langgraph-retirement-inventory-pg.integration.test.mjs',
     'tests/langgraph-retirement-status-adapter.integration.test.mjs',
     'tests/memory-process-loss.integration.test.mjs',
+    'tests/profile-recovery-postgres-restore.integration.test.mjs',
+    'tests/profile-recovery-self-hosted-simple-sigkill.integration.test.mjs',
+    'tests/profile-recovery-self-hosted-simple.integration.test.mjs',
     'tests/runtime-node-credential-revocation.integration.test.mjs',
   ])
   const portabilityManifest = await readJson('packages/profile-portability/package.json')
@@ -383,13 +392,13 @@ test('discovers disjoint Bun test groups for Code Foundry', async () => {
     'tests/pi-durable-compaction-governed-dispatch.test.mjs',
     'tests/pi-durable-governed-publisher-regression.test.mjs',
     'tests/j1-unfinished-child-process-restart.test.mjs',
+    'tests/profile-recovery-pi-lead-restart.test.mjs',
     'tests/j1-native-child-store-restart.test.mjs',
     'tests/pi-durable-workspace-scope.test.mjs',
     'tests/pi-production-management-authority.test.mjs',
     'tests/pi-production-management-forwarding.test.mjs',
     'tests/pi-production-runtime-startup.test.mjs',
     'tests/pi-production-factory.test.mjs',
-    'tests/profile-recovery-pi-lead-restart.test.mjs',
     'tests/pi-byo-model-authority.test.mjs',
     'tests/service-lifecycle-e2e.test.mjs',
     'tests/acp-remote-shared-provider.test.mjs',
@@ -434,16 +443,23 @@ test('discovers disjoint Bun test groups for Code Foundry', async () => {
     'tests/cp1-embedded-durable-execution.test.mjs',
     'tests/m11-security-probes.test.mjs',
     'tests/m11-sqlite-benchmark.test.mjs',
+    'tests/pi-durable-cp1048-evidence-discipline.test.mjs',
+    'tests/profile-recovery-crash-restore.test.mjs',
+    'tests/profile-recovery-fenced-rollback.test.mjs',
+    'tests/profile-recovery-rebind-fencing.test.mjs',
+    'tests/profile-recovery-selfhosted-server-wake-replay.boundary.test.mjs',
     'tests/skill-library.test.mjs',
     'tests/m11-recovery-rpo-rto.test.mjs',
     'tests/m11-retention-apply-cli.test.mjs',
     'tests/m11-retention-class-registry.test.mjs',
     'tests/m11-retention-hold-operator.test.mjs',
     'tests/m11-retention-restore-reapply.test.mjs',
+    'tests/profile-recovery-cleanup.test.mjs',
     'tests/railway-production-plan.test.mjs',
     'tests/release-pr-readiness.test.mjs',
     'tests/replacement-compatibility.test.mjs',
     'tests/repository.test.mjs',
+    'tests/runner-cleanup.test.mjs',
     'tests/task-cache-qualification.test.mjs',
     'tests/workspace-tooling.test.mjs',
     'tests/restate-identity.test.mjs',
@@ -459,6 +475,45 @@ test('discovers disjoint Bun test groups for Code Foundry', async () => {
     inventory.every(({ primaryLane }) =>
       ['unit', 'integration', 'e2e', 'smoke'].includes(primaryLane)
     )
+  )
+})
+
+test('the hosted model-forwarding test is in the integration inventory and scheduled exactly once', async () => {
+  const integration = await discoverTestFiles('integration')
+  const hosted = 'apps/hosted-control-plane/src/hosted-model-forwarding.integration.test.mjs'
+
+  // The file is discovered as an integration test, so the exact expected
+  // inventory above must name it: a file that is discovered but absent from
+  // the expected list is a stale inventory, not a passing test.
+  assert.ok(integration.includes(hosted))
+
+  // The inventory is exact, so the file appears once and only once.
+  assert.equal(integration.filter((path) => path === hosted).length, 1)
+
+  // The file is scheduled through exactly one local shard owner. The
+  // discovery test above already requires a package command or a shard owner
+  // for every discovered file; this states the shard owner for this file
+  // specifically, so the local sharded lane cannot silently drop it.
+  const scheduled = INTEGRATION_SHARDS.flatMap(({ groups }) =>
+    groups.filter(
+      ({ package: packageName, files }) =>
+        packageName === 'apps/hosted-control-plane' &&
+        files.includes('src/hosted-model-forwarding.integration.test.mjs')
+    )
+  )
+  assert.equal(scheduled.length, 1)
+
+  // The file's package command selects it, so the package integration lane and
+  // the local sharded lane are distinct registrations of one file.
+  const manifest = await readJson('apps/hosted-control-plane/package.json')
+  const command = manifest.scripts['test:integration']
+  assert.equal(typeof command, 'string')
+  const patterns = command.split(/\s+/).filter((token) => token.endsWith('.test.mjs'))
+  assert.ok(
+    patterns.some((pattern) =>
+      new Glob(pattern).match('src/hosted-model-forwarding.integration.test.mjs')
+    ),
+    'the hosted model-forwarding test is not selected by its package integration command'
   )
 })
 

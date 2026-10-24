@@ -94,7 +94,7 @@ function frontmatterFields(text: string): Record<string, unknown> | null {
 
 function frontmatterField(text: string, name: string): string | null {
   const fields = frontmatterFields(text)
-  const metadata = fields?.metadata
+  const metadata = fields?.['metadata']
   const metadataFields =
     typeof metadata === 'object' && metadata !== null && !Array.isArray(metadata)
       ? (metadata as Record<string, unknown>)
@@ -149,7 +149,7 @@ export async function snapshotCandidateLibrary(root: string): Promise<LibrarySna
   const skills: SkillSnapshot[] = []
   for (const entry of entries
     .filter((item) => item.isDirectory())
-    .sort((a, b) => (a.name < b.name ? -1 : 1))) {
+    .toSorted((a, b) => (a.name < b.name ? -1 : 1))) {
     const directory = join(skillsRoot, entry.name)
     const text = await readFile(join(directory, 'SKILL.md'), 'utf8')
     let bundledBytes = 0
@@ -200,7 +200,7 @@ export function snapshotBaselineLibrary(root: string, commit: string): LibrarySn
         .map((path) => path.split('/')[2])
         .filter((name): name is string => name !== undefined)
     ),
-  ].sort()
+  ].toSorted()
   const skills: SkillSnapshot[] = directories.map((name) => {
     const text = git(root, ['show', `${commit}:.agents/skills/${name}/SKILL.md`])
     const bundled = paths.filter((path) => path.startsWith(`.agents/skills/${name}/`))

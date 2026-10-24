@@ -556,12 +556,14 @@ describe('M11.2 architecture audit tooling regressions', () => {
     const bindings = await discoverCapabilityBindings(fileURLToPath(repositoryRoot))
     // The detector only reads runtime object-literal bindings, so these counts
     // are the measured profile bindings and not a name-only match.
-    expect(bindings.profiles.cloud.bound).toHaveLength(20)
+    expect(bindings.profiles.cloud.bound).toHaveLength(21)
+    expect(bindings.profiles.cloud.bound).toContain('piChildPublicationService')
     expect(bindings.profiles['hosted-server'].bound).toHaveLength(13)
     expect(bindings.profiles['hosted-simple'].bound).toHaveLength(16)
     expect(bindings.profiles.local.bound).toHaveLength(16)
     for (const profile of Object.keys(bindings.profiles)) {
       const { bound, unbound } = bindings.profiles[profile]
+      if (profile !== 'cloud') expect(bound, profile).not.toContain('piChildPublicationService')
       expect(new Set([...bound, ...unbound]).size, profile).toBe(bound.length + unbound.length)
     }
   })

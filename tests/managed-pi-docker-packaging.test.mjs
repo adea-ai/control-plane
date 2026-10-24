@@ -65,7 +65,7 @@ test('Simple managed Pi packaging is opt-in, pinned, and keeps credentials exter
     /target:\s*\/run\/control-plane\/pi-agent-config\s*\n\s+read_only:\s*true/
   )
   assert.equal(packageManifest.dependencies['@earendil-works/pi-coding-agent'], '1.0.0')
-  assert.equal(packageManifest.overrides.undici, '8.10.2')
+  assert.equal(packageManifest.overrides.undici, '8.12.2')
   assert.match(
     dockerfile,
     /^FROM node:24\.21\.0-bookworm-slim@sha256:[a-f0-9]{64} AS node-runtime$/m

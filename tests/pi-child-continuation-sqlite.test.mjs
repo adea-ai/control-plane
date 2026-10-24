@@ -55,8 +55,11 @@ const pin = (plan) => ({
   contentDigest: plan.contentDigest,
   schemaVersion: plan.schemaVersion,
 })
-function fixtureLifecycle(close, remove) {
+const FIXTURE_CLEANUP_WAIT_MS = 10_000
+
+function fixtureLifecycle(close, remove, waitMs = FIXTURE_CLEANUP_WAIT_MS) {
   const pending = new Set()
+  const completedFailures = []
   let closing = false
   return {
     run(operation) {
@@ -65,39 +68,107 @@ function fixtureLifecycle(close, remove) {
       pending.add(work)
       work.then(
         () => pending.delete(work),
-        () => pending.delete(work)
+        (error) => {
+          pending.delete(work)
+          completedFailures.push(error)
+        }
       )
       return work
     },
     async cleanup() {
       closing = true
-      // Bun timeout does not cancel an async reopen. Keep its directory and
-      // connection alive until the owned migration has actually settled.
-      const results = await Promise.allSettled(pending)
-      const errors = results
-        .filter((result) => result.status === 'rejected')
-        .map((result) => result.reason)
-      let closed = false
+      const operations = [...pending]
+      const settling = Promise.allSettled(operations)
+      let timer
+      let outcome
       try {
-        await close()
-        closed = true
-      } catch (error) {
-        errors.push(error)
+        outcome = await Promise.race([
+          settling.then((results) => ({ settled: true, results })),
+          new Promise((resolve) => {
+            timer = setTimeout(() => resolve({ settled: false }), waitMs)
+          }),
+        ])
+      } finally {
+        clearTimeout(timer)
       }
-      // A failed close leaves the directory intact for safe diagnosis.
+      if (!outcome.settled) {
+        const errors = completedFailures.splice(0)
+        errors.push(
+          new Error(
+            `Fixture cleanup timed out with ${pending.size} operation(s) still active; SQLite state preserved`
+          )
+        )
+        throw new AggregateError(errors, 'Fixture operations did not settle; state preserved')
+      }
+      const errors = [
+        ...completedFailures.splice(0),
+        ...outcome.results
+          .filter((result) => result.status === 'rejected')
+          .map((result) => result.reason),
+      ]
+      const seen = new Set()
+      const uniqueErrors = errors.filter((error) => {
+        if (seen.has(error)) return false
+        seen.add(error)
+        return true
+      })
+      let closed = false
+      const closeAttempt = Promise.resolve()
+        .then(close)
+        .then(
+          () => ({ closed: true }),
+          (error) => ({ closed: false, error })
+        )
+      let closeTimer
+      let closeOutcome
+      try {
+        closeOutcome = await Promise.race([
+          closeAttempt,
+          new Promise((resolve) => {
+            closeTimer = setTimeout(() => resolve({ timedOut: true }), waitMs)
+          }),
+        ])
+      } finally {
+        clearTimeout(closeTimer)
+      }
+      if (closeOutcome.closed) {
+        closed = true
+      } else if (closeOutcome.timedOut) {
+        uniqueErrors.push(
+          new Error(`Fixture close timed out after ${waitMs}ms; SQLite state preserved`)
+        )
+      } else {
+        uniqueErrors.push(closeOutcome.error)
+      }
       if (closed) {
         try {
           await remove()
         } catch (error) {
-          errors.push(error)
+          uniqueErrors.push(error)
         }
       }
-      if (errors.length === 1) throw errors[0]
-      if (errors.length > 1)
-        throw new AggregateError(errors, 'Fixture operation and cleanup failed')
+      if (uniqueErrors.length === 1) throw uniqueErrors[0]
+      if (uniqueErrors.length > 1)
+        throw new AggregateError(uniqueErrors, 'Fixture operation and cleanup failed')
     },
   }
 }
+
+const cleanups = []
+async function runFixtureCleanups() {
+  const failures = []
+  for (const cleanup of cleanups.splice(0)) {
+    try {
+      await cleanup()
+    } catch (error) {
+      failures.push(error)
+    }
+  }
+  if (failures.length === 1) throw failures[0]
+  if (failures.length > 1)
+    throw new AggregateError(failures, 'One or more SQLite fixture cleanups failed')
+}
+afterEach(runFixtureCleanups)
 
 test('fixture cleanup waits for owned reopen work before closing or deleting its directory', async () => {
   const events = []
@@ -106,12 +177,8 @@ test('fixture cleanup waits for owned reopen work before closing or deleting its
     release = resolve
   })
   const lifecycle = fixtureLifecycle(
-    async () => {
-      events.push('close')
-    },
-    async () => {
-      events.push('remove')
-    }
+    async () => events.push('close'),
+    async () => events.push('remove')
   )
   const reopen = lifecycle.run(async () => {
     events.push('migrate-enter')
@@ -138,26 +205,30 @@ test('fixture cleanup preserves a failed reopen and rejects new work after clean
     reject = rejectGate
   })
   const lifecycle = fixtureLifecycle(
-    async () => {
-      events.push('close')
-    },
-    async () => {
-      events.push('remove')
-    }
+    async () => events.push('close'),
+    async () => events.push('remove')
   )
   const reopen = lifecycle.run(() => gate)
   const cleanup = lifecycle.cleanup()
   const reopenCheck = reopen.catch((error) => error)
   const cleanupCheck = cleanup.catch((error) => error)
-  expect(() => lifecycle.run(() => {})).toThrow('Fixture cleanup already started')
-  expect(events).toEqual([])
-  reject(failure)
+  let assertionFailure
+  try {
+    expect(() => lifecycle.run(() => {})).toThrow('Fixture cleanup already started')
+    expect(events).toEqual([])
+  } catch (error) {
+    assertionFailure = error
+  } finally {
+    reject(failure)
+    await Promise.allSettled([reopen, cleanup])
+  }
+  if (assertionFailure) throw assertionFailure
   expect(await reopenCheck).toBe(failure)
   expect(await cleanupCheck).toBe(failure)
   expect(events).toEqual(['close', 'remove'])
 })
 
-test('fixture cleanup retains migration and close failure provenance without deleting an open store', async () => {
+test('fixture cleanup retains work and close failures without deleting an open store', async () => {
   const migrationFailure = new Error('migration failure')
   const closeFailure = new Error('close failure')
   let reject
@@ -184,20 +255,142 @@ test('fixture cleanup retains migration and close failure provenance without del
   expect(removed).toBe(false)
 })
 
-const cleanups = []
-afterEach(async () => {
-  for (const f of cleanups.splice(0)) await f()
+test('fixture cleanup bounds live work and preserves its directory until that work settles', async () => {
+  const events = []
+  let release
+  const gate = new Promise((resolve) => {
+    release = resolve
+  })
+  const lifecycle = fixtureLifecycle(
+    async () => events.push('close'),
+    async () => events.push('remove'),
+    10
+  )
+  const work = lifecycle.run(async () => {
+    events.push('work-enter')
+    await gate
+    events.push('work-return')
+  })
+  let assertionFailure
+  let cleanupFailure
+  try {
+    const failure = await lifecycle.cleanup().catch((error) => error)
+    expect(failure).toBeInstanceOf(AggregateError)
+    expect(failure.message).toContain('state preserved')
+    expect(failure.errors[0].message).toContain('SQLite state preserved')
+    expect(events).toEqual(['work-enter'])
+  } catch (error) {
+    assertionFailure = error
+  } finally {
+    release()
+    await Promise.allSettled([work])
+    try {
+      await lifecycle.cleanup()
+    } catch (error) {
+      cleanupFailure = error
+    }
+  }
+  if (assertionFailure && cleanupFailure)
+    throw new AggregateError([assertionFailure, cleanupFailure], 'Fixture cleanup test failed', {
+      cause: assertionFailure,
+    })
+  if (assertionFailure) throw assertionFailure
+  if (cleanupFailure) throw cleanupFailure
+  expect(events).toEqual(['work-enter', 'work-return', 'close', 'remove'])
 })
-async function fixture({ crossScope = false } = {}) {
+
+test('fixture registers cleanup before initial migration can fail', async () => {
+  const migrationFailure = new Error('initial migration failed')
+  let closeCalls = 0
+  const failure = await fixture({
+    createProvider: () => ({
+      migrate: async () => {
+        throw migrationFailure
+      },
+      close: async () => {
+        closeCalls += 1
+      },
+    }),
+  }).catch((error) => error)
+  expect(failure).toBe(migrationFailure)
+  const cleanupFailure = await runFixtureCleanups().catch((error) => error)
+  expect(cleanupFailure).toBe(migrationFailure)
+  expect(closeCalls).toBe(1)
+})
+
+test('fixture afterEach attempts every registered cleanup callback', async () => {
+  const failure = new Error('first fixture cleanup failed')
+  const events = []
+  cleanups.push(async () => {
+    events.push('first')
+    throw failure
+  })
+  cleanups.push(async () => {
+    events.push('second')
+  })
+  expect(await runFixtureCleanups().catch((error) => error)).toBe(failure)
+  expect(events).toEqual(['first', 'second'])
+})
+
+test('fixture afterEach bounds a hanging close, preserves its directory, and attempts later cleanup', async () => {
+  const events = []
+  let releaseClose
+  const closeGate = new Promise((resolve) => {
+    releaseClose = resolve
+  })
+  let removed = false
+  const lifecycle = fixtureLifecycle(
+    () => closeGate,
+    async () => {
+      removed = true
+      events.push('remove')
+    },
+    10
+  )
+  cleanups.push(() => lifecycle.cleanup())
+  cleanups.push(async () => events.push('later-cleanup'))
+  let assertionFailure
+  try {
+    const failure = await runFixtureCleanups().catch((error) => error)
+    expect(failure.message).toContain('Fixture close timed out')
+    expect(failure.message).toContain('SQLite state preserved')
+    expect(events).toEqual(['later-cleanup'])
+    expect(removed).toBe(false)
+  } catch (error) {
+    assertionFailure = error
+  } finally {
+    releaseClose()
+  }
+  let retryFailure
+  try {
+    await lifecycle.cleanup()
+  } catch (error) {
+    retryFailure = error
+  }
+  if (assertionFailure && retryFailure)
+    throw new AggregateError([assertionFailure, retryFailure], 'Hanging close test failed', {
+      cause: assertionFailure,
+    })
+  if (assertionFailure) throw assertionFailure
+  if (retryFailure) throw retryFailure
+  expect(removed).toBe(true)
+  expect(events).toEqual(['later-cleanup', 'remove'])
+})
+
+async function fixture({
+  crossScope = false,
+  createProvider = (options) => new SqlitePersistenceProvider(options),
+} = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'pi-child-continuation-'))
   const path = join(directory, 'canonical.sqlite')
-  let provider = new SqlitePersistenceProvider({ path })
-  await provider.migrate()
+  let provider
   const lifecycle = fixtureLifecycle(
-    () => provider.close(),
+    () => provider?.close(),
     () => rm(directory, { recursive: true, force: true })
   )
   cleanups.push(() => lifecycle.cleanup())
+  provider = createProvider({ path })
+  await lifecycle.run(() => provider.migrate())
   const state = { now: at, active: true, metadata: undefined, reads: 0, current: 0 }
   const workspace = crossScope ? workspaceInput() : undefined
   const scopeReads = []
@@ -218,9 +411,7 @@ async function fixture({ crossScope = false } = {}) {
       plans: new SqliteExecutionPlanRepository(provider),
       contexts: new SqliteContextPackageRepository(provider),
       delegations: new SqliteDelegationRepository(provider),
-      // Canonical governed-child admission ports (CP1041): scope admission is
-      // mandatory at delegate and dispatch, and the authority produces the
-      // retained receipt over the exact request the service builds.
+      // Supply the current governed-child test authority without copying PR-owned production code.
       scopeAdmission: {
         authority: scopeAuthority,
         now: () => state.now,
@@ -271,9 +462,6 @@ async function fixture({ crossScope = false } = {}) {
   }
   open()
   const base = await createFixture(undefined, storage)
-  // Governed allocation reserves on the canonical parent budget transaction,
-  // so the durable parent budget must exist before any child admission; the
-  // parent execution exists only after createFixture above.
   const usageLedger = new DurableUsageLedger({
     store: new SqliteDurableUsageStore(provider),
     now: () => state.now,
@@ -310,9 +498,6 @@ async function fixture({ crossScope = false } = {}) {
   const command = workspace ? structuredClone(workspace.command) : delegationInput(base)
   command.parentAttemptId = parentAttemptId
   command.admittedToolCallId = id('tlc')
-  // Canonical governed-child admission (CP1041): server-bound parent product
-  // intent, stable child attempt identity, and the exact initial dispatch the
-  // admission transaction allocates atomically.
   command.parentIntentId = '11111111-1111-4111-8111-111111111112'
   command.childAttemptId = ids.childAttemptId
   const dispatch = {
@@ -584,7 +769,7 @@ async function fixture({ crossScope = false } = {}) {
     reopen: () =>
       lifecycle.run(async () => {
         await provider.close()
-        provider = new SqlitePersistenceProvider({ path })
+        provider = createProvider({ path })
         await provider.migrate()
         open()
       }),

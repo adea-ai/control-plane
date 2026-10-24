@@ -304,7 +304,7 @@ describe('versioned public envelopes', () => {
   test('keeps the public schema package independent of Control Plane implementation packages', async () => {
     const manifest = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'))
 
-    expect(manifest.dependencies).toEqual({ zod: '4.6.5' })
+    expect(manifest.dependencies).toEqual({ zod: '4.6.6' })
     expect(JSON.stringify(manifest)).not.toContain('@control-plane/domain')
     expect(JSON.stringify(manifest)).not.toContain('@control-plane/database')
   })

@@ -1,6 +1,6 @@
 {
   "name": "@control-plane/domain",
-  "version": "1.32.0",
+  "version": "1.34.1",
   "private": true,
   "files": [
     "dist"
@@ -53,7 +53,7 @@
   },
   "dependencies": {
     "@control-plane/contracts": "workspace:*",
-    "zod": "4.6.5"
+    "zod": "4.6.6"
   },
   "engines": {
     "node": "24.21.0"

@@ -79,6 +79,7 @@ export const INTEGRATION_SHARDS = [
           'src/retention-hold-activation.integration.test.mjs',
           'src/retention-ancestry.integration.test.mjs',
           'src/operations-measurements.integration.test.mjs',
+          'src/project-state-digest-postgres.integration.test.mjs',
         ],
       },
     ],
@@ -140,6 +141,7 @@ export const INTEGRATION_SHARDS = [
           'src/validation-replay.integration.test.mjs',
           'src/budget-admission.integration.test.mjs',
           'src/marketplace-installation.integration.test.mjs',
+          'src/pi-durable/postgres-cancellation-requests.integration.test.mjs',
         ],
       },
       {
@@ -157,10 +159,22 @@ export const INTEGRATION_SHARDS = [
         ],
       },
       {
+        package: '.',
+        files: ['./tests/profile-recovery-postgres-restore.integration.test.mjs'],
+      },
+      {
+        package: '.',
+        files: [
+          './tests/profile-recovery-self-hosted-simple.integration.test.mjs',
+          './tests/profile-recovery-self-hosted-simple-sigkill.integration.test.mjs',
+        ],
+      },
+      {
         package: 'apps/hosted-control-plane',
         files: [
           'src/hosted-graph-cancellation.integration.test.mjs',
           'src/hosted-http.integration.test.mjs',
+          'src/hosted-model-forwarding.integration.test.mjs',
           'src/reconciliation-metrics.integration.test.mjs',
           'src/reconciliation-projection.integration.test.mjs',
           'src/hosted-graph-legacy-fence.integration.test.mjs',

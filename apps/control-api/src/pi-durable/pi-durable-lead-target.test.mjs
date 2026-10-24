@@ -376,8 +376,10 @@ test('935: a generation observed for another attempt is fenced at the control bo
         principal
       )
     )
-  ).toBe('PI_LEAD_AUTHORITY_CONFLICT')
-  // The lead-stop itself never cascaded to children.
+  ).toBe('PI_LEAD_CANCELLATION_OUTCOME_UNKNOWN')
+  // The runtime has already received cancel; the late generation refuses publication,
+  // but cannot establish that cancellation had no effect. It never cascades to children.
+  expect(calls.cancels).toBe(1)
   expect(calls.childStops).toHaveLength(0)
 })
 

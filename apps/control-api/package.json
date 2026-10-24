@@ -1,6 +1,6 @@
 {
   "name": "@control-plane/control-api",
-  "version": "1.35.0",
+  "version": "1.36.1",
   "private": true,
   "type": "module",
   "main": "./dist/index.js",
@@ -13,7 +13,7 @@
     "lint": "oxlint src",
     "openapi:check": "bun src/openapi/check.ts",
     "test": "bun test src --timeout 30000",
-    "test:integration": "bun test src/validation-replay.integration.test.mjs src/budget-admission.integration.test.mjs src/marketplace-installation.integration.test.mjs --timeout 30000"
+    "test:integration": "bun test src/validation-replay.integration.test.mjs src/budget-admission.integration.test.mjs src/marketplace-installation.integration.test.mjs src/pi-durable/postgres-cancellation-requests.integration.test.mjs --timeout 30000"
   },
   "dependencies": {
     "@control-plane/bootstrap": "workspace:*",
@@ -46,7 +46,7 @@
     "fastify": "5.12.6",
     "reflect-metadata": "0.2.2",
     "rxjs": "7.8.2",
-    "zod": "4.6.5"
+    "zod": "4.6.6"
   },
   "devDependencies": {
     "@control-plane/sdk": "workspace:*",

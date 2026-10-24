@@ -8,6 +8,7 @@ import {
   type ServicePrincipal,
 } from '@control-plane/contracts'
 import { assertExecutionPlanIntegrity } from '@control-plane/execution-plan'
+import type { PiDurableAdmission } from '@control-plane/pi-durable-adapter'
 import type { DelegationRecord, DelegationService } from '@control-plane/orchestration'
 import { ModelSelectionError, type ModelReadinessReason } from '@control-plane/model-gateway'
 import { PiLeadPreparationError, type SqlitePiLeadPreparations } from './lead-preparation.js'
@@ -136,11 +137,51 @@ export interface PiDurableLeadFencedResult {
 const FENCED_ADMISSION_BINDINGS = ['admissionDigest', 'startDigest', 'deadlineAt'] as const
 
 /**
- * Receipt-bound admission facts the retained fence cannot re-prove (no retained binding). The
- * fenced path fails closed while this is non-empty; it never recreates the admission to fill them.
+ * Metadata-only diagnostic for receipt facts absent from the retained marker binding.
+ * Missing fields grant nothing. The effect path separately requires the retained journal and
+ * current canonical assertFencedBinding port; it never recreates an admission from this metadata.
  */
 export function fencedReceiptGaps(fenced: PiDurableLeadFencedResult): readonly string[] {
   return FENCED_ADMISSION_BINDINGS.filter((field) => fenced.retained?.[field] === undefined)
+}
+
+/** Immutable admission a retained run started from, read from the adapter journal. */
+export interface RetainedLeadAdmission {
+  readonly request: RuntimeStartRequest
+  readonly admission: PiDurableAdmission
+  readonly handle: RuntimeExecutionHandle
+}
+
+/** The Pi adapter's fence capabilities: a metadata-only retained read, and a cancel whose
+ * authorization is supplied by the lead service because the prompt is withheld under a fence. */
+export interface PiDurableLeadFenceAdapter {
+  findRetainedAdmission(handle: RuntimeExecutionHandle): Promise<RetainedLeadAdmission | undefined>
+  cancelFenced(
+    handle: RuntimeExecutionHandle,
+    input: { readonly idempotencyKey: string; readonly requestedAt: string },
+    authorize: (
+      retained: RetainedLeadAdmission
+    ) => Promise<void | { readonly earliestAuthorityExpiresAt: string }>
+  ): Promise<z.output<typeof RuntimeExecutionStatusSchema>>
+}
+
+export interface PiDurableLeadFencedBindingInput {
+  readonly workspaceId: string
+  readonly intentId: string
+  readonly principal: ServicePrincipal
+  readonly operation: 'status' | 'progress' | 'cancel'
+  readonly receipt: {
+    readonly executionId: string
+    readonly attemptId: string
+    readonly startDigest: string
+    readonly admissionDigest: string
+    readonly deadlineAt: string
+    readonly allowedPrincipalIds: readonly string[]
+  }
+  readonly retained: {
+    readonly request: RuntimeStartRequest
+    readonly admission: PiDurableAdmission
+  }
 }
 
 export interface PiDurableLeadAuthority {
@@ -150,6 +191,9 @@ export interface PiDurableLeadAuthority {
     readonly principal: ServicePrincipal
     readonly operation?: 'prepare' | 'dispatch' | 'status' | 'progress' | 'children' | 'cancel'
   }): Promise<PiDurableLeadAdmission | PiDurableLeadFencedResult>
+  /** Re-verifies a retained fenced run against the current fence, before and after each awaited
+   * effect. Never re-reads the withheld prompt and never reserves budget or creates an attempt. */
+  assertFencedBinding?(input: PiDurableLeadFencedBindingInput): Promise<void>
   /** Checks canonical audience, current accepted attempt, pinned plan, deadline and budget. */
   assertCurrent(
     admission: PiDurableLeadAdmission,
@@ -190,13 +234,27 @@ export class SqlitePiDurableLeadReceiptStore implements PiDurableLeadReceiptStor
   constructor(readonly database: DatabaseSync) {
     database.exec(`CREATE TABLE IF NOT EXISTS pi_lead_receipts (
       dispatch_id TEXT PRIMARY KEY, revision INTEGER NOT NULL, record TEXT NOT NULL
-    ); CREATE TABLE IF NOT EXISTS pi_lead_commands (key TEXT PRIMARY KEY, digest TEXT NOT NULL)`)
+    ); CREATE INDEX IF NOT EXISTS pi_lead_receipts_execution_idx
+      ON pi_lead_receipts (json_extract(record, '$.executionId'));
+      CREATE TABLE IF NOT EXISTS pi_lead_commands (key TEXT PRIMARY KEY, digest TEXT NOT NULL)`)
   }
   async get(dispatchId: string): Promise<PiDurableLeadReceipt | undefined> {
     const row = this.database
       .prepare('SELECT record FROM pi_lead_receipts WHERE dispatch_id = ?')
       .get(dispatchId)
     return row ? ReceiptSchema.parse(JSON.parse(String(row['record']))) : undefined
+  }
+  /** The inbox is bound to one parent execution. Resolve only that parent's retained
+   * product binding, including after a restart; never scan unrelated receipts. */
+  async findForChildDelivery(executionId: string): Promise<PiDurableLeadReceipt | undefined> {
+    const id = IdentifierSchemas.executionId.parse(executionId)
+    const rows = this.database
+      .prepare(
+        "SELECT record FROM pi_lead_receipts WHERE json_extract(record, '$.executionId') = ? LIMIT 2"
+      )
+      .all(id)
+    if (rows.length > 1) throw new Error('PI_CHILD_TIMELINE_PARENT_CONFLICT')
+    return rows.length ? ReceiptSchema.parse(JSON.parse(String(rows[0]!['record']))) : undefined
   }
   async insert(receipt: PiDurableLeadReceipt): Promise<boolean> {
     const value = ReceiptSchema.parse(receipt)
@@ -235,6 +293,7 @@ export type PiDurableLeadErrorCode =
   | 'PI_LEAD_PROVIDER_READINESS_REQUIRED'
   | 'PI_LEAD_MISSING'
   | 'PI_LEAD_AUTHORITY_CONFLICT'
+  | 'PI_LEAD_CANCELLATION_OUTCOME_UNKNOWN'
   | 'PI_LEAD_COMMAND_CONFLICT'
   | 'PI_LEAD_DISPATCH_CONFLICT'
   | 'PI_LEAD_DEADLINE_EXPIRED'
@@ -281,6 +340,8 @@ export interface DurablePiDurableLeadServiceOptions {
   readonly authority: PiDurableLeadAuthority
   readonly receipts: PiDurableLeadReceiptStore
   readonly adapter: Pick<RuntimeAdapter, 'start' | 'status' | 'progress' | 'cancel'>
+  /** Required to observe or cancel a retained run under a fence; absent means fail closed. */
+  readonly fence?: PiDurableLeadFenceAdapter
   readonly now?: () => string
   readonly preparations?: SqlitePiLeadPreparations
   /** Canonical cascade-only child stop. The supplied service must use the admitted parent stores. */
@@ -406,7 +467,7 @@ export class DurablePiDurableLeadService implements PiDurableLeadService {
               ...(receipt.requestedTarget !== undefined
                 ? { requestedTarget: receipt.requestedTarget }
                 : {}),
-              ...observedTarget(receipt, admission),
+              ...observedTarget(receipt, admission.startRequest),
             }
           : null,
       })
@@ -542,7 +603,7 @@ export class DurablePiDurableLeadService implements PiDurableLeadService {
     return PiDurableLeadDispatchResponseSchema.parse(
       success(request, {
         ...publicReceipt(receipt),
-        ...observedTarget(receipt, admission, status, request),
+        ...observedTarget(receipt, admission.startRequest, status, request),
         state: status.state,
         replayed,
       })
@@ -552,26 +613,23 @@ export class DurablePiDurableLeadService implements PiDurableLeadService {
   async status(input: unknown, principal: ServicePrincipal) {
     const request = parse(PiDurableLeadStatusRequestSchema, input)
     checkPrincipal(request, principal, 'execution:read')
-    const looked = await this.#lookup(
+    const lookup = await this.#lookup(
       request.workspaceId,
       request.parameters.dispatchId,
       principal,
       'status'
     )
-    if ('fenced' in looked)
-      return this.#fencedStatus(request, looked.receipt, looked.fenced, principal)
-    const { receipt, admission } = looked
-    await this.options.authority.assertCurrent(admission, principal, 'status')
+    await this.#assertCurrent(lookup, principal, 'status')
     const status = RuntimeExecutionStatusSchema.parse(
-      await this.options.adapter.status(requireHandle(receipt))
+      await this.options.adapter.status(requireHandle(lookup.receipt))
     )
-    verifyRuntimeHandle(receipt, status.handle)
-    verifyObservedGeneration(receipt, status)
-    await this.options.authority.assertCurrent(admission, principal, 'status')
+    verifyRuntimeHandle(lookup.receipt, status.handle)
+    verifyObservedGeneration(lookup.receipt, status)
+    await this.#assertCurrent(lookup, principal, 'status')
     return PiDurableLeadStatusResponseSchema.parse(
       success(request, {
-        ...publicReceipt(receipt),
-        ...observedTarget(receipt, admission, status, request),
+        ...publicReceipt(lookup.receipt),
+        ...observedTarget(lookup.receipt, startRequestOf(lookup), status, request),
         state: status.state,
         status: publishedStatus(status, request),
       })
@@ -581,25 +639,44 @@ export class DurablePiDurableLeadService implements PiDurableLeadService {
   async progress(input: unknown, principal: ServicePrincipal) {
     const request = parse(PiDurableLeadProgressRequestSchema, input)
     checkPrincipal(request, principal, 'execution:read')
-    const looked = await this.#lookup(
+    const lookup = await this.#lookup(
       request.workspaceId,
       request.parameters.dispatchId,
       principal,
       'progress'
     )
-    if ('fenced' in looked)
-      return this.#fencedProgress(request, looked.receipt, looked.fenced, principal)
-    const { receipt, admission } = looked
-    await this.options.authority.assertCurrent(admission, principal, 'progress')
-    const { events, nextSequence } = await this.#collectProgress(
-      requireHandle(receipt),
-      request.parameters.afterSequence ?? 0
-    )
-    await this.options.authority.assertCurrent(admission, principal, 'progress')
+    await this.#assertCurrent(lookup, principal, 'progress')
+    const { receipt } = lookup
+    const handle = requireHandle(receipt)
+    const events = []
+    let size = 0
+    let nextSequence = request.parameters.afterSequence ?? 0
+    const controller = new AbortController()
+    try {
+      for await (const value of this.options.adapter.progress(handle, {
+        afterSequence: nextSequence,
+        signal: controller.signal,
+      })) {
+        const event = RuntimeExecutionProgressSchema.parse(value)
+        if (event.handleId !== handle.handleId || event.sequence <= nextSequence)
+          fail('PI_LEAD_AUTHORITY_CONFLICT')
+        size += Buffer.byteLength(JSON.stringify(event))
+        if (size > 1_048_576) {
+          if (events.length === 0) fail('PI_LEAD_UNAVAILABLE')
+          break
+        }
+        events.push(event)
+        nextSequence = event.sequence
+        if (events.length === 256) break
+      }
+    } finally {
+      controller.abort()
+    }
+    await this.#assertCurrent(lookup, principal, 'progress')
     return PiDurableLeadProgressResponseSchema.parse(
       success(request, {
         ...publicReceipt(receipt),
-        ...observedTarget(receipt, admission),
+        ...observedTarget(receipt, startRequestOf(lookup)),
         events,
         nextSequence,
       })
@@ -618,7 +695,7 @@ export class DurablePiDurableLeadService implements PiDurableLeadService {
       principal,
       'children'
     )
-    if ('fenced' in looked) fail('PI_LEAD_UNAVAILABLE')
+    if (looked.kind === 'fenced') fail('PI_LEAD_UNAVAILABLE')
     const { receipt, admission } = looked
     await this.options.authority.assertCurrent(admission, principal, 'children')
     const records = await this.options.childDelegations.listChildren(receipt.executionId)
@@ -626,7 +703,7 @@ export class DurablePiDurableLeadService implements PiDurableLeadService {
     return PiDurableLeadChildrenResponseSchema.parse(
       success(request, {
         ...publicReceipt(receipt),
-        ...observedTarget(receipt, admission),
+        ...observedTarget(receipt, startRequestOf(looked)),
         ...childPage(
           childViews(receipt, records),
           request.parameters.after,
@@ -640,39 +717,49 @@ export class DurablePiDurableLeadService implements PiDurableLeadService {
     const request = parse(PiDurableLeadCancelRequestSchema, input)
     checkPrincipal(request, principal, 'execution:cancel')
     verifyPayload(request)
-    const looked = await this.#lookup(
+    const lookup = await this.#lookup(
       request.workspaceId,
       request.payload.dispatchId,
       principal,
       'cancel'
     )
-    if ('fenced' in looked)
-      return this.#fencedCancel(request, looked.receipt, looked.fenced, principal)
-    const { receipt, admission } = looked
+    const { receipt } = lookup
     await this.#bind(request, principal)
-    await this.options.authority.assertCurrent(admission, principal, 'cancel')
-    const status = RuntimeExecutionStatusSchema.parse(
-      await this.options.adapter.cancel(requireHandle(receipt), {
-        idempotencyKey: request.idempotencyKey,
-        requestedAt: request.issuedAt,
+    const command = { idempotencyKey: request.idempotencyKey, requestedAt: request.issuedAt }
+    let status: z.output<typeof RuntimeExecutionStatusSchema>
+    if (lookup.kind === 'fenced') {
+      status = await this.#fence().cancelFenced(requireHandle(receipt), command, async () => {
+        await this.#recheckFenced(lookup, principal, 'cancel')
+        // assertFencedBinding proved this exact immutable deadline against the
+        // current product, execution, attempt and optional preparation minimum.
+        return { earliestAuthorityExpiresAt: receipt.deadlineAt }
       })
-    )
-    verifyRuntimeHandle(receipt, status.handle)
+    } else {
+      await this.options.authority.assertCurrent(lookup.admission, principal, 'cancel')
+      status = RuntimeExecutionStatusSchema.parse(
+        await this.options.adapter.cancel(requireHandle(receipt), command)
+      )
+    }
     // Ordinary lead-stop ends here: it never cascades to child jobs.
     // Child cancellation is a separately explicit authorized operation
     // (delegationService.cancelChildren, invoked directly with its own
     // authorization), never a lead-stop side effect — so independent
     // child work survives a normal parent stop by construction.
-    // The generation check runs on the status the adapter returned from
-    // `cancel`, so it is after the cancellation effect, not before it: it
-    // fences the publication of this response and it is not a pre-effect
-    // cancellation or retry guarantee.
-    verifyObservedGeneration(receipt, status)
-    await this.options.authority.assertCurrent(admission, principal, 'cancel')
+    try {
+      verifyRuntimeHandle(receipt, status.handle)
+      // Cancellation has already been attempted. Fence response publication
+      // without claiming the effect was prevented or safe to retry.
+      verifyObservedGeneration(receipt, status)
+      await this.#assertCurrent(lookup, principal, 'cancel')
+    } catch {
+      // Both adapter paths return after the cancellation intent and abort-delivery boundary. A
+      // failed final authority check cannot establish whether that abort took effect.
+      fail('PI_LEAD_CANCELLATION_OUTCOME_UNKNOWN')
+    }
     return PiDurableLeadCancelResponseSchema.parse(
       success(request, {
         ...publicReceipt(receipt),
-        ...observedTarget(receipt, admission, status, request),
+        ...observedTarget(receipt, startRequestOf(lookup), status, request),
         state: status.state,
         status: publishedStatus(status, request),
       })
@@ -686,35 +773,25 @@ export class DurablePiDurableLeadService implements PiDurableLeadService {
     principal: ServicePrincipal,
     operation: 'prepare' | 'dispatch' | 'status' | 'progress' | 'children' | 'cancel'
   ) {
-    return this.#admit(
-      await this.#resolveRaw(workspaceId, intentId, principal, operation),
+    const resolved = await this.options.authority.resolveIntent({
       workspaceId,
       intentId,
       principal,
-      operation
-    )
+      operation,
+    })
+    return this.#admission(resolved, workspaceId, intentId, principal, operation)
   }
 
-  #resolveRaw(
-    workspaceId: string,
-    intentId: string,
-    principal: ServicePrincipal,
-    operation: 'prepare' | 'dispatch' | 'status' | 'progress' | 'children' | 'cancel'
-  ): Promise<PiDurableLeadAdmission | PiDurableLeadFencedResult> {
-    return this.options.authority.resolveIntent({ workspaceId, intentId, principal, operation })
-  }
-
-  async #admit(
+  async #admission(
     resolved: PiDurableLeadAdmission | PiDurableLeadFencedResult,
     workspaceId: string,
     intentId: string,
     principal: ServicePrincipal,
     operation: 'prepare' | 'dispatch' | 'status' | 'progress' | 'children' | 'cancel'
-  ): Promise<PiDurableLeadAdmission> {
+  ) {
     if (!('schemaVersion' in resolved) || resolved.schemaVersion !== 'pi-lead-authority/v1') {
-      // Fenced results never reach the admission path (M18.01.3). Fenced observation and
-      // cancel are handled only by #lookup's fenced branch, which fails closed on any
-      // binding the retained fence cannot prove. Fail closed here rather than weaken verification.
+      // Prepare and dispatch are never admitted under a fence. Observation and cancel take the
+      // retained-binding path in #lookup instead.
       fail('PI_LEAD_UNAVAILABLE')
     }
     const admission = structuredClone(resolved)
@@ -750,7 +827,7 @@ export class DurablePiDurableLeadService implements PiDurableLeadService {
     dispatchId: string,
     principal: ServicePrincipal,
     operation: 'status' | 'progress' | 'children' | 'cancel'
-  ) {
+  ): Promise<ReceiptLookup> {
     const receipt = await this.options.receipts.get(dispatchId)
     if (!receipt) fail('PI_LEAD_MISSING')
     if (
@@ -758,9 +835,19 @@ export class DurablePiDurableLeadService implements PiDurableLeadService {
       !receipt.allowedPrincipalIds.includes(principal.principalId)
     )
       fail('PI_LEAD_SCOPE_REJECTED')
-    const resolved = await this.#resolveRaw(workspaceId, receipt.intentId, principal, operation)
-    if (resolved.schemaVersion === 'pi-lead-fenced/v1') return { receipt, fenced: resolved }
-    const admission = await this.#admit(
+    const resolved = await this.options.authority.resolveIntent({
+      workspaceId,
+      intentId: receipt.intentId,
+      principal,
+      operation,
+    })
+    if (isFencedResult(resolved)) {
+      // Child reads are refused under every fence; only status, progress and cancel are retained.
+      if (operation === 'children') fail('PI_LEAD_UNAVAILABLE')
+      const retained = await this.#retainedBinding(receipt, resolved, principal, operation)
+      return { kind: 'fenced', receipt, retained, principal, operation }
+    }
+    const admission = await this.#admission(
       resolved,
       workspaceId,
       receipt.intentId,
@@ -768,131 +855,70 @@ export class DurablePiDurableLeadService implements PiDurableLeadService {
       operation
     )
     verifyReceipt(receipt, admission)
-    return { receipt, admission }
+    return { kind: 'admission', receipt, admission }
   }
 
-  /** M18.01.3 read-safe observation of a fenced receipt. Fails closed on any unproven binding. */
-  async #fencedStatus(
-    request: z.output<typeof read>,
+  /** Verifies the original binding of a fenced receipt against its retained admission, request,
+   * and handle, before any effect. Denials here carry the authority's own codes. */
+  async #retainedBinding(
     receipt: PiDurableLeadReceipt,
-    fenced: PiDurableLeadFencedResult,
-    principal: ServicePrincipal
-  ) {
-    verifyFencedReceipt(receipt, fenced, 'status')
-    await this.#fencedGuard(request.workspaceId, receipt, fenced, principal, 'status')
-    const status = RuntimeExecutionStatusSchema.parse(
-      await this.options.adapter.status(requireHandle(receipt))
-    )
-    verifyRuntimeHandle(receipt, status.handle)
-    // The retained fence proves the receipt, never the runtime's report: a
-    // generation observed for another attempt is still a late event and is
-    // refused here rather than published against the wrong attempt.
-    verifyObservedGeneration(receipt, status)
-    await this.#fencedGuard(request.workspaceId, receipt, fenced, principal, 'status')
-    return PiDurableLeadStatusResponseSchema.parse(
-      success(request, {
-        ...publicReceipt(receipt),
-        state: status.state,
-        status: publishedStatus(status, request),
-      })
-    )
-  }
-
-  async #fencedProgress(
-    request: z.output<typeof PiDurableLeadProgressRequestSchema>,
-    receipt: PiDurableLeadReceipt,
-    fenced: PiDurableLeadFencedResult,
-    principal: ServicePrincipal
-  ) {
-    verifyFencedReceipt(receipt, fenced, 'progress')
-    await this.#fencedGuard(request.workspaceId, receipt, fenced, principal, 'progress')
-    const { events, nextSequence } = await this.#collectProgress(
-      requireHandle(receipt),
-      request.parameters.afterSequence ?? 0
-    )
-    await this.#fencedGuard(request.workspaceId, receipt, fenced, principal, 'progress')
-    return PiDurableLeadProgressResponseSchema.parse(
-      success(request, { ...publicReceipt(receipt), events, nextSequence })
-    )
-  }
-
-  /** Original-actor cancel of one retained handle. Like ordinary lead-stop, it never cascades. */
-  async #fencedCancel(
-    request: z.output<typeof command>,
-    receipt: PiDurableLeadReceipt,
-    fenced: PiDurableLeadFencedResult,
-    principal: ServicePrincipal
-  ) {
-    verifyFencedReceipt(receipt, fenced, 'cancel')
-    await this.#bind(request, principal)
-    await this.#fencedGuard(request.workspaceId, receipt, fenced, principal, 'cancel')
-    const status = RuntimeExecutionStatusSchema.parse(
-      await this.options.adapter.cancel(requireHandle(receipt), {
-        idempotencyKey: request.idempotencyKey,
-        requestedAt: request.issuedAt,
-      })
-    )
-    verifyRuntimeHandle(receipt, status.handle)
-    // The same fence as the ordinary path: a late old-attempt generation is
-    // never published, fenced or not.
-    verifyObservedGeneration(receipt, status)
-    await this.#fencedGuard(request.workspaceId, receipt, fenced, principal, 'cancel')
-    return PiDurableLeadCancelResponseSchema.parse(
-      success(request, {
-        ...publicReceipt(receipt),
-        state: status.state,
-        status: publishedStatus(status, request),
-      })
-    )
-  }
-
-  /** Recheck current fenced authority and the retained receipt generation around each effect. */
-  async #fencedGuard(
-    workspaceId: string,
-    receipt: PiDurableLeadReceipt,
-    fenced: PiDurableLeadFencedResult,
+    resolved: PiDurableLeadFencedResult,
     principal: ServicePrincipal,
-    operation: PiDurableLeadFencedResult['operation']
-  ) {
-    const current = await this.#resolveRaw(workspaceId, receipt.intentId, principal, operation)
-    if (current.schemaVersion !== 'pi-lead-fenced/v1' || hash(current) !== hash(fenced))
-      fail('PI_LEAD_AUTHORITY_CONFLICT')
-    const latest = await this.options.receipts.get(receipt.dispatchId)
-    if (
-      !latest ||
-      latest.revision !== receipt.revision ||
-      hash(latest.handle) !== hash(receipt.handle)
-    )
-      fail('PI_LEAD_DISPATCH_CONFLICT')
+    operation: 'status' | 'progress' | 'cancel'
+  ): Promise<RetainedLeadAdmission> {
+    if (resolved.operation !== operation) fail('PI_LEAD_UNAVAILABLE')
+    const handle = requireHandle(receipt)
+    const retained = await this.#fence().findRetainedAdmission(handle)
+    if (!retained) fail('PI_LEAD_UNAVAILABLE')
+    if (hash(retained.handle) !== hash(handle)) fail('PI_LEAD_AUTHORITY_CONFLICT')
+    await this.#fencedAuthority()(fencedBinding(receipt, principal, operation, retained))
+    return retained
   }
 
-  /** Bounded progress read: at most 256 events and 1 MiB, cancelled when the read ends. */
-  async #collectProgress(handle: RuntimeExecutionHandle, afterSequence: number) {
-    const events = []
-    let size = 0
-    let nextSequence = afterSequence
-    const controller = new AbortController()
-    try {
-      for await (const value of this.options.adapter.progress(handle, {
-        afterSequence: nextSequence,
-        signal: controller.signal,
-      })) {
-        const event = RuntimeExecutionProgressSchema.parse(value)
-        if (event.handleId !== handle.handleId || event.sequence <= nextSequence)
-          fail('PI_LEAD_AUTHORITY_CONFLICT')
-        size += Buffer.byteLength(JSON.stringify(event))
-        if (size > 1_048_576) {
-          if (events.length === 0) fail('PI_LEAD_UNAVAILABLE')
-          break
-        }
-        events.push(event)
-        nextSequence = event.sequence
-        if (events.length === 256) break
-      }
-    } finally {
-      controller.abort()
+  /** Current authority for an observation or cancel, rechecked after every awaited effect. */
+  async #assertCurrent(
+    lookup: ReceiptLookup,
+    principal: ServicePrincipal,
+    operation: 'status' | 'progress' | 'cancel'
+  ): Promise<void> {
+    if (lookup.kind === 'admission') {
+      await this.options.authority.assertCurrent(lookup.admission, principal, operation)
+      return
     }
-    return { events, nextSequence }
+    await this.#recheckFenced(lookup, principal, operation)
+  }
+
+  async #recheckFenced(
+    lookup: FencedLookup,
+    principal: ServicePrincipal,
+    operation: 'status' | 'progress' | 'cancel'
+  ): Promise<void> {
+    const handle = requireHandle(lookup.receipt)
+    const fresh = await this.#fence().findRetainedAdmission(handle)
+    if (!fresh || hash(fresh) !== hash(lookup.retained)) fail('PI_LEAD_AUTHORITY_CONFLICT')
+    await this.#fencedAuthority()(fencedBinding(lookup.receipt, principal, operation, fresh))
+    // The authority read can overlap receipt reconciliation. Require the exact generation and
+    // runtime handle looked up by this operation to still be current before returning to an effect.
+    const receipt = await this.options.receipts.get(lookup.receipt.dispatchId)
+    if (
+      !receipt ||
+      receipt.revision !== lookup.receipt.revision ||
+      hash(receipt.handle) !== hash(lookup.receipt.handle) ||
+      receipt.deadlineAt !== lookup.receipt.deadlineAt
+    )
+      fail('PI_LEAD_AUTHORITY_CONFLICT')
+    if (Date.parse(receipt.deadlineAt) <= Date.parse(this.#now())) fail('PI_LEAD_DEADLINE_EXPIRED')
+  }
+
+  #fence(): PiDurableLeadFenceAdapter {
+    if (!this.options.fence) fail('PI_LEAD_UNAVAILABLE')
+    return this.options.fence
+  }
+
+  #fencedAuthority(): (input: PiDurableLeadFencedBindingInput) => Promise<void> {
+    const authority = this.options.authority
+    if (!authority.assertFencedBinding) fail('PI_LEAD_UNAVAILABLE')
+    return (input) => authority.assertFencedBinding!(input)
   }
 
   async #bind(request: z.output<typeof command>, principal: ServicePrincipal) {
@@ -966,32 +992,50 @@ function checkPrincipal(
 function verifyPayload(request: z.output<typeof command>) {
   if (hash(request.payload).slice(7) !== request.payloadHash) fail('PI_LEAD_INVALID')
 }
-/**
- * Fenced counterpart of verifyReceipt, proven from retained records only. Any receipt binding
- * the retained fence cannot re-prove fails closed (see fencedReceiptGaps); nothing is inferred.
- * verifyReceipt is unchanged and remains the only admitted-attempt check.
- */
-function verifyFencedReceipt(
+type FencedLookup = {
+  readonly kind: 'fenced'
+  readonly receipt: PiDurableLeadReceipt
+  readonly retained: RetainedLeadAdmission
+  readonly principal: ServicePrincipal
+  readonly operation: 'status' | 'progress' | 'cancel'
+}
+type ReceiptLookup =
+  | {
+      readonly kind: 'admission'
+      readonly receipt: PiDurableLeadReceipt
+      readonly admission: PiDurableLeadAdmission
+    }
+  | FencedLookup
+
+function isFencedResult(
+  value: PiDurableLeadAdmission | PiDurableLeadFencedResult
+): value is PiDurableLeadFencedResult {
+  return 'schemaVersion' in value && value.schemaVersion === 'pi-lead-fenced/v1'
+}
+function startRequestOf(lookup: ReceiptLookup): RuntimeStartRequest {
+  return lookup.kind === 'admission' ? lookup.admission.startRequest : lookup.retained.request
+}
+function fencedBinding(
   receipt: PiDurableLeadReceipt,
-  fenced: PiDurableLeadFencedResult,
-  operation: PiDurableLeadFencedResult['operation']
-) {
-  const retained = fenced.retained
-  if (!fenced.retainedMatch || retained === undefined || fencedReceiptGaps(fenced).length > 0)
-    fail('PI_LEAD_UNAVAILABLE')
-  if (
-    fenced.operation !== operation ||
-    receipt.intentId !== retained.intentId ||
-    receipt.workspaceId !== retained.workspaceId ||
-    receipt.executionId !== retained.executionId ||
-    receipt.attemptId !== retained.attemptId ||
-    receipt.admissionDigest !== retained.admissionDigest ||
-    receipt.startDigest !== retained.startDigest ||
-    receipt.deadlineAt !== retained.deadlineAt ||
-    hash(receipt.allowedPrincipalIds.toSorted()) !==
-      hash([...retained.allowedPrincipalIds].toSorted())
-  )
-    fail('PI_LEAD_AUTHORITY_CONFLICT')
+  principal: ServicePrincipal,
+  operation: 'status' | 'progress' | 'cancel',
+  retained: RetainedLeadAdmission
+): PiDurableLeadFencedBindingInput {
+  return {
+    workspaceId: receipt.workspaceId,
+    intentId: receipt.intentId,
+    principal,
+    operation,
+    receipt: {
+      executionId: receipt.executionId,
+      attemptId: receipt.attemptId,
+      startDigest: receipt.startDigest,
+      admissionDigest: receipt.admissionDigest,
+      deadlineAt: receipt.deadlineAt,
+      allowedPrincipalIds: receipt.allowedPrincipalIds,
+    },
+    retained: { request: retained.request, admission: retained.admission },
+  }
 }
 function verifyReceipt(receipt: PiDurableLeadReceipt, admission: PiDurableLeadAdmission) {
   if (
@@ -1023,7 +1067,7 @@ function publicReceipt(receipt: PiDurableLeadReceipt) {
   }
 }
 /** Server-owned execution observation for one verified receipt: the
- *  adapter-observed execution session, the authority-resolved plan task, and
+ *  adapter-observed execution session, the authorized admitted or retained plan task, and
  *  the generation the runtime observed for the attempt that owns them. All
  *  three come from server-held records already pinned by the surrounding
  *  verifyReceipt/verifyRuntimeHandle checks — never from caller claims. A
@@ -1032,7 +1076,7 @@ function publicReceipt(receipt: PiDurableLeadReceipt) {
  *  exists. */
 function observedTarget(
   receipt: PiDurableLeadReceipt,
-  admission: PiDurableLeadAdmission,
+  startRequest: RuntimeStartRequest,
   status?: RuntimeExecutionStatus,
   request?: { readonly contractVersion: unknown }
 ):
@@ -1047,9 +1091,7 @@ function observedTarget(
   const sessionId = receipt.handle?.externalSessionId
   // The admission type leaves the plan loosely typed; read the correlation
   // defensively — anything but a string taskId means no observation.
-  const plan = admission.startRequest.executionPlan as
-    | { correlation?: { taskId?: unknown } }
-    | undefined
+  const plan = startRequest.executionPlan as { correlation?: { taskId?: unknown } } | undefined
   const taskId = plan?.correlation?.taskId
   if (typeof sessionId !== 'string' || typeof taskId !== 'string') return {}
   // The generation is the runtime's own observation for this attempt. A
@@ -1131,8 +1173,9 @@ function childViews(
   const views: PiDurableLeadChild[] = []
   for (const record of records) {
     if (record.parentExecutionId !== receipt.executionId) fail('PI_LEAD_AUTHORITY_CONFLICT')
-    if (record.parentAttemptId !== undefined && record.parentAttemptId !== receipt.attemptId)
-      continue
+    // The execution can have multiple attempts. A legacy record without an admitted parent
+    // attempt cannot be attributed to this dispatch, so it must not be disclosed here.
+    if (record.parentAttemptId !== receipt.attemptId) continue
     const outcomeState =
       record.state === 'completed' || record.state === 'failed' || record.state === 'cancelled'
         ? record.state

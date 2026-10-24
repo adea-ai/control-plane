@@ -28,6 +28,8 @@ const Preparation = z.object({
 /** Reads the SAME durable Node preparation/receipt/marker/journal. No product callback or runtime start. */
 export function createSqlitePiLeadPublicationReader(options: {
   database: DatabaseSync
+  /** Child event delivery needs only retained metadata, including after lead teardown. */
+  includeStatus?: boolean
   adapter: Pick<RuntimeAdapter, 'status'> & {
     findExistingHandle(
       request: z.output<typeof RuntimeStartRequestSchema>
@@ -101,7 +103,7 @@ export function createSqlitePiLeadPublicationReader(options: {
         selectionRevision: funding.selectionRevision,
         canonicalActorPrincipalId: marker.intent.canonicalActorPrincipalId,
       },
-      status: await options.adapter.status(handle),
+      status: options.includeStatus === false ? undefined : await options.adapter.status(handle),
     }
   }
 }

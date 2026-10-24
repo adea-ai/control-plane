@@ -43,6 +43,27 @@ export interface ExecutionAcceptanceService {
   accept(envelope: unknown, callerPrincipalId: string): Promise<ExecutionAcceptanceResponse>
 }
 
+/** The graph part of a workflow submission, derived only from the retained plan. Acceptance and a
+ *  later reconciliation resume both use it, so a re-driven submission carries exactly the graph
+ *  the first one did. */
+export function graphWorkflowInput(
+  plan: {
+    readonly correlation: { readonly workspaceId: string }
+    readonly graph?: { readonly reference: unknown; readonly input: unknown } | undefined
+  },
+  executionId: string
+): Pick<ExecutionWorkflowInput, 'graph'> {
+  if (plan.graph === undefined) return {}
+  return {
+    graph: {
+      workspaceId: plan.correlation.workspaceId,
+      reference: plan.graph.reference,
+      input: plan.graph.input,
+      threadId: `graph:${executionId}`,
+    },
+  } as Pick<ExecutionWorkflowInput, 'graph'>
+}
+
 export interface ExecutionWorkflowDispatcher {
   submit(input: ExecutionWorkflowInput): Promise<void>
 }
@@ -86,6 +107,11 @@ export class DurableExecutionAcceptanceService implements ExecutionAcceptanceSer
           agentId: request.payload.agentId,
         },
         executionPlan: request.payload.executionPlan,
+        // The model the caller accepted is recorded on the execution read model
+        // (M12/#678) so the routing layer can map it to a harness through the
+        // deployment's per-model map. Absent leaves today's behavior: the
+        // execution carries no model and the map is not consulted.
+        ...(request.payload.modelId === undefined ? {} : { modelId: request.payload.modelId }),
         ...(request.payload.marketplacePluginReferences === undefined
           ? {}
           : { marketplacePluginReferences: request.payload.marketplacePluginReferences }),
@@ -121,16 +147,7 @@ export class DurableExecutionAcceptanceService implements ExecutionAcceptanceSer
             executionId: accepted.execution.executionId,
             workflowId: workflowIdFromExecutionId(accepted.execution.executionId),
             executionPlan: accepted.execution.executionPlan,
-            ...(plan.graph === undefined
-              ? {}
-              : {
-                  graph: {
-                    workspaceId: plan.correlation.workspaceId,
-                    reference: plan.graph.reference,
-                    input: plan.graph.input,
-                    threadId: `graph:${accepted.execution.executionId}`,
-                  },
-                }),
+            ...graphWorkflowInput(plan, accepted.execution.executionId),
             ...(accepted.execution.marketplacePluginReferences === undefined
               ? {}
               : { marketplacePluginReferences: accepted.execution.marketplacePluginReferences }),

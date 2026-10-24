@@ -27,12 +27,12 @@ const CapabilityNameSchema = z
   .min(1)
   .max(128)
   .regex(/^[a-z][a-z0-9.-]*$/)
-const HarnessIdSchema = z
+export const HarnessIdSchema = z
   .string()
   .min(1)
   .max(64)
   .regex(/^[a-z][a-z0-9-]*$/)
-const ModelIdSchema = z
+export const ModelIdSchema = z
   .string()
   .min(1)
   .max(128)
@@ -190,6 +190,13 @@ export const DecisionResolutionDiagnosticSchema = z.enum([
   'HARNESS_UNAVAILABLE_ON_PINNED_RUNTIME',
   'NO_COMPATIBLE_RUNTIME',
   'CONTEXT_PACKAGE_PIN_MISMATCH',
+  // M12/#678 per-model harness mapping. A configured map is a policy, not a
+  // fallback: an execution without a model, with a model the map does not
+  // name, or whose mapped harness contradicts an explicit pin, is denied
+  // instead of being routed to another harness.
+  'HARNESS_MAP_MODEL_ABSENT',
+  'HARNESS_MAP_MODEL_UNMAPPED',
+  'HARNESS_MAP_CONFLICTS_WITH_PIN',
 ])
 export type DecisionResolutionDiagnostic = z.output<typeof DecisionResolutionDiagnosticSchema>
 

@@ -1,5 +1,26 @@
 # Changelog
 
+## [1.54.1](https://github.com/adea-ai/control-plane/compare/database-v1.54.0...database-v1.54.1) (2026-10-24)
+
+
+### Tests
+
+* **profiles:** prove profile recovery and fenced rollback evidence ([#1048](https://github.com/adea-ai/control-plane/issues/1048)) ([da1a38c](https://github.com/adea-ai/control-plane/commit/da1a38cbb4f20da086313451077593d8df3e283d))
+
+## [1.54.0](https://github.com/adea-ai/control-plane/compare/database-v1.53.0...database-v1.54.0) (2026-10-23)
+
+
+### Features
+
+* **runtime:** map a model to its harness in managed cloud routing (CP [#678](https://github.com/adea-ai/control-plane/issues/678)) ([#1210](https://github.com/adea-ai/control-plane/issues/1210)) ([4f9967d](https://github.com/adea-ai/control-plane/commit/4f9967dc50dfb5dc3ffa13a305f4e3623ae20fe1))
+
+## [1.53.0](https://github.com/adea-ai/control-plane/compare/database-v1.52.5...database-v1.53.0) (2026-10-23)
+
+
+### Features
+
+* **database:** add ProjectState digest compatibility ([#612](https://github.com/adea-ai/control-plane/issues/612)) ([#1223](https://github.com/adea-ai/control-plane/issues/1223)) ([5123466](https://github.com/adea-ai/control-plane/commit/512346603a7ca0c0d9f9b90ed40cf48d6dc2d474))
+
 ## [1.52.5](https://github.com/adea-ai/control-plane/compare/database-v1.52.4...database-v1.52.5) (2026-10-23)
 
 

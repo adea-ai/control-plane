@@ -1,5 +1,26 @@
 # Changelog
 
+## [1.19.1](https://github.com/adea-ai/control-plane/compare/workflow-worker-v1.19.0...workflow-worker-v1.19.1) (2026-10-24)
+
+
+### Bug Fixes
+
+* reduce dependency closure and preserve budget checks ([#1270](https://github.com/adea-ai/control-plane/issues/1270)) ([01fa230](https://github.com/adea-ai/control-plane/commit/01fa230233cc796b6c7f93d020006212b89631f6))
+
+## [1.19.0](https://github.com/adea-ai/control-plane/compare/workflow-worker-v1.18.4...workflow-worker-v1.19.0) (2026-10-23)
+
+
+### Features
+
+* **runtime:** map a model to its harness in managed cloud routing (CP [#678](https://github.com/adea-ai/control-plane/issues/678)) ([#1210](https://github.com/adea-ai/control-plane/issues/1210)) ([4f9967d](https://github.com/adea-ai/control-plane/commit/4f9967dc50dfb5dc3ffa13a305f4e3623ae20fe1))
+
+## [1.18.4](https://github.com/adea-ai/control-plane/compare/workflow-worker-v1.18.3...workflow-worker-v1.18.4) (2026-10-23)
+
+
+### Bug Fixes
+
+* **workflow-worker:** never replace an unavailable enrolled remote_host with the cloud service ([#1281](https://github.com/adea-ai/control-plane/issues/1281)) ([3229738](https://github.com/adea-ai/control-plane/commit/3229738876688f36d8501218c9112b62f4e2f8e8))
+
 ## [1.18.3](https://github.com/adea-ai/control-plane/compare/workflow-worker-v1.18.2...workflow-worker-v1.18.3) (2026-10-22)
 
 

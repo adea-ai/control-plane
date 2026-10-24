@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from 'node:crypto'
+import { createHash } from 'node:crypto'
 import { DatabaseSync } from 'node:sqlite'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -24,11 +24,14 @@ import { DurableRuntimeBudgetAdmission } from '@control-plane/workflow-worker'
 import { createModels, createProvider } from '@earendil-works/pi-ai/models'
 import { openAICompletionsApi } from '@earendil-works/pi-ai/api/openai-completions.lazy'
 import { createNodePiDurableLeadComposition } from './node-composition.ts'
+import { createPiDurableEngine } from '@control-plane/pi-durable-adapter'
 import { deterministicPiLeadIntentIds } from './node-admission.ts'
 
 // Shared live fixture for the M18.01.3 fence tests: a production lead composition over real SQLite,
 // a real Pi adapter, and a scripted model transport whose turn is genuinely held open. Test code
 // observes the composition through the same ports production uses; it never rewrites journal state.
+// This fixture explicitly qualifies its own product/deadline writers with the native SDK fence.
+// It does not install production wiring or establish complete external writer/generation coverage.
 
 export const at = '2026-10-08T09:00:00.000Z'
 export const expiresAt = '2026-10-08T10:00:00.000Z'
@@ -49,56 +52,6 @@ export const principal = {
 export const secondAllowedPrincipal = { ...principal, principalId: 'svc_pi-admission' }
 export const outsiderPrincipal = { ...principal, principalId: 'svc_other' }
 
-function createTestCancellationAuthority() {
-  const intents = new Map()
-  const acknowledged = new Set()
-  let version = 0
-  return {
-    async commit(proposal) {
-      const existing = intents.get(proposal.handleId)
-      if (existing) {
-        if (
-          existing.idempotencyKey !== proposal.idempotencyKey ||
-          existing.requestDigest !== proposal.requestDigest
-        )
-          throw new Error('PI_CANCELLATION_INTENT_CONFLICT')
-        return structuredClone(existing)
-      }
-      const intent = {
-        schemaVersion: 'pi-committed-cancellation/v1',
-        intentId: randomUUID(),
-        committedAuthorityVersion: ++version,
-        committedAt: at,
-        ...structuredClone(proposal),
-      }
-      intents.set(proposal.handleId, intent)
-      return structuredClone(intent)
-    },
-    async pendingHandles() {
-      return [
-        ...new Set(
-          [...intents.values()]
-            .filter((intent) => !acknowledged.has(intent.intentId))
-            .map((intent) => intent.handleId)
-        ),
-      ]
-    },
-    async pendingForHandle(handleId) {
-      return [...intents.values()]
-        .filter((intent) => intent.handleId === handleId && !acknowledged.has(intent.intentId))
-        .map((intent) => structuredClone(intent))
-    },
-    async pending() {
-      return [...intents.values()]
-        .filter((intent) => !acknowledged.has(intent.intentId))
-        .map((intent) => structuredClone(intent))
-    },
-    async acknowledge(committedIntentId) {
-      acknowledged.add(committedIntentId)
-    },
-  }
-}
-
 export function deferred() {
   let resolve
   const promise = new Promise((yes) => {
@@ -118,13 +71,7 @@ export async function waitUntil(predicate, label, timeoutMs = 15000) {
 
 const chunk = (value) => `data: ${JSON.stringify(value)}\n\n`
 
-export function createLiveHarness(
-  directory,
-  { scoped = false, preparation = false, cancellationAuthority = true } = {}
-) {
-  const committedCancellationAuthority = cancellationAuthority
-    ? createTestCancellationAuthority()
-    : undefined
+export function createLiveHarness(directory, { scoped = false, preparation = false } = {}) {
   const state = {
     requests: [],
     streamsStarted: 0,
@@ -148,6 +95,70 @@ export function createLiveHarness(
     reconcileDecision: 'unresolved',
     reconcileCalls: 0,
   }
+  const nativeOwners = new Map()
+  let publishedProduct
+  let mutationOrdinal = 0
+  let writerQueue = Promise.resolve()
+  let pendingWrites = 0
+  let writerFailed = false
+
+  // R is published only after every explicitly live fixture owner's native F ACK.
+  // The initial/no-owner case describes this disposable fixture only: it is not
+  // a global empty-writer assertion or permission for an external canonical R.
+  async function installFixtureFences(mutationId) {
+    const acknowledged = new Set()
+    for (;;) {
+      const pending = [...nativeOwners.values()].filter((owner) => !acknowledged.has(owner))
+      if (pending.length === 0) return
+      await Promise.all(
+        pending.map(async (owner) => {
+          await owner.installFence({ mutationId })
+          acknowledged.add(owner)
+        })
+      )
+    }
+  }
+  function enqueueFixtureMutation(kind, publish) {
+    const mutationId = `live-fixture:${kind}:${++mutationOrdinal}`
+    pendingWrites += 1
+    writerQueue = writerQueue
+      .then(async () => {
+        await installFixtureFences(mutationId)
+        await publish()
+      })
+      .catch((error) => {
+        writerFailed = true
+        throw error
+      })
+      .finally(() => {
+        pendingWrites -= 1
+      })
+    // A synchronous property setter cannot return the promise. Preserve its
+    // rejection for every flush without an unhandled-rejection side channel.
+    void writerQueue.catch(() => {})
+    return writerQueue
+  }
+  async function flushFixtureMutations() {
+    for (;;) {
+      const pending = writerQueue
+      await pending
+      if (pending === writerQueue) return
+    }
+  }
+  Object.defineProperty(state, 'product', {
+    enumerable: true,
+    get: () => publishedProduct,
+    set(value) {
+      const next = structuredClone(value)
+      if (nativeOwners.size === 0 && pendingWrites === 0 && !writerFailed) {
+        publishedProduct = next
+        return
+      }
+      enqueueFixtureMutation('product', () => {
+        publishedProduct = next
+      })
+    },
+  })
   const encoder = new TextEncoder()
   const providerServer = Bun.serve({
     hostname: '127.0.0.1',
@@ -355,15 +366,26 @@ export function createLiveHarness(
     armScopeRead(action) {
       state.armedScope = action
     },
+    /** Native queued-input race probes; available only in this explicit qualification fixture. */
+    async queueNativeInputForQualification(input) {
+      if (nativeOwners.size !== 1) throw new Error('LIVE_FIXTURE_NATIVE_OWNER_AMBIGUOUS')
+      return [...nativeOwners.values()][0].queueInputForQualification(input)
+    },
+    async nativeQueuedInputIdsForQualification() {
+      if (nativeOwners.size !== 1) throw new Error('LIVE_FIXTURE_NATIVE_OWNER_AMBIGUOUS')
+      return [...nativeOwners.values()][0].queuedInputIdsForQualification()
+    },
     /** Moves the retained execution's own deadline; the dispatch-time deadline no longer matches. */
     async setExecutionDeadline(deadlineAt) {
-      const current = structuredClone(await realGetExecution(harness.ids.executionId))
-      const expectedVersion = current.version
-      current.deadlineAt = deadlineAt
-      current.version += 1
-      current.updatedAt = at
-      if (!(await repositories.executions.compareAndSetExecution(expectedVersion, current)))
-        throw new Error('LIVE_FIXTURE_EXECUTION_DEADLINE_CONFLICT')
+      await enqueueFixtureMutation('deadline', async () => {
+        const current = structuredClone(await realGetExecution(harness.ids.executionId))
+        const expectedVersion = current.version
+        current.deadlineAt = deadlineAt
+        current.version += 1
+        current.updatedAt = at
+        if (!(await repositories.executions.compareAndSetExecution(expectedVersion, current)))
+          throw new Error('LIVE_FIXTURE_EXECUTION_DEADLINE_CONFLICT')
+      })
     },
     /** The execution's current attempt, read without the armed hook. */
     async latestAttemptId() {
@@ -477,6 +499,7 @@ export function createLiveHarness(
             const action = state.armedScope
             state.armedScope = undefined
             await action()
+            await flushFixtureMutations()
           }
           return {
             workspaceId: plan.correlation.workspaceId,
@@ -509,6 +532,7 @@ export function createLiveHarness(
         if (armed?.phase === bindingRead.phase && armed.sample === sample) {
           state.armedBindingSnapshot = undefined
           await armed.action()
+          await flushFixtureMutations()
         }
       }
       repositories.executions.getExecution = async (executionId) => {
@@ -535,10 +559,23 @@ export function createLiveHarness(
       })
       composition = await createNodePiDurableLeadComposition({
         directory,
-        ...(committedCancellationAuthority ? { committedCancellationAuthority } : {}),
+        engineFactory: (options) =>
+          createPiDurableEngine({
+            ...options,
+            nativeCancellationQualification: {
+              now: () => state.clock,
+              onOwnerReady(owner) {
+                nativeOwners.set(owner.sessionId, owner)
+              },
+              onOwnerClosed(sessionId) {
+                nativeOwners.delete(sessionId)
+              },
+            },
+          }),
         admission: {
           product: {
             readCurrent: async (input) => {
+              await flushFixtureMutations()
               state.productReads += 1
               return input.intentId === intentId && input.workspaceId === evidence.workspaceId
                 ? structuredClone(state.product)
@@ -676,6 +713,7 @@ export function createLiveHarness(
           if (armed?.phase === phase) {
             state.armedAfterBindingValidation = undefined
             await armed.action()
+            await flushFixtureMutations()
           }
           return result
         } finally {
@@ -685,6 +723,7 @@ export function createLiveHarness(
       for (const phase of ['status', 'progress', 'cancel']) {
         const realOperation = composition.service[phase].bind(composition.service)
         composition.service[phase] = async (...args) => {
+          await flushFixtureMutations()
           const previous = state.authorityRequest
           state.authorityRequest = { phase, validationOrdinal: 0 }
           try {
@@ -698,14 +737,16 @@ export function createLiveHarness(
       composition.adapter.cancelFenced = async (handle, command, authorize) => {
         let authorizationCheckpoint = 0
         return realCancelFenced(handle, command, async (retained) => {
-          await authorize(retained)
+          const authoritySnapshot = await authorize(retained)
           authorizationCheckpoint += 1
           const checkpoint = authorizationCheckpoint === 1 ? 'first' : 'final'
           const armed = state.armedAfterCancelAuthorization
           if (armed?.checkpoint === checkpoint) {
             state.armedAfterCancelAuthorization = undefined
             await armed.action()
+            await flushFixtureMutations()
           }
+          return authoritySnapshot
         })
       }
       const realStart = composition.adapter.start.bind(composition.adapter)
@@ -753,17 +794,35 @@ export function createLiveHarness(
   }
 
   async function closeOpened() {
+    const failures = []
+    try {
+      await flushFixtureMutations()
+    } catch (error) {
+      failures.push(error)
+    }
+    // Failed F/queued R must remain a test failure, but must not leak a native
+    // owner or persistence handle while the disposable fixture is torn down.
     if (composition) {
       const closing = composition
       composition = undefined
-      await closing.close()
+      try {
+        await closing.close()
+      } catch (error) {
+        failures.push(error)
+      }
     }
     if (persistence) {
       const closing = persistence
       persistence = undefined
       repositories = undefined
-      await closing.close()
+      try {
+        await closing.close()
+      } catch (error) {
+        failures.push(error)
+      }
     }
+    if (failures.length === 1) throw failures[0]
+    if (failures.length > 1) throw new AggregateError(failures, 'LIVE_FIXTURE_CLOSE_FAILED')
   }
 
   return harness

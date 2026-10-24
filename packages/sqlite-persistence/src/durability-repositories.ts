@@ -378,7 +378,14 @@ export class SqliteExecutionEventRepository implements ExecutionEventRepository 
               event.publication.nextAttemptAt === undefined ||
               event.publication.nextAttemptAt <= dueAt)
         )
-        .toSorted((left, right) => compareCodePointOrder(left.recordedAt, right.recordedAt))
+        // Wall-clock instants can tie; storage keys are hashes, not append order.
+        .toSorted(
+          (left, right) =>
+            compareCodePointOrder(left.recordedAt, right.recordedAt) ||
+            compareCodePointOrder(left.executionId, right.executionId) ||
+            left.sequence - right.sequence ||
+            compareCodePointOrder(left.eventId, right.eventId)
+        )
         .slice(0, limit)
     )
   }

@@ -1,5 +1,26 @@
 # Changelog
 
+## [1.44.1](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.44.0...sqlite-persistence-v1.44.1) (2026-10-24)
+
+
+### Bug Fixes
+
+* reconcile audit identities and declaration budget ([#1303](https://github.com/adea-ai/control-plane/issues/1303)) ([b65e2c7](https://github.com/adea-ai/control-plane/commit/b65e2c770cd5d2fa7a3007bdff71613e18748860))
+
+## [1.44.0](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.43.0...sqlite-persistence-v1.44.0) (2026-10-23)
+
+
+### Features
+
+* **pi-durable:** compose child reads and drain recovery ([#1204](https://github.com/adea-ai/control-plane/issues/1204)) ([2f1f9d1](https://github.com/adea-ai/control-plane/commit/2f1f9d1a4da48db09e2c8ee9dc08625fbb2bc7a5))
+
+## [1.43.0](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.42.4...sqlite-persistence-v1.43.0) (2026-10-23)
+
+
+### Features
+
+* **database:** add ProjectState digest compatibility ([#612](https://github.com/adea-ai/control-plane/issues/612)) ([#1223](https://github.com/adea-ai/control-plane/issues/1223)) ([5123466](https://github.com/adea-ai/control-plane/commit/512346603a7ca0c0d9f9b90ed40cf48d6dc2d474))
+
 ## [1.42.4](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.42.3...sqlite-persistence-v1.42.4) (2026-10-23)
 
 

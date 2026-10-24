@@ -1,6 +1,6 @@
 {
   "name": "@control-plane/local-control-plane",
-  "version": "1.38.0",
+  "version": "1.38.1",
   "private": true,
   "files": [
     "dist"
@@ -44,11 +44,9 @@
     "@control-plane/usage-ledger": "workspace:*",
     "@control-plane/workflow-runtime": "workspace:*",
     "@control-plane/workflow-worker": "workspace:*",
-    "@nestjs/common": "12.1.2",
     "@restatedev/restate-server": "1.7.13",
-    "fastify": "5.12.6",
     "semver": "7.8.5",
-    "zod": "4.6.5"
+    "zod": "4.6.6"
   },
   "engines": {
     "node": "24.21.0"

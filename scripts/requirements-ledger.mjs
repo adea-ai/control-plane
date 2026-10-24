@@ -1,8 +1,18 @@
 import { spawnSync } from 'node:child_process'
-import { accessSync, closeSync, mkdtempSync, openSync, readFileSync, rmSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import {
+  accessSync,
+  closeSync,
+  lstatSync,
+  mkdtempSync,
+  openSync,
+  readFileSync,
+  readlinkSync,
+  rmSync,
+} from 'node:fs'
 import { access, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { basename, join, relative, resolve, sep } from 'node:path'
+import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import process from 'node:process'
 import { fileURLToPath } from 'node:url'
 import { compareCodePointOrder } from '../packages/contracts/src/canonical-json.ts'
@@ -1238,6 +1248,52 @@ function resolveBlobs(root, pairs) {
   return resolved
 }
 
+function isRepositoryRelativePath(path) {
+  return (
+    typeof path === 'string' &&
+    !isAbsolute(path) &&
+    !path.includes('\\') &&
+    [...path].every(
+      (character) => character.charCodeAt(0) >= 32 && character.charCodeAt(0) !== 127
+    ) &&
+    path.split('/').every((part) => part !== '' && part !== '.' && part !== '..')
+  )
+}
+
+// The other ledger inputs, including the reconciliation record, are read from
+// the working tree. Hash the same candidate bytes here: during a merge or a
+// pre-commit check HEAD still names the old tree. Reading HEAD (or the index)
+// would hide staged or unstaged evidence changes from this comparison.
+function resolveWorkingTreeBlobs(root, paths) {
+  const resolved = new Map()
+  for (const path of new Set(paths)) {
+    const absolutePath = resolve(root, path)
+    let content
+    try {
+      const parts = path.split('/')
+      for (let index = 1; index < parts.length; index++) {
+        if (lstatSync(resolve(root, ...parts.slice(0, index))).isSymbolicLink())
+          throw new Error(`worker evidence has a symlinked parent: ${path}`)
+      }
+      const stat = lstatSync(absolutePath)
+      if (!stat.isFile() && !stat.isSymbolicLink())
+        throw new Error(`worker evidence is not a file: ${path}`)
+      content = stat.isSymbolicLink()
+        ? readlinkSync(absolutePath, { encoding: 'buffer' })
+        : readFileSync(absolutePath)
+    } catch (error) {
+      if (error.code === 'ENOENT') continue
+      throw error
+    }
+    // Worker heads use the repository's 40-character SHA-1 object identity.
+    // Hash the Git blob header plus raw bytes without writing an object or
+    // spawning one process per evidence path; fixtures compare this with Git.
+    const blob = createHash('sha1').update(`blob ${content.length}\0`).update(content).digest('hex')
+    resolved.set(path, blob)
+  }
+  return resolved
+}
+
 // Worker contributions are integrated by stable ID and exact head. A contribution
 // that has not arrived stays pending instead of being reported as evidence. The
 // evidence of a received contribution is proven against the tree of its own head,
@@ -1267,6 +1323,7 @@ export function validateWorkerEvidence(ledger, root, shallowRepository) {
   const unavailableHeads = new Set()
   const inventory = []
   const blobPairs = []
+  const candidatePaths = []
   for (const worker of workers) {
     if (worker.status === 'pending') continue
     if (!/^[0-9a-f]{40}$/.test(worker.head ?? '')) continue
@@ -1276,11 +1333,13 @@ export function validateWorkerEvidence(ledger, root, shallowRepository) {
       continue
     }
     for (const entry of worker.evidence ?? []) {
-      if (!entry.path) continue
-      blobPairs.push([worker.head, entry.path], ['HEAD', entry.path])
+      if (!isRepositoryRelativePath(entry.path)) continue
+      blobPairs.push([worker.head, entry.path])
+      candidatePaths.push(entry.path)
     }
   }
   const blobs = resolveBlobs(root, blobPairs)
+  const candidateBlobs = resolveWorkingTreeBlobs(root, candidatePaths)
   const ids = new Set()
   for (const worker of workers) {
     if (!/^W\d+$/.test(worker.id ?? '')) errors.push(`${worker.id}: worker ID is invalid`)
@@ -1316,6 +1375,10 @@ export function validateWorkerEvidence(ledger, root, shallowRepository) {
         errors.push(`${worker.id}: worker evidence must identify a path`)
         continue
       }
+      if (!isRepositoryRelativePath(entry.path)) {
+        errors.push(`${worker.id}: worker evidence path must be repository-relative: ${entry.path}`)
+        continue
+      }
       if (entry.commit !== worker.head) {
         errors.push(
           `${worker.id}: worker evidence commit must match the worker head for ${entry.path}`
@@ -1329,7 +1392,7 @@ export function validateWorkerEvidence(ledger, root, shallowRepository) {
         )
         continue
       }
-      const treeBlob = blobs.get(`HEAD:${entry.path}`)
+      const treeBlob = candidateBlobs.get(entry.path)
       inventory.push({
         worker: worker.id,
         path: entry.path,
@@ -1338,7 +1401,9 @@ export function validateWorkerEvidence(ledger, root, shallowRepository) {
         state: !treeBlob ? 'absent-in-tree' : headBlob === treeBlob ? 'identical' : 'differs',
       })
       if (treeBlob && headBlob !== treeBlob)
-        diverged.push(`${entry.path} (${headBlob} at ${worker.head}, ${treeBlob} at HEAD)`)
+        diverged.push(
+          `${entry.path} (${headBlob} at ${worker.head}, ${treeBlob} in the candidate tree)`
+        )
     }
     if (diverged.length > 0) {
       provenance.push(
@@ -1347,7 +1412,7 @@ export function validateWorkerEvidence(ledger, root, shallowRepository) {
     }
     if (worker.status === 'integrated') {
       for (const entry of worker.evidence ?? []) {
-        if (!entry.path) continue
+        if (!isRepositoryRelativePath(entry.path)) continue
         try {
           accessSync(resolve(root, entry.path))
         } catch {

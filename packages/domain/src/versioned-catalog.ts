@@ -392,16 +392,36 @@ export class VersionedCatalog {
     })
   }
 
-  deprecateAgentProfileVersion = (id: string, revision: number, at: string, reason: string) =>
+  deprecateAgentProfileVersion = (
+    id: string,
+    revision: number,
+    at: string,
+    reason: string
+  ): Promise<AgentProfileVersion> =>
     this.#transitionProfile(id, revision, 'deprecated', { deprecatedAt: at, reason })
 
-  revokeAgentProfileVersion = (id: string, revision: number, at: string, reason: string) =>
+  revokeAgentProfileVersion = (
+    id: string,
+    revision: number,
+    at: string,
+    reason: string
+  ): Promise<AgentProfileVersion> =>
     this.#transitionProfile(id, revision, 'revoked', { revokedAt: at, reason })
 
-  deprecateSkillVersion = (id: string, revision: number, at: string, reason: string) =>
+  deprecateSkillVersion = (
+    id: string,
+    revision: number,
+    at: string,
+    reason: string
+  ): Promise<SkillVersion> =>
     this.#transitionSkill(id, revision, 'deprecated', { deprecatedAt: at, reason })
 
-  revokeSkillVersion = (id: string, revision: number, at: string, reason: string) =>
+  revokeSkillVersion = (
+    id: string,
+    revision: number,
+    at: string,
+    reason: string
+  ): Promise<SkillVersion> =>
     this.#transitionSkill(id, revision, 'revoked', { revokedAt: at, reason })
 
   async supersedeAgentProfileVersion(

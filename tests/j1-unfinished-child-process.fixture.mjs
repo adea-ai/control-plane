@@ -2,6 +2,7 @@
 import { spawn } from 'node:child_process'
 import assert from 'node:assert/strict'
 import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { parseCompleteProcessEvidence } from './process-evidence.fixture.mjs'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -135,15 +136,9 @@ export async function createUnfinishedChildProcessHarness(options = {}) {
   }
   async function evidence() {
     try {
-      // Each record is appended as one newline-terminated write. A read that lands
-      // mid-append sees an unterminated tail, which is not a record yet: leave it for
-      // the next poll instead of failing the wait.
-      const text = await readFile(join(directory, 'process-evidence.jsonl'), 'utf8')
-      return text
-        .slice(0, text.lastIndexOf('\n') + 1)
-        .split('\n')
-        .filter(Boolean)
-        .map(JSON.parse)
+      return parseCompleteProcessEvidence(
+        await readFile(join(directory, 'process-evidence.jsonl'), 'utf8')
+      )
     } catch (error) {
       if (error.code === 'ENOENT') return []
       throw error

@@ -1,6 +1,6 @@
 {
   "name": "@control-plane/contracts",
-  "version": "1.21.6",
+  "version": "1.23.1",
   "description": "Runtime-independent service boundary between Adea and the Control Plane: canonical identifiers, envelopes, Control API schemas, pagination, and versioning.",
   "keywords": [
     "agents",
@@ -41,7 +41,7 @@
     "test": "bun test --pass-with-no-tests"
   },
   "dependencies": {
-    "zod": "4.6.5"
+    "zod": "4.6.6"
   },
   "engines": {
     "node": "24.21.0"

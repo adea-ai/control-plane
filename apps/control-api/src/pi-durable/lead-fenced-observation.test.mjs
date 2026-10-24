@@ -2,6 +2,8 @@ import { test, expect } from 'bun:test'
 import { createHash } from 'node:crypto'
 import { DatabaseSync } from 'node:sqlite'
 import { canonicalJsonStringify } from '@control-plane/contracts'
+import { PiDurableLeadCancelResponseSchema } from '@control-plane/runtime-sdk'
+import { PreChangeStatusResponseSchema } from './lead-pre-change-client.fixture.mjs'
 import {
   DurablePiDurableLeadService,
   SqlitePiDurableLeadReceiptStore,
@@ -9,8 +11,8 @@ import {
 } from './pi-durable-lead.service.ts'
 
 // M18.01.3 fenced receipt observation/cancel, driven through the real service with an
-// in-memory receipt store and stub adapter/authority. The admission bindings supplied by
-// `admissionBinding: true` are test-only: the production authority retains no admissionDigest.
+// in-memory receipt store and explicit retained-journal/fence-authority ports. The latter
+// are test doubles; production binding and cross-store races have separate live harness tests.
 
 const id = (prefix) => `${prefix}_01JABCDEF0123456789ABCDEFG`
 const at = '2026-10-08T09:00:00.000Z'
@@ -99,6 +101,7 @@ async function harness({
   statusHandle = handle,
   onEffect = async () => {},
   observedGeneration,
+  retainedTaskId,
 } = {}) {
   const receipts = new SqlitePiDurableLeadReceiptStore(new DatabaseSync(':memory:'))
   await receipts.insert(receiptBase)
@@ -110,6 +113,7 @@ async function harness({
     cancel: 0,
     cancelOptions: undefined,
     assertCurrent: 0,
+    childStops: [],
   }
   const adapter = {
     start: async () => {
@@ -142,17 +146,75 @@ async function harness({
       }
     },
   }
+  let initialFence
+  let bindingReads = 0
+  const retained = {
+    // This task correlation belongs to the server-held retained request, not the caller.
+    request: {
+      executionId,
+      attemptId,
+      executionPlan: { correlation: retainedTaskId ? { taskId: retainedTaskId } : {} },
+    },
+    admission: {},
+    handle,
+  }
   const authority = {
     // `n` counts every authority read in this harness, including the lookup.
     resolveIntent: async ({ operation }) => {
       calls.resolve.push(operation)
-      return fencedFor(operation, calls.resolve.length)
+      initialFence = fencedFor(operation, calls.resolve.length)
+      bindingReads = 0
+      return initialFence
+    },
+    assertFencedBinding: async ({ operation }) => {
+      // The initial lookup's explicit binding validation uses that lookup's sample. Each later
+      // pre/post-effect check reads a fresh sample; all original drift/target negatives remain.
+      const sample =
+        bindingReads++ === 0
+          ? initialFence
+          : (() => {
+              calls.resolve.push(operation)
+              return fencedFor(operation, calls.resolve.length)
+            })()
+      if (!sample.retainedMatch || fencedReceiptGaps(sample).length)
+        throw new Error('PI_LEAD_UNAVAILABLE')
+      const pins = sample.retained
+      if (
+        pins.intentId !== intentId ||
+        pins.workspaceId !== workspaceId ||
+        pins.executionId !== executionId ||
+        pins.attemptId !== attemptId ||
+        pins.admissionDigest !== admissionDigest ||
+        pins.startDigest !== startDigest ||
+        pins.deadlineAt !== deadlineAt ||
+        hash(pins.allowedPrincipalIds) !== hash(receiptBase.allowedPrincipalIds) ||
+        hash(sample.fence) !== hash(initialFence.fence)
+      )
+        throw new Error('PI_LEAD_AUTHORITY_CONFLICT')
     },
     assertCurrent: async () => {
       calls.assertCurrent += 1
     },
   }
-  const service = new DurablePiDurableLeadService({ authority, receipts, adapter, now: () => at })
+  const service = new DurablePiDurableLeadService({
+    authority,
+    receipts,
+    adapter,
+    delegationService: {
+      cancelChildren: async (input) => {
+        calls.childStops.push(input)
+        return { cancelled: [], state: 'cancelled' }
+      },
+    },
+    now: () => at,
+    fence: {
+      findRetainedAdmission: async () => retained,
+      cancelFenced: async (runtimeHandle, options, authorize) => {
+        await authorize(retained)
+        return adapter.cancel(runtimeHandle, options)
+      },
+    },
+  })
   return { service, receipts, calls }
 }
 
@@ -299,6 +361,39 @@ test('authority drift before the effect fails closed without calling the adapter
   expect(calls.status).toBe(0)
 })
 
+for (const [name, changed] of [
+  ['authority revision', { fenceOverrides: { authorityRevision: 8 } }],
+  ['original actor', { fenceOverrides: { canonicalActorPrincipalId: 'user:revoked' } }],
+  ['audience', { fenceOverrides: { allowedPrincipalIds: ['svc_other'] } }],
+  ['attempt binding', { retainedOverrides: { attemptId: id('att').replace(/G$/, 'H') } }],
+]) {
+  test(`fenced cancellation refuses changed ${name} before calling the adapter`, async () => {
+    const { service, calls } = await harness({
+      fencedFor: (operation, n) =>
+        fenced(operation, { admissionBinding: true, ...(n === 1 ? {} : changed) }),
+    })
+    await expect(service.cancel(cancelRequest(), caller)).rejects.toThrow(
+      'PI_LEAD_AUTHORITY_CONFLICT'
+    )
+    expect(calls.cancel).toBe(0)
+    expect(calls.start).toBe(0)
+  })
+}
+
+test('retry after an unknown cancellation outcome rechecks revoked authority before another effect', async () => {
+  const { service, calls } = await harness({
+    fencedFor: (operation, n) =>
+      fenced(operation, { admissionBinding: true, retainedMatch: n <= 2 }),
+  })
+  await expect(service.cancel(cancelRequest(), caller)).rejects.toThrow(
+    'PI_LEAD_CANCELLATION_OUTCOME_UNKNOWN'
+  )
+  expect(calls.cancel).toBe(1)
+  await expect(service.cancel(cancelRequest(), caller)).rejects.toThrow('PI_LEAD_UNAVAILABLE')
+  expect(calls.cancel).toBe(1)
+  expect(calls.start).toBe(0)
+})
+
 test('authority drift after the effect fails closed and returns no observation', async () => {
   const { service, calls } = await harness({
     // Lookup and pre-effect recheck (reads 1-2) match; the post-effect recheck (read 3) drifts.
@@ -314,6 +409,20 @@ test('authority drift after the effect fails closed and returns no observation',
   expect(calls.status).toBe(1)
 })
 
+test('fenced cancellation drift after the effect reports an unknown outcome', async () => {
+  const { service, calls } = await harness({
+    fencedFor: (operation, n) =>
+      fenced(operation, {
+        admissionBinding: true,
+        fenceOverrides: n <= 2 ? {} : { authorityRevision: 8 },
+      }),
+  })
+  await expect(service.cancel(cancelRequest(), caller)).rejects.toThrow(
+    'PI_LEAD_CANCELLATION_OUTCOME_UNKNOWN'
+  )
+  expect(calls.cancel).toBe(1)
+})
+
 test('receipt generation change during the effect fails closed', async () => {
   const { service, calls } = await harness({
     fencedFor: withBinding,
@@ -321,7 +430,9 @@ test('receipt generation change during the effect fails closed', async () => {
       if (operation === 'cancel') await receipts.compareAndSet(2, { ...receiptBase, revision: 3 })
     },
   })
-  await expect(service.cancel(cancelRequest(), caller)).rejects.toThrow('PI_LEAD_DISPATCH_CONFLICT')
+  await expect(service.cancel(cancelRequest(), caller)).rejects.toThrow(
+    'PI_LEAD_CANCELLATION_OUTCOME_UNKNOWN'
+  )
   expect(calls.cancel).toBe(1)
 })
 
@@ -348,12 +459,17 @@ test('a generation observed for another attempt is refused on the fenced paths',
     inferenceKey: 'pi-turn:att_01KABCDEF0123456789ABCDEFG:initial:pi-generation:late',
   }
   for (const operation of ['status', 'cancel']) {
-    const { service } = await harness({
+    const { service, calls } = await harness({
       fencedFor: withBinding,
       observedGeneration: lateGeneration,
     })
     const request = operation === 'status' ? statusRequest() : cancelRequest()
-    await expect(service[operation](request, caller)).rejects.toThrow('PI_LEAD_AUTHORITY_CONFLICT')
+    await expect(service[operation](request, caller)).rejects.toThrow(
+      operation === 'cancel' ? 'PI_LEAD_CANCELLATION_OUTCOME_UNKNOWN' : 'PI_LEAD_AUTHORITY_CONFLICT'
+    )
+    expect(calls[operation]).toBe(1)
+    expect(calls.childStops).toEqual([])
+    expect(calls.start).toBe(0)
   }
 })
 
@@ -369,3 +485,54 @@ test('a generation observed for the retained attempt is published on the fenced 
   const result = await service.status(statusRequest(), caller)
   expect(result.data.status.observedGeneration).toEqual(ownGeneration)
 })
+
+for (const minor of [0, 1]) {
+  test(`fenced cancel publishes only negotiated generation fields to contract 3.${minor}`, async () => {
+    const ownGeneration = {
+      schemaVersion: 'runtime-observed-generation/v1',
+      attemptId,
+      turnKey: `pi-turn:${attemptId}:initial`,
+      inferenceId: 'pi-generation:1',
+      inferenceKey: `pi-turn:${attemptId}:initial:pi-generation:1`,
+    }
+    const taskId = '00000000-0000-4000-8000-0000000000f1'
+    const { service, calls } = await harness({
+      fencedFor: withBinding,
+      observedGeneration: ownGeneration,
+      retainedTaskId: taskId,
+    })
+    const result = await service.cancel(
+      { ...cancelRequest(), contractVersion: { major: 3, minor } },
+      caller
+    )
+    expect(result.data.state).toBe('cancelling')
+    expect(result.data.observedTarget).toMatchObject({
+      sessionId: handle.externalSessionId,
+      taskId,
+    })
+    expect(() => PiDurableLeadCancelResponseSchema.parse(result)).not.toThrow()
+    if (minor === 1) {
+      expect(result.data.observedTarget.generation).toEqual(ownGeneration)
+      expect(result.data.status.observedGeneration).toEqual(ownGeneration)
+    } else {
+      expect(result.data.observedTarget).not.toHaveProperty('generation')
+      expect(result.data.status).not.toHaveProperty('observedGeneration')
+      // Pre-3.1 status and cancel share these exact receipt/state/status body fields.
+      // Its strict installed-client schema must parse the actual cancel response.
+      expect(() => PreChangeStatusResponseSchema.parse(result)).not.toThrow()
+      for (const data of [
+        {
+          ...result.data,
+          observedTarget: { ...result.data.observedTarget, generation: ownGeneration },
+        },
+        { ...result.data, status: { ...result.data.status, observedGeneration: ownGeneration } },
+      ]) {
+        expect(() => PreChangeStatusResponseSchema.parse({ ...result, data })).toThrow()
+      }
+    }
+    expect(calls.cancel).toBe(1)
+    expect(calls.childStops).toEqual([])
+    expect(calls.start).toBe(0)
+    expect(calls.assertCurrent).toBe(0)
+  })
+}

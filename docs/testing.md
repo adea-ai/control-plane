@@ -291,14 +291,43 @@ An explicit caller project remains caller-owned: the runner may stop the Postgre
 service it started, but does not delete that project's volume. The recovery matrix
 removes its own project in its outer cleanup. Pull-request PostgreSQL CI likewise
 uses a run/attempt-specific project and an `always()` cleanup step. These paths never
-prune unrelated resources or shared build caches. `SIGKILL`, daemon loss and machine
-shutdown cannot execute JavaScript `finally`. Explicit `SIGINT`/`SIGTERM` cleanup
-handlers are not implemented either; interrupted runs still need follow-up using
-the recorded project identity. Once the engine is available, the owning operator
-can use that exact `COMPOSE_PROJECT_NAME` with `docker compose down --volumes
---remove-orphans --timeout 60` from this repository; never substitute a shared
-project or global prune. No disk reclamation or full Docker acceptance is implied
-by the command-double lifecycle regression suite.
+prune unrelated resources or shared build caches. Runner-owned children stay in the
+runner's process group and are recorded, so installed `SIGINT`/`SIGTERM` handlers
+reap only those recorded children, refuse to start any new owned command after the
+first signal (the shared cleanup is exempt), and run the same owned cleanup once
+before the process exits with `128 + signal`; a recorded verification failure stays
+observable instead of being masked by the signal or by cleanup. A second signal
+stops immediately with the signal's status, and the bounded readiness probe
+observes a signal delivered during its blocking wait instead of surfacing it as a
+probe timeout. The image-configuration and pull commands are synchronous, so a
+signal delivered while one of them held the event loop is not yet visible to the
+next check; the pull path therefore yields one loop turn before every command it
+may start, and no configuration, canonical pull or fallback pull begins after the
+signal. A pending signal is reported as an interruption, never as a failed pull.
+The recorded child's whole owned tree is terminated — a nested
+build descendant that keeps the inherited pipes open is reaped with it, and a
+descendant that is still alive after the termination is reported as a survivor,
+because the direct child's exit is not proof that its tree was reaped. The
+completion of a terminated child is bounded, so a pipe that a survivor still
+holds can no longer keep the runner from finishing. The command-double lifecycle
+suite injects a frozen startup, readiness, test and cleanup command, spawns an
+owned descendant that holds the inherited pipes, and delivers a real signal to
+prove those paths. That suite's own harness holds itself to the same standard: it
+disposes of everything it spawned on every path — a passing case, a failing case
+and a settle timeout alike — reaping the fixture's recorded descendants by those
+exact PIDs and never by name or process group; a reap it cannot confirm retains
+the receipt that names them, rather than deleting the identity while the
+processes still run, and the failure is surfaced. A `SIGINT` during a
+rate-limited image-pull backoff ends the run without starting a further pull
+command, and the backoff wait ends with
+the interruption instead of being run out. `SIGKILL`, daemon loss and machine shutdown cannot execute
+JavaScript `finally`, so an interrupted run may still leave the owner-recorded
+project identity behind. Once the
+engine is available, the owning operator can use that exact `COMPOSE_PROJECT_NAME`
+with `docker compose down --volumes --remove-orphans --timeout 60` from this
+repository; never substitute a shared project or global prune. No disk reclamation
+or full Docker acceptance is implied by the command-double lifecycle regression
+suite.
 
 ## Current PostgreSQL integration fixture
 

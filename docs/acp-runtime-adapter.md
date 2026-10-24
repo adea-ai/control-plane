@@ -185,6 +185,18 @@ from `start()` via `compositionOptions`. The route record (public keys, ids, val
 explicit host-supplied composition input — no ambient credential or key material — and the
 in-memory default remains test-only.
 
+**Controller enrollment authority:** controller construction has a separate
+`createEnrolledSecureAcpRemoteTransport` factory. It requires the current controller enrollment
+authority (`AcpRemoteControllerAuthorityPort`) and binds each durable check to the route scope,
+controller key id, and public key before inventory requests, after key generation and sealing,
+before commands leave, after wire replies, and before publishing decrypted replies. Connection-state
+reporting uses the synchronous cache only after a durable check passes; it stays offline before that
+check and after a rejected check or observed wire disconnect. Enrolled transports use
+`revokeCurrent()` to recheck authority before signing; the synchronous `revoke()` helper is only for
+isolated transport tests. The raw constructor remains available for isolated transport tests. No
+concrete enrolled-controller signer source implements the authority port in this repository yet, so
+this adds the boundary and does not close #1023.
+
 **Production wire boundary (the wire and the device agent now exist; the live exchange stays open
 for #1023):** `createGatewayOwnedAcpRemoteWire` (`packages/acp-adapter/src/acp-remote-wire.ts`) is
 the first production `AcpRemoteWire`. It carries ONE opaque sealed command through the runtime

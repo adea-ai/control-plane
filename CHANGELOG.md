@@ -1,5 +1,95 @@
 # Changelog
 
+## [1.114.5](https://github.com/adea-ai/control-plane/compare/workspace-v1.114.4...workspace-v1.114.5) (2026-10-24)
+
+
+### Documentation
+
+* **evidence:** record 2026-10-24 CP [#1233](https://github.com/adea-ai/control-plane/issues/1233) reconciliation status ([#1309](https://github.com/adea-ai/control-plane/issues/1309)) ([70ecad2](https://github.com/adea-ai/control-plane/commit/70ecad2658c1d5f2a2ffd791bd24a88ae10e8d72))
+
+## [1.114.4](https://github.com/adea-ai/control-plane/compare/workspace-v1.114.3...workspace-v1.114.4) (2026-10-24)
+
+
+### Tests
+
+* **pi:** cover crash after native cancellation before journal publication ([#1307](https://github.com/adea-ai/control-plane/issues/1307)) ([8265104](https://github.com/adea-ai/control-plane/commit/8265104c0c4ffea5e74586b5863e6799b60f0906))
+
+## [1.114.3](https://github.com/adea-ai/control-plane/compare/workspace-v1.114.2...workspace-v1.114.3) (2026-10-24)
+
+
+### Bug Fixes
+
+* **pi:** classify cancellation publication uncertainty after native commit ([#1305](https://github.com/adea-ai/control-plane/issues/1305)) ([f727f7a](https://github.com/adea-ai/control-plane/commit/f727f7aec45418fda49bd243d13dc1e8ed1b22fc))
+
+## [1.114.2](https://github.com/adea-ai/control-plane/compare/workspace-v1.114.1...workspace-v1.114.2) (2026-10-24)
+
+
+### Tests
+
+* batch Pi scope evidence after main integration ([#1302](https://github.com/adea-ai/control-plane/issues/1302)) ([8a16b94](https://github.com/adea-ai/control-plane/commit/8a16b94740fbadb87cf278eba4ee3e1486a1b414))
+
+## [1.114.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.114.0...workspace-v1.114.1) (2026-10-24)
+
+
+### Bug Fixes
+
+* reconcile audit identities and declaration budget ([#1303](https://github.com/adea-ai/control-plane/issues/1303)) ([b65e2c7](https://github.com/adea-ai/control-plane/commit/b65e2c770cd5d2fa7a3007bdff71613e18748860))
+* reduce dependency closure and preserve budget checks ([#1270](https://github.com/adea-ai/control-plane/issues/1270)) ([01fa230](https://github.com/adea-ai/control-plane/commit/01fa230233cc796b6c7f93d020006212b89631f6))
+* **testing:** reconcile preserved interruption-runner recovery ([#1239](https://github.com/adea-ai/control-plane/issues/1239)) ([9a8646a](https://github.com/adea-ai/control-plane/commit/9a8646ae4f7826eb96e7a0209098e7f2586facd4))
+
+
+### Tests
+
+* **profiles:** prove profile recovery and fenced rollback evidence ([#1048](https://github.com/adea-ai/control-plane/issues/1048)) ([da1a38c](https://github.com/adea-ai/control-plane/commit/da1a38cbb4f20da086313451077593d8df3e283d))
+
+## [1.114.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.113.0...workspace-v1.114.0) (2026-10-23)
+
+
+### Features
+
+* **pi-durable:** compose child reads and drain recovery ([#1204](https://github.com/adea-ai/control-plane/issues/1204)) ([2f1f9d1](https://github.com/adea-ai/control-plane/commit/2f1f9d1a4da48db09e2c8ee9dc08625fbb2bc7a5))
+
+## [1.113.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.112.1...workspace-v1.113.0) (2026-10-23)
+
+
+### Features
+
+* **runtime:** map a model to its harness in managed cloud routing (CP [#678](https://github.com/adea-ai/control-plane/issues/678)) ([#1210](https://github.com/adea-ai/control-plane/issues/1210)) ([4f9967d](https://github.com/adea-ai/control-plane/commit/4f9967dc50dfb5dc3ffa13a305f4e3623ae20fe1))
+
+
+### Documentation
+
+* **security:** add CP [#190](https://github.com/adea-ai/control-plane/issues/190) trust boundary audit ([#1220](https://github.com/adea-ai/control-plane/issues/1220)) ([b284006](https://github.com/adea-ai/control-plane/commit/b284006bdcddf24226e29a62d88c1e347d0a956c))
+
+## [1.112.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.112.0...workspace-v1.112.1) (2026-10-23)
+
+
+### Documentation
+
+* record exact-head cross-repository toolchain evidence ([#1233](https://github.com/adea-ai/control-plane/issues/1233)) ([#1292](https://github.com/adea-ai/control-plane/issues/1292)) ([2d59098](https://github.com/adea-ai/control-plane/commit/2d59098248b107f397f8ff55b4d3b2fb3d92d239))
+* record exact-head toolchain qualification for cp1233 ([2d59098](https://github.com/adea-ai/control-plane/commit/2d59098248b107f397f8ff55b4d3b2fb3d92d239))
+
+## [1.112.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.111.1...workspace-v1.112.0) (2026-10-23)
+
+
+### Features
+
+* **acp-adapter:** require current controller enrollment authority on secure remote route ([#1282](https://github.com/adea-ai/control-plane/issues/1282)) ([5da0e9f](https://github.com/adea-ai/control-plane/commit/5da0e9f92b82d3df779e94a85006208c8ab4013d))
+
+## [1.111.1](https://github.com/adea-ai/control-plane/compare/workspace-v1.111.0...workspace-v1.111.1) (2026-10-23)
+
+
+### Bug Fixes
+
+* **workflow-worker:** never replace an unavailable enrolled remote_host with the cloud service ([#1281](https://github.com/adea-ai/control-plane/issues/1281)) ([3229738](https://github.com/adea-ai/control-plane/commit/3229738876688f36d8501218c9112b62f4e2f8e8))
+
+## [1.111.0](https://github.com/adea-ai/control-plane/compare/workspace-v1.110.4...workspace-v1.111.0) (2026-10-23)
+
+
+### Features
+
+* **database:** add ProjectState digest compatibility ([#612](https://github.com/adea-ai/control-plane/issues/612)) ([#1223](https://github.com/adea-ai/control-plane/issues/1223)) ([5123466](https://github.com/adea-ai/control-plane/commit/512346603a7ca0c0d9f9b90ed40cf48d6dc2d474))
+
 ## [1.110.4](https://github.com/adea-ai/control-plane/compare/workspace-v1.110.3...workspace-v1.110.4) (2026-10-23)
 
 

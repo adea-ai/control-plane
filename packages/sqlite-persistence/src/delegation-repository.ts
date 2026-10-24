@@ -61,6 +61,7 @@ const mutable = new Set([
   'revision',
   'updatedAt',
   'terminalResultRef',
+  'terminalConclusion',
   'failureCode',
   'terminalPublication',
   'pendingProgress',

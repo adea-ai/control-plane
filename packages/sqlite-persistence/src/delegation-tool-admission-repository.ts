@@ -26,7 +26,9 @@ export class SqliteDelegationToolAdmissionRepository implements DelegationToolAd
     this.#calls = `delegation-tool-call-admissions-${this.#workspaceId.toLowerCase()}`
   }
 
-  async retain(input: DelegationToolAdmission) {
+  async retain(
+    input: DelegationToolAdmission
+  ): Promise<{ admission: DelegationToolAdmission; replayed: boolean }> {
     const admission = DelegationToolAdmissionSchema.parse(input)
     if (admission.request.workspaceId !== this.#workspaceId)
       throw new Error('DELEGATION_TOOL_ADMISSION_SCOPE_DENIED')
