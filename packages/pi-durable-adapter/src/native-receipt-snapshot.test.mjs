@@ -61,6 +61,35 @@ test('finds the receipt in a sealed snapshot and returns frozen historical evide
   expect(Object.isFrozen(found)).toBe(true)
 })
 
+const frozenDeep = (value) =>
+  value === null ||
+  typeof value !== 'object' ||
+  (Object.isFrozen(value) && Object.values(value).every(frozenDeep))
+
+test('a found receipt is frozen all the way down and cannot be altered by the caller', () => {
+  const snapshot = seal({ receipts: [receipt({ taskIds: [1, 2], queuedInputIds: [3] })] })
+  const found = readPiFrozenReceipt(snapshot, pins)
+  expect(frozenDeep(found)).toBe(true)
+  expect(Object.isFrozen(found.receipt)).toBe(true)
+  expect(Object.isFrozen(found.receipt.metadata)).toBe(true)
+  expect(Object.isFrozen(found.receipt.taskIds)).toBe(true)
+  expect(Object.isFrozen(found.receipt.queuedInputIds)).toBe(true)
+  expect(() => found.receipt.taskIds.push(9)).toThrow()
+  expect(() => {
+    found.receipt.metadata.turnKey = 'turn:other'
+  }).toThrow()
+  expect(() => {
+    found.receipt.conversationId = 8
+  }).toThrow()
+  expect(() => {
+    found.receipt.metadata.extra = true
+  }).toThrow()
+  // The failed mutations changed nothing, here or in a later read of the same snapshot.
+  const again = readPiFrozenReceipt(snapshot, pins)
+  expect(again.receipt).toEqual(receipt({ taskIds: [1, 2], queuedInputIds: [3] }))
+  expect(frozenDeep(again)).toBe(true)
+})
+
 test('an absent request stays absent and says nothing about live effect', () => {
   expect(readPiFrozenReceipt(seal({ receipts: [] }), pins)).toEqual({ outcome: 'absent' })
   expect(

@@ -40,8 +40,9 @@ export type PiFrozenReceipt = z.infer<typeof ReceiptSchema>
 
 /**
  * What an issuer must say about the snapshot it captured. It is a requirement on the issuer,
- * not something a caller can supply: the reader only accepts these values from a handle the
- * issuer sealed.
+ * not something a caller of the reader can supply: the reader only accepts these values from a
+ * handle that went through the issuer seam. They are assertions by the trusted issuer, not
+ * verified here and not SDK attestation.
  */
 export interface PiReceiptSnapshotProvenance {
   readonly sessionId: string
@@ -65,10 +66,13 @@ export interface PiReceiptSnapshotSource {
 declare const issuedBrand: unique symbol
 
 /**
- * Opaque handle for one detached, coherent, SELECT-only snapshot. It exposes no path, hash,
- * store, statement or flag. Only {@link sealPiReceiptSnapshot} makes one, and that function is
- * deliberately not exported from the package index: until an SDK-owned issuer exists, nothing
- * in production can call it. The brand is encapsulation, not cryptography.
+ * Opaque handle for one snapshot a trusted issuer says is detached, coherent and SELECT-only.
+ * It exposes no path, hash, store, statement or flag. Only {@link sealPiReceiptSnapshot} makes
+ * one. That function is not exported from the package index and nothing in the runtime calls it
+ * today, but this is encapsulation and the absence of wiring, not an enforced production
+ * boundary: any code that imports this module can call it. The provenance is the issuer's own
+ * assertion, not SDK attestation, and the brand is not cryptography. A real issuer must be
+ * trusted by construction.
  */
 export interface PiIssuedReceiptSnapshot {
   readonly [issuedBrand]: never
@@ -80,23 +84,24 @@ interface Sealed {
 }
 const sealed = new WeakMap<object, Sealed>()
 
+function deepFreeze<T>(item: T): T {
+  if (item !== null && typeof item === 'object') {
+    for (const child of Object.values(item)) deepFreeze(child)
+    Object.freeze(item)
+  }
+  return item
+}
+
 function detach(value: unknown): unknown {
   // canonicalJsonStringify rejects non-JSON values; parse gives a private, unshared copy.
-  const copy = JSON.parse(canonicalJsonStringify(value)) as unknown
-  const freeze = (item: unknown): unknown => {
-    if (item !== null && typeof item === 'object') {
-      for (const child of Object.values(item)) freeze(child)
-      Object.freeze(item)
-    }
-    return item
-  }
-  return freeze(copy)
+  return deepFreeze(JSON.parse(canonicalJsonStringify(value)) as unknown)
 }
 
 /**
  * Issuer seam. A trusted issuer calls this once it holds a detached coherent cut it read with
- * SELECT only. The ledger is copied and frozen here, so later mutation of the caller's value
- * cannot change what the reader sees.
+ * SELECT only, and asserts that as provenance; nothing here verifies the assertion. The ledger
+ * is copied and frozen here, so later mutation of the caller's value cannot change what the
+ * reader sees.
  */
 export function sealPiReceiptSnapshot(source: PiReceiptSnapshotSource): PiIssuedReceiptSnapshot {
   const { provenance } = source
@@ -196,5 +201,7 @@ export function readPiFrozenReceipt(
     match.metadata.inferenceId !== pins.inferenceId
   )
     throw new Error('PI_FROZEN_RECEIPT_BINDING_INVALID')
-  return Object.freeze({ outcome: 'found', receipt: match })
+  // The parsed receipt is a fresh, mutable object; freeze it and everything under it, so a
+  // caller cannot alter the evidence it was handed (a shallow freeze would leave it open).
+  return Object.freeze({ outcome: 'found', receipt: deepFreeze(match) })
 }

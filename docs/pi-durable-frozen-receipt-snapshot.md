@@ -17,9 +17,11 @@ path, hash or "coherent" boolean, never reads a live database or WAL, only reads
   `sealPiReceiptSnapshot` and the reader `readPiFrozenReceipt`.
 - The handle exposes no path, hash, store, statement or flag. A plain object, JSON clone,
   prototype child or proxy of a real handle is refused.
-- The issuer must attest, as sealed provenance and not as caller input, that the cut is
-  detached, coherent and read with SELECT only, and names the session, conversation,
-  restore generation and owner epoch. The ledger is copied and frozen when sealed.
+- The trusted issuer asserts, as sealed provenance and not as input to the reader, that the
+  cut is detached, coherent and read with SELECT only, and names the session, conversation,
+  restore generation and owner epoch. Nothing here verifies those assertions and they are
+  not SDK attestation. The ledger is copied and deep-frozen when sealed, and a `found`
+  receipt is returned deep-frozen, so a caller cannot alter the evidence it was handed.
 - The reader validates the whole ledger before any result: every entry must be a
   strict, well-formed receipt and `(conversation, request)` must be unique, else
   `LEDGER_INVALID`. The same request in another conversation is
@@ -35,9 +37,11 @@ path, hash or "coherent" boolean, never reads a live database or WAL, only reads
   `pi.guarded-abort-receipts` from `documents` / `document_revisions` without opening
   the store writable are undecided and belong to the SDK or a separately authorized
   change. The compat patch is untouched.
-- `sealPiReceiptSnapshot` is not exported from the package index, so nothing in production
-  can mint a handle. The brand is encapsulation, not cryptography, so a real issuer must
-  also be trusted by construction.
+- `sealPiReceiptSnapshot` is not exported from the package index and no runtime path calls
+  it, so there is no current wiring that mints a handle. That is encapsulation and the
+  absence of wiring, not an enforced production boundary: any code that imports the module
+  can call it. The brand is not cryptography and the provenance is not SDK attestation, so
+  a real issuer must be trusted by construction.
 - No backup/restore, upgrade, drain or rollback acceptance (#1025, #942) is claimed.
 
 ## Relationship to the publication classifier
