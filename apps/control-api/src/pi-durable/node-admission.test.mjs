@@ -28,13 +28,18 @@ import {
   SqlitePiDurableLeadReceiptStore,
 } from './pi-durable-lead.service.ts'
 import { createUnusedPiLeadAllocationReleaser } from './unused-lead-allocation.ts'
+import { PiDurableRuntimeAdapter } from '@control-plane/pi-durable-adapter'
 
 const at = '2026-10-08T00:00:00.000Z'
 const expiresAt = '2026-10-08T01:00:00.000Z'
 const intentId = 'f643a115-617d-4bae-8d52-cfe458c0b8ac'
 async function fixture(
   operation,
-  { explicitProjectScope = false, canonicalActorPrincipalId = 'product:original-sender' } = {}
+  {
+    explicitProjectScope = false,
+    canonicalActorPrincipalId = 'product:original-sender',
+    runtimeCompatible = false,
+  } = {}
 ) {
   const directory = await mkdtemp(join(tmpdir(), 'pi-node-admission-'))
   const path = join(directory, 'node.sqlite')
@@ -56,6 +61,7 @@ async function fixture(
   try {
     let repositories = await open()
     const inputs = createExecutionPlanTestFixtureInputs()
+    if (runtimeCompatible) inputs.profile.definition.capabilityRequirements = []
     inputs.profile.definition.skills = []
     inputs.skills = []
     const ids = deterministicPiLeadIntentIds(inputs.correlation.workspaceId, intentId)
@@ -113,22 +119,26 @@ async function fixture(
       projectIds: [evidence.projectId],
       scopes: ['execution:accept', 'execution:read', 'execution:cancel'],
     }
+    const scopeReadActors = []
     const scopeAuthority = {
-      readCurrent: async (input) => ({
-        workspaceId: plan.correlation.workspaceId,
-        executionScope: plan.correlation.executionScope,
-        callerPrincipalId: input.callerPrincipalId,
-        executionPlan: {
-          executionPlanId: plan.executionPlanId,
-          contentDigest: plan.contentDigest,
-          schemaVersion: plan.schemaVersion,
-        },
-        principalActive: true,
-        grantActive: true,
-        allowedPrincipalIds: [canonicalActorPrincipalId, 'svc_pi-admission'],
-        expiresAt,
-        projectWorkspaceId: plan.correlation.workspaceId,
-      }),
+      readCurrent: async (input) => {
+        scopeReadActors.push(input.callerPrincipalId)
+        return {
+          workspaceId: plan.correlation.workspaceId,
+          executionScope: plan.correlation.executionScope,
+          callerPrincipalId: input.callerPrincipalId,
+          executionPlan: {
+            executionPlanId: plan.executionPlanId,
+            contentDigest: plan.contentDigest,
+            schemaVersion: plan.schemaVersion,
+          },
+          principalActive: true,
+          grantActive: true,
+          allowedPrincipalIds: [canonicalActorPrincipalId, 'svc_pi-admission'],
+          expiresAt,
+          projectWorkspaceId: plan.correlation.workspaceId,
+        }
+      },
     }
     // A presented product body (e.g. a rollback fence) replaces the ordinary evidence read.
     let fenceBody
@@ -184,6 +194,8 @@ async function fixture(
       get repositories() {
         return repositories
       },
+      scopeReadActors,
+      getEvidence: () => structuredClone(evidence),
       setEvidence: (change) => {
         evidence = change === undefined ? undefined : { ...evidence, ...change }
       },
@@ -257,6 +269,209 @@ test('real SQLite CP admission mints exactly one accepted execution, attempt and
   })
 })
 
+test('execution-to-admission lookup additively backfills a legacy SQLite store and rechecks product actor and live scope', () =>
+  fixture(async (setup) => {
+    const original = await setup.resolve(setup.bridge)
+    const marker = setup.bridge.store.marker(intentId)
+    const expectedActor = marker.intent.canonicalActorPrincipalId
+    expect(expectedActor).toBe(fencedScope.canonicalActorPrincipalId)
+
+    // Recreate the prior table shape to prove an existing database is upgraded in place.
+    setup.database.exec(
+      'DROP INDEX pi_lead_intent_admissions_execution_id_idx; ALTER TABLE pi_lead_intent_admissions DROP COLUMN execution_id'
+    )
+    const reopened = await setup.reopen()
+    expect(
+      reopened.store.database
+        .prepare('PRAGMA table_info(pi_lead_intent_admissions)')
+        .all()
+        .some((column) => column.name === 'execution_id')
+    ).toBe(true)
+    expect(reopened.store.markerByExecutionId(setup.ids.executionId)).toMatchObject({
+      intentId,
+      workspaceId: setup.plan.correlation.workspaceId,
+      intent: { executionId: setup.ids.executionId },
+    })
+
+    setup.scopeReadActors.length = 0
+    const recovered = await reopened.resolveRetainedAdmissionByExecutionId({
+      executionId: setup.ids.executionId,
+      workspaceId: setup.plan.correlation.workspaceId,
+      principal: setup.principal,
+    })
+    expect(recovered).toEqual(original)
+    expect(setup.scopeReadActors.length).toBeGreaterThan(0)
+    expect(setup.scopeReadActors).toContain(expectedActor)
+    expect(setup.scopeReadActors).not.toContain('svc_adea')
+  }, fencedScope))
+
+test('execution-to-admission lookup fails closed for mismatched workspace, plan pin, or current product actor', async () => {
+  await fixture(async (setup) => {
+    await setup.resolve(setup.bridge)
+    await expect(
+      setup.bridge.resolveRetainedAdmissionByExecutionId({
+        executionId: setup.ids.executionId,
+        workspaceId: `${setup.plan.correlation.workspaceId.slice(0, -1)}${
+          setup.plan.correlation.workspaceId.endsWith('A') ? 'B' : 'A'
+        }`,
+        principal: {
+          ...setup.principal,
+          workspaceIds: [
+            `${setup.plan.correlation.workspaceId.slice(0, -1)}${
+              setup.plan.correlation.workspaceId.endsWith('A') ? 'B' : 'A'
+            }`,
+          ],
+        },
+      })
+    ).rejects.toThrow('PI_LEAD_AUTHORITY_CONFLICT')
+
+    const executions = setup.repositories.executions
+    const getExecution = executions.getExecution.bind(executions)
+    executions.getExecution = async (executionId) => {
+      const execution = await getExecution(executionId)
+      return {
+        ...execution,
+        executionPlan: {
+          ...execution.executionPlan,
+          contentDigest: `sha256:${'f'.repeat(64)}`,
+        },
+      }
+    }
+    await expect(
+      setup.bridge.resolveRetainedAdmissionByExecutionId({
+        executionId: setup.ids.executionId,
+        workspaceId: setup.plan.correlation.workspaceId,
+        principal: setup.principal,
+      })
+    ).rejects.toThrow('PI_LEAD_AUTHORITY_CONFLICT')
+    executions.getExecution = getExecution
+
+    setup.setEvidence({
+      canonicalActorPrincipalId: 'user:6a9c2a11-8a71-4d9a-9bb9-a5dd90b343d8',
+    })
+    await expect(
+      setup.bridge.resolveRetainedAdmissionByExecutionId({
+        executionId: setup.ids.executionId,
+        workspaceId: setup.plan.correlation.workspaceId,
+        principal: setup.principal,
+      })
+    ).rejects.toThrow('PI_LEAD_AUTHORITY_CONFLICT')
+  }, fencedScope)
+})
+
+test('execution-to-admission lookup refuses legacy markers without a canonical product actor', () =>
+  fixture(async (setup) => {
+    await setup.resolve(setup.bridge)
+    const marker = setup.bridge.store.marker(intentId)
+    const { canonicalActorPrincipalId: _actor, executionScope: _scope, ...intent } = marker.intent
+    setup.database
+      .prepare('UPDATE pi_lead_intent_admissions SET record = ? WHERE intent_id = ?')
+      .run(
+        JSON.stringify({
+          ...marker,
+          planPin: { ...marker.planPin, schemaVersion: 1 },
+          intent,
+        }),
+        intentId
+      )
+    expect(() => setup.bridge.store.markerByExecutionId(setup.ids.executionId)).not.toThrow()
+    await expect(
+      setup.bridge.resolveRetainedAdmissionByExecutionId({
+        executionId: setup.ids.executionId,
+        workspaceId: setup.plan.correlation.workspaceId,
+        principal: setup.principal,
+      })
+    ).rejects.toThrow('PI_LEAD_AUTHORITY_CONFLICT')
+  }, fencedScope))
+
+test('execution-to-admission lookup never treats a service principal as the canonical product actor', () =>
+  fixture(async (setup) => {
+    await setup.resolve(setup.bridge)
+    const marker = setup.bridge.store.marker(intentId)
+    setup.setEvidence({ canonicalActorPrincipalId: 'svc_adea' })
+    const evidence = setup.getEvidence()
+    const evidenceDigest = `sha256:${createHash('sha256')
+      .update(canonicalJsonStringify({ evidence, planPin: marker.planPin }) ?? 'null')
+      .digest('hex')}`
+    const forged = {
+      ...marker,
+      evidenceDigest,
+      intent: { ...marker.intent, canonicalActorPrincipalId: 'svc_adea' },
+    }
+    setup.database
+      .prepare('UPDATE pi_lead_intent_admissions SET digest = ?, record = ? WHERE intent_id = ?')
+      .run(evidenceDigest, JSON.stringify(forged), intentId)
+    await expect(
+      setup.bridge.resolveRetainedAdmissionByExecutionId({
+        executionId: setup.ids.executionId,
+        workspaceId: setup.plan.correlation.workspaceId,
+        principal: setup.principal,
+      })
+    ).rejects.toThrow('PI_LEAD_AUTHORITY_CONFLICT')
+  }, fencedScope))
+
+test('execution-to-admission lookup refuses schema-v1 replay with a retained actor but revoked current scope', async () => {
+  await fixture(async (setup) => {
+    const canonicalActorPrincipalId = 'user:9e04fbf7-2e5a-4e46-8df1-7f8392e88273'
+    setup.setEvidence({ canonicalActorPrincipalId })
+    await setup.resolve(setup.bridge)
+    const marker = setup.bridge.store.marker(intentId)
+    expect(marker.planPin.schemaVersion).toBe(1)
+    expect(marker.intent.executionScope).toBeUndefined()
+    expect(marker.intent.canonicalActorPrincipalId).toBe(canonicalActorPrincipalId)
+
+    const scopeReadActors = []
+    const revokedActorScope = {
+      readCurrent: async (input) => {
+        scopeReadActors.push(input.callerPrincipalId)
+        return {
+          workspaceId: setup.plan.correlation.workspaceId,
+          executionScope: {
+            schemaVersion: 1,
+            kind: 'project',
+            projectId: setup.plan.correlation.projectId,
+          },
+          callerPrincipalId: input.callerPrincipalId,
+          executionPlan: {
+            executionPlanId: setup.plan.executionPlanId,
+            contentDigest: setup.plan.contentDigest,
+            schemaVersion: setup.plan.schemaVersion,
+          },
+          principalActive: input.callerPrincipalId !== canonicalActorPrincipalId,
+          grantActive: input.callerPrincipalId !== canonicalActorPrincipalId,
+          allowedPrincipalIds: ['svc_pi-admission'],
+          expiresAt,
+          projectWorkspaceId: setup.plan.correlation.workspaceId,
+        }
+      },
+    }
+
+    await setup.reopen()
+    const planValidator = new ExecutionPlanAcceptanceValidator(setup.repositories.plans, {
+      catalog: {
+        profiles: setup.repositories.catalog,
+        skills: setup.repositories.catalog,
+      },
+      scopeAuthority: revokedActorScope,
+      now: () => at,
+    })
+    const reopened = new NodePiDurableLeadAdmission(
+      setup.options({ scopeAuthority: revokedActorScope, planValidator })
+    )
+    await expect(
+      reopened.resolveRetainedAdmissionByExecutionId({
+        executionId: setup.ids.executionId,
+        workspaceId: setup.plan.correlation.workspaceId,
+        principal: setup.principal,
+      })
+    ).rejects.toThrow('PI_LEAD_SCOPE_REJECTED')
+    expect(scopeReadActors).toEqual([])
+    expect(reopened.store.marker(intentId)).toEqual(marker)
+    expect(await setup.repositories.executions.listAttempts(setup.ids.executionId)).toHaveLength(1)
+    expect(await setup.counts()).toEqual({ commands: 1, executions: 1 })
+  })
+})
+
 test('corrupt interrupted marker cannot reserve or release another real unused allocation', async () =>
   fixture(async (setup) => {
     const victim = await setup.resolve(setup.bridge)
@@ -273,7 +488,9 @@ test('corrupt interrupted marker cannot reserve or release another real unused a
     // The interrupted source row pins its own attempt, while corrupt JSON points
     // at a genuine accepted victim with a canonical queued attempt and allowance.
     setup.database
-      .prepare('INSERT INTO pi_lead_intent_admissions VALUES (?, ?, ?, ?, ?, ?)')
+      .prepare(
+        'INSERT INTO pi_lead_intent_admissions (intent_id, workspace_id, attempt_id, digest, state, record) VALUES (?, ?, ?, ?, ?, ?)'
+      )
       .run(
         sourceIntentId,
         marker.workspaceId,
@@ -953,9 +1170,15 @@ async function admitAndDispatch(setup) {
     startedAt: at,
   }
   const calls = { start: [], status: [], progress: [], cancel: [] }
+  let retained
   const adapter = {
     start: async (request) => {
       calls.start.push(request)
+      retained = {
+        request: structuredClone(request),
+        admission: await setup.bridge.canonicalAuthority.resolveAdmission(request),
+        handle,
+      }
       return handle
     },
     status: async (observed) => {
@@ -970,12 +1193,21 @@ async function admitAndDispatch(setup) {
       calls.cancel.push({ handle: observed, options })
       return { handle: observed, state: 'cancelling', observedAt: at }
     },
+    findRetainedAdmission: async (observed) =>
+      observed.handleId === handle.handleId ? structuredClone(retained) : undefined,
+    cancelFenced: async (observed, options, authorize) => {
+      const current = await adapter.findRetainedAdmission(observed)
+      if (!current) throw new Error('retained admission is missing')
+      await authorize(current)
+      return adapter.cancel(observed, options)
+    },
   }
   const receipts = new SqlitePiDurableLeadReceiptStore(setup.database)
   const service = new DurablePiDurableLeadService({
     authority: setup.bridge,
     receipts,
     adapter,
+    fence: adapter,
     now: () => at,
   })
   const response = await service.dispatch(
@@ -1006,6 +1238,7 @@ test('ordinary admission retains a binding that survives reopen: a v2 fence obse
       authority: reopened,
       receipts: reopenedReceipts,
       adapter,
+      fence: adapter,
       now: () => at,
     })
     expect(reopened.store.admissionBinding(intentId)).toEqual(binding)
@@ -1103,6 +1336,7 @@ test('children read is refused under a v2 fence that appears during the child re
       authority: setup.bridge,
       receipts,
       adapter,
+      fence: adapter,
       now: () => at,
       childDelegations: {
         async listChildren(executionId) {
@@ -1189,6 +1423,7 @@ test('tampered admission binding refuses fenced observation and cancel before an
       authority: reopened,
       receipts: new SqlitePiDurableLeadReceiptStore(setup.database),
       adapter,
+      fence: adapter,
       now: () => at,
     })
     setup.setFenceBody(fenceBodyFrom(reopened))
@@ -1219,6 +1454,7 @@ test('tampered receipt admission digest refuses fenced observation and cancel be
       authority: reopened,
       receipts: new SqlitePiDurableLeadReceiptStore(setup.database),
       adapter,
+      fence: adapter,
       now: () => at,
     })
     setup.setFenceBody(fenceBodyFrom(reopened))
@@ -1353,6 +1589,20 @@ test('a crash at any admission boundary leaves ready and binding both durable or
         operation: 'status',
       })
       setup.setFenceBody(undefined)
+      // Fenced observation carries the immutable retained binding, never a fresh admission.
+      expect(observed.retained).toEqual({
+        intentId,
+        workspaceId: setup.plan.correlation.workspaceId,
+        executionId: setup.ids.executionId,
+        attemptId: setup.ids.attemptId,
+        allowedPrincipalIds: admission.allowedPrincipalIds,
+        executionPlanId: setup.plan.executionPlanId,
+        executionPlanDigest: setup.plan.contentDigest,
+        admissionDigest: admission.admissionDigest,
+        startDigest: digestOf(admission.startRequest),
+        deadlineAt: admission.deadlineAt,
+      })
+      expect(readyAndBindings(setup.database)).toEqual(healed)
       report.push({
         point,
         outcome,
@@ -1360,7 +1610,11 @@ test('a crash at any admission boundary leaves ready and binding both durable or
         healed: `${healed.state}/${healed.bindings}`,
         bindingMatches:
           reopened.store.admissionBinding(intentId)?.admissionDigest === admission.admissionDigest,
-        fencedAdmission: observed.retained?.admissionDigest === admission.admissionDigest,
+        fencedResultIsReadOnly:
+          observed.kind === 'fenced' &&
+          !('admissionDigest' in observed) &&
+          !('startRequest' in observed) &&
+          observed.operation === 'status',
       })
     }, fencedScope)
   }
@@ -1371,7 +1625,7 @@ test('a crash at any admission boundary leaves ready and binding both durable or
       atomic: true,
       healed: 'ready/1',
       bindingMatches: true,
-      fencedAdmission: true,
+      fencedResultIsReadOnly: true,
     }))
   )
 })
@@ -1450,3 +1704,167 @@ test('public canonical reads never expose a pending intent, even while its own p
     expect(admitted).toMatchObject({ admittedAttempt: { attemptId: setup.ids.attemptId } })
     expect(await bridge.store.get(intentId)).toMatchObject({ intentId })
   }, fencedScope))
+
+// Scripted engine only: canonical CP/Node authority and funding are real, no provider is called.
+test.each([
+  ['cancelling CP lifecycle', true, false, null],
+  ['withheld model readiness', false, true, null],
+  ['both lifecycle and readiness', true, true, null],
+  ['revoked audience before observation', true, true, 'audience-before'],
+  ['changed actor before observation', true, true, 'actor-before'],
+  ['revoked scope before observation', true, true, 'scope-before'],
+  ['revoked audience during observation', true, true, 'audience-during'],
+  ['revoked scope during observation', true, true, 'scope-during'],
+  ['expiry during observation', true, true, 'expiry-during'],
+  ['inference recovery with cancelling lifecycle', true, false, 'inference'],
+  ['inference recovery with withheld readiness', false, true, 'inference'],
+])(
+  'retained cancellation recovery observes authority with %s',
+  async (_label, cancelling, withheld, fault) => {
+    await fixture(
+      async (setup) => {
+        const admission = await setup.resolve(setup.bridge)
+        const canonical = setup.bridge.canonicalAuthority
+        const directory = await mkdtemp(join(tmpdir(), 'pi-node-cancel-recovery-'))
+        const runtimeEffects = { providers: 0, engines: 0, authorizations: 0, probes: 0 }
+        let adapter
+        const purposes = []
+        let refuseInference = false
+        let scopeActive = true
+        let currentTime = at
+        const scope = setup.options().scopeAuthority
+        const revoke = () => {
+          if (fault?.startsWith('audience')) setup.setEvidence({ allowedPrincipalIds: [] })
+          if (fault?.startsWith('actor'))
+            setup.setEvidence({ canonicalActorPrincipalId: 'product:other' })
+          if (fault?.startsWith('scope')) scopeActive = false
+          if (fault?.startsWith('expiry')) {
+            currentTime = expiresAt
+            setup.setTime(expiresAt)
+          }
+        }
+        const read = setup.bridge.options.product.readCurrent
+        setup.bridge.options.product.readCurrent = async (input, context) => {
+          purposes.push(context.purpose)
+          if (refuseInference && context.purpose === 'inference') throw new Error('MODEL_NOT_READY')
+          return read(input, context)
+        }
+        const options = {
+          directory,
+          now: () => currentTime,
+          scopeAuthority: {
+            readCurrent: async (input) => ({
+              ...(await scope.readCurrent(input)),
+              grantActive: scopeActive,
+            }),
+          },
+          resolveAdmission: (request) => canonical.resolveAdmission(request),
+          assertAuthority: (authority, purpose) => canonical.assertAuthority(authority, purpose),
+          assertReadAuthority: (authority) => canonical.assertReadAuthority(authority),
+          assertRecoveryAuthority: (authority) => canonical.assertRecoveryAuthority(authority),
+          resolveProvider: async (selection) => {
+            runtimeEffects.providers++
+            return {
+              selectionRef: selection.selectionRef,
+              selectionRevision: selection.selectionRevision,
+              workspaceId: setup.plan.correlation.workspaceId,
+              provider: 'scripted',
+              providerModel: 'cancel-model',
+              location: 'remote_host',
+              harness: 'pi_durable',
+              harnessVersion: '1.1.0',
+              providerBinding: 'pi_durable_models',
+              withModels: async (use) => use({}),
+            }
+          },
+          authorizeInference: async () => {
+            runtimeEffects.authorizations++
+            return { maxOutputTokens: 10, maximumInputTokens: 64, assertActive: async () => {} }
+          },
+          settleUsage: async (_authority, _key, usage) => usage,
+          reconcileInference: async () => {
+            runtimeEffects.probes++
+            if (fault?.endsWith('-during')) revoke()
+            return 'safe_to_resume'
+          },
+          engineFactory: async (engine) => {
+            runtimeEffects.engines++
+            return {
+              run: async () => {
+                await engine.authorizeInference({
+                  sessionId: 'cancel-session',
+                  inferenceId: 'pi-generation:1',
+                  provider: 'scripted',
+                  modelId: 'cancel-model',
+                })
+                throw new Error('RETAIN_UNCERTAIN_GENERATION')
+              },
+              close: async () => {},
+              cancel: async () => {},
+            }
+          },
+        }
+        try {
+          adapter = new PiDurableRuntimeAdapter(options)
+          const handle = await adapter.start(admission.startRequest)
+          await adapter.drain()
+          expect((await adapter.status(handle)).state).toBe('unknown')
+          if (fault !== 'inference')
+            expect(
+              (await adapter.cancel(handle, { idempotencyKey: 'stop:retained', requestedAt: at }))
+                .state
+            ).toBe('cancelling')
+          await adapter.close()
+          if (cancelling) {
+            const execution = await setup.repositories.executions.getExecution(
+              setup.ids.executionId
+            )
+            await new ExecutionLifecycleService(setup.repositories.executions).transitionExecution({
+              executionId: execution.executionId,
+              expectedVersion: execution.version,
+              to: 'cancelling',
+              transitionedAt: at,
+            })
+          }
+          refuseInference = withheld
+          purposes.length = 0
+          setup.scopeReadActors.length = 0
+          const before = { ...runtimeEffects }
+          const funding = await setup
+            .ledger()
+            .entries(setup.plan.correlation.workspaceId, setup.ids.executionId)
+          adapter = new PiDurableRuntimeAdapter(options)
+          if (fault?.endsWith('-before')) revoke()
+          if (fault) {
+            await expect(adapter.reconcile(handle)).rejects.toThrow(
+              /PI_AUTHORITY_REJECTED|PI_EXECUTION_SCOPE_REJECTED|PI_AUTHORITY_EXPIRED/
+            )
+            expect(adapter.journal.get(handle.handleId).state).toBe(
+              fault === 'inference' ? 'unknown' : 'cancelling'
+            )
+          } else expect((await adapter.reconcile(handle)).state).toBe('cancelled')
+          expect(runtimeEffects).toEqual({
+            ...before,
+            probes: before.probes + (fault && !fault.endsWith('-during') ? 0 : 1),
+          })
+          if (!fault) {
+            expect(purposes.length).toBeGreaterThan(0)
+            expect(new Set(purposes)).toEqual(new Set(['observe']))
+            expect(setup.scopeReadActors).toContain('product:original-sender')
+            expect(new Set(setup.scopeReadActors)).toEqual(
+              new Set(['product:original-sender', 'svc_pi-admission'])
+            )
+          }
+          expect(
+            await setup.ledger().entries(setup.plan.correlation.workspaceId, setup.ids.executionId)
+          ).toEqual(funding)
+          expect(await setup.counts()).toEqual({ commands: 1, executions: 1 })
+        } finally {
+          await adapter?.close()
+          await rm(directory, { recursive: true, force: true })
+        }
+      },
+      { explicitProjectScope: true, runtimeCompatible: true }
+    )
+  }
+)

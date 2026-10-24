@@ -149,7 +149,12 @@ test('workspace graph preserves upstream builds, integration ordering and emitte
       if (operation === 'build') {
         expect(task.cache.output).toEqual([`${dir.slice(root.length + 1)}/dist/**`])
         expect(task.command).toContain('ORCH_TOOLCHAIN=test-toolchain')
-        expect(manifest.scripts.build).toBe('tsc -p tsconfig.json')
+        // Main keeps a single tsc build; the profile-recovery branch extends the
+        // profile-adapters build with its type-test compilation. Both remain valid.
+        expect([
+          'tsc -p tsconfig.json',
+          'tsc -p tsconfig.json && tsc -p tsconfig.type-tests.json',
+        ]).toContain(manifest.scripts.build)
       }
       if (operation === 'test:integration') expect(task.cache).toBe(false)
     }

@@ -20,6 +20,25 @@ export type ProfileGuardOperation =
   | 'runtime.cleanup'
   | 'workflow.wake'
 
+/**
+ * Persisted lifecycle generations resolved by the server before a workflow
+ * wake. Workflow-wake guards receive this same admission snapshot both before
+ * and after dispatch; the post-dispatch callback must not treat it as a fresh
+ * execution state because dispatch may have created an attempt.
+ */
+export interface RetainedProfileWorkflowWakeGeneration {
+  readonly command: {
+    readonly commandId: string
+    readonly version: number
+    readonly status: string
+  }
+  readonly execution: {
+    readonly version: number
+    readonly state: string
+    readonly attemptCount: number
+  }
+}
+
 export type ProfileGuardTarget =
   | { readonly kind: 'composition' }
   | {
@@ -53,6 +72,8 @@ export type ProfileGuardTarget =
       readonly contentDigest: string
       readonly schemaVersion: number
       readonly workspaceId?: string
+      /** Read from retained server records; never accepted in workflow input. */
+      readonly retained?: RetainedProfileWorkflowWakeGeneration
     }
 
 /** Server-composed placement facts. They are never accepted from task/prompt input. */

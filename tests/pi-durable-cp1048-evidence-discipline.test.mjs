@@ -1,0 +1,211 @@
+import { describe, expect, test } from 'bun:test'
+import { execFileSync } from 'node:child_process'
+import { existsSync } from 'node:fs'
+import { readFile } from 'node:fs/promises'
+import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+// The CP #1048 acceptance ledger publishes the exact scope of the pull
+// request: the base it was cut from, every path the pull request touches, and
+// whether each path was added or modified. The advisory that produced this
+// file found that nothing in the repository checked that publication against
+// the repository, so the published scope could drift from the code without any
+// lane failing.
+//
+// These checks are document-internal plus git-derived. The document-internal
+// ones always run. The git-derived ones need the base commit in the object
+// store; a shallow clone does not carry it, so those parts skip rather than
+// fail closed on a missing object.
+
+const root = fileURLToPath(new URL('..', import.meta.url))
+const ledgerRelative = 'docs/pi-durable-cp1204-1048-acceptance-ledger.md'
+const mapRelative = 'docs/profile-recovery-acceptance-map.md'
+const scopeHeading = '## The current published scope'
+
+function git(args) {
+  return execFileSync('git', ['-C', root, ...args], {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'ignore'],
+  })
+}
+
+function gitAvailable() {
+  try {
+    git(['rev-parse', '--git-dir'])
+    return true
+  } catch {
+    return false
+  }
+}
+
+function hasCommit(sha) {
+  try {
+    git(['cat-file', '-e', `${sha}^{commit}`])
+    return true
+  } catch {
+    return false
+  }
+}
+
+function onMainBranch() {
+  try {
+    const branch = git(['symbolic-ref', '--short', 'HEAD']).trim()
+    return branch === 'main' || branch === 'master'
+  } catch {
+    return false
+  }
+}
+
+/**
+ * The commit that last carried this ledger. The published scope is anchored
+ * there, so the check stays true after the pull request merges, when `main`
+ * carries work this pull request never touched.
+ */
+function lastCommitTouching(relativePath) {
+  try {
+    const sha = git(['log', '-1', '--format=%H', '--', relativePath]).trim()
+    return sha === '' ? null : sha
+  } catch {
+    return null
+  }
+}
+
+function scopeSection(markdown) {
+  const start = markdown.indexOf(scopeHeading)
+  if (start === -1) throw new Error(`${ledgerRelative} has no "${scopeHeading}" section`)
+  const body = markdown.slice(start + scopeHeading.length)
+  const end = body.search(/\n## /)
+  return end === -1 ? body : body.slice(0, end)
+}
+
+function listedPaths(section) {
+  const block = section.match(/```text\n([\s\S]*?)```/)
+  if (!block) throw new Error('the published scope section has no path list')
+  return block[1]
+    .split('\n')
+    .map((line) => line.match(/^([AMD])\s+(\S+)\s*$/))
+    .filter((match) => match !== null)
+    .map((match) => ({ status: match[1], path: match[2] }))
+}
+
+function scopeBetween(from, to) {
+  const output = git(['diff', '--name-status', from, to]).trim()
+  if (output === '') return []
+  return output.split('\n').map((line) => {
+    const [status, path] = line.split('\t')
+    return { status, path }
+  })
+}
+
+function blobAt(revision, path) {
+  return git(['rev-parse', `${revision}:${path}`]).trim()
+}
+
+function pathAt(revision, path) {
+  try {
+    git(['cat-file', '-e', `${revision}:${path}`])
+    return true
+  } catch {
+    return false
+  }
+}
+
+const ledger = await readFile(join(root, ledgerRelative), 'utf8')
+const section = scopeSection(ledger)
+const base = section.match(/base `([0-9a-f]{40})`/)?.[1] ?? null
+const stated = section.match(/\*\*(\d+) paths: (\d+) added, (\d+) modified\*\*/)
+const listed = listedPaths(section)
+const areaRows = [
+  ...section.matchAll(/^\|\s*`([^`]+)`\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|/gm),
+].map((match) => ({
+  area: match[1],
+  added: Number(match[2]),
+  modified: Number(match[3]),
+  total: Number(match[4]),
+}))
+const gitReady = gitAvailable()
+const baseReady = gitReady && base !== null && hasCommit(base)
+const anchor = baseReady ? lastCommitTouching(ledgerRelative) : null
+const anchorReady = anchor !== null && hasCommit(anchor)
+
+describe('the CP #1048 published scope ledger', () => {
+  test('states a base commit and a scope total that match the published path list', () => {
+    expect(base).toMatch(/^[0-9a-f]{40}$/)
+    expect(stated).not.toBeNull()
+    const [, total, added, modified] = stated
+    expect(listed).toHaveLength(Number(total))
+    expect(listed.filter((entry) => entry.status === 'A')).toHaveLength(Number(added))
+    expect(listed.filter((entry) => entry.status === 'M')).toHaveLength(Number(modified))
+    expect(listed.filter((entry) => entry.status === 'D')).toHaveLength(0)
+  })
+
+  test('the area table sums to the stated scope totals', () => {
+    expect(areaRows.length).toBeGreaterThan(0)
+    expect(areaRows.reduce((sum, row) => sum + row.added, 0)).toBe(Number(stated[2]))
+    expect(areaRows.reduce((sum, row) => sum + row.modified, 0)).toBe(Number(stated[3]))
+    expect(areaRows.reduce((sum, row) => sum + row.total, 0)).toBe(Number(stated[1]))
+    for (const row of areaRows) expect(row.total).toBe(row.added + row.modified)
+  })
+
+  test('the published path list is sorted and free of duplicates', () => {
+    const paths = listed.map((entry) => entry.path)
+    expect(new Set(paths).size).toBe(paths.length)
+    expect(paths).toEqual([...paths].toSorted())
+  })
+
+  test('every published path exists in the tree', () => {
+    for (const entry of listed) {
+      expect({ path: entry.path, exists: existsSync(join(root, entry.path)) }).toEqual({
+        path: entry.path,
+        exists: true,
+      })
+    }
+  })
+
+  test.skipIf(!baseReady)('every published path is classified against the base tree', () => {
+    for (const entry of listed) {
+      const presentAtBase = pathAt(base, entry.path)
+      if (entry.status === 'A') {
+        expect({ path: entry.path, presentAtBase }).toEqual({
+          path: entry.path,
+          presentAtBase: false,
+        })
+      } else {
+        expect({ path: entry.path, presentAtBase }).toEqual({
+          path: entry.path,
+          presentAtBase: true,
+        })
+        expect(blobAt(base, entry.path)).not.toBe(blobAt('HEAD', entry.path))
+      }
+    }
+  })
+
+  test.skipIf(!anchorReady)('the published path list is the scope the ledger documents', () => {
+    const documented = scopeBetween(base, anchor)
+    const published = listed.map((entry) => `${entry.status} ${entry.path}`).toSorted()
+    expect(documented.map((entry) => `${entry.status} ${entry.path}`).toSorted()).toEqual(published)
+  })
+
+  test.skipIf(!baseReady || onMainBranch())(
+    'the published path list is the whole scope of this branch',
+    () => {
+      const documented = scopeBetween(base, 'HEAD')
+      const published = listed.map((entry) => `${entry.status} ${entry.path}`).toSorted()
+      expect(documented.map((entry) => `${entry.status} ${entry.path}`).toSorted()).toEqual(
+        published
+      )
+    }
+  )
+})
+
+describe('the CP #1048 evidence head discipline', () => {
+  test('the published scope section names no head other than its stable base', () => {
+    const named = [...new Set([...section.matchAll(/\b[0-9a-f]{40}\b/g)].map((match) => match[0]))]
+    expect(named).toEqual([base])
+  })
+
+  test('the acceptance map never presents a commit id as the pull-request head', async () => {
+    const map = await readFile(join(root, mapRelative), 'utf8')
+    expect(map).not.toMatch(/PR head\s+`[0-9a-f]{40}`/)
+  })
+})

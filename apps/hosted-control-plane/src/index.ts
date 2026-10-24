@@ -9,6 +9,7 @@ import {
   type StructuredLogger,
 } from '@control-plane/bootstrap'
 import type { RawEnvironment } from '@control-plane/config'
+import { HarnessIdSchema, ModelIdSchema } from '@control-plane/contracts'
 import {
   createControlApiApplication,
   createPrivateApiAuthentication,
@@ -121,6 +122,7 @@ export function resolveHostedCompositionConfiguration(
   const workflowDeploymentUri =
     options.workflowDeploymentUri ?? environment['WORKFLOW_DEPLOYMENT_URI']
   const pinnedHarnessId = options.pinnedHarnessId ?? environment['CONTROL_PLANE_PINNED_HARNESS_ID']
+  const harnessByModel = options.harnessByModel ?? resolveHostedHarnessByModel(environment)
   const catalogApprovalPolicy = resolveCatalogApprovalPolicy(environment)
   const hostedGraphEnabled = options.hostedGraphEnabled ?? resolveHostedGraphEnabled(environment)
   if (hostedGraphEnabled !== (options.hostedGraphToolConfiguration !== undefined)) {
@@ -139,6 +141,7 @@ export function resolveHostedCompositionConfiguration(
     ...(requestIdentityPublicKey === undefined ? {} : { requestIdentityPublicKey }),
     ...(workflowDeploymentUri === undefined ? {} : { workflowDeploymentUri }),
     ...(pinnedHarnessId === undefined ? {} : { pinnedHarnessId }),
+    ...(harnessByModel === undefined ? {} : { harnessByModel }),
     ...(catalogApprovalPolicy === undefined ? {} : { catalogApprovalPolicy }),
     hostedGraphEnabled,
     ...(options.hostedGraphToolConfiguration === undefined
@@ -156,6 +159,7 @@ export function resolveHostedCompositionConfiguration(
     ...optional('graphActivities'),
     ...optional('contextAuthoring'),
     ...optional('memoryWriteback'),
+    ...optional('profileWorkflowWake'),
   }
 }
 
@@ -218,6 +222,49 @@ function resolveCatalogApprovalPolicy(
     required: requiredValue === 'true',
     ...(requiredSince === undefined ? {} : { requiredSince }),
   }
+}
+
+/**
+ * The per-model harness map (M12/#678), read from the deployment environment.
+ *
+ * The map is a policy, not a fallback. An absent variable leaves routing
+ * exactly as it is today; a present map is handed to the real router unchanged,
+ * so an execution whose model the map does not name is denied rather than
+ * routed to another harness.
+ *
+ * The parsing is strict and uses the canonical model and harness id schemas,
+ * so the configuration can never name an id the execution contract would
+ * refuse. A malformed map is a configuration error, never a silently empty
+ * map: an empty or non-object value, or a key or value that is not a valid id,
+ * fails closed.
+ */
+export function resolveHostedHarnessByModel(
+  environment: RawEnvironment
+): Readonly<Record<string, string>> | undefined {
+  const value = environment['CONTROL_PLANE_HARNESS_BY_MODEL']
+  if (value === undefined) return undefined
+  const invalid = (): never => {
+    throw new Error('HOSTED_HARNESS_BY_MODEL_INVALID')
+  }
+  if (value.length === 0 || value.length > 65_536) return invalid()
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(value)
+  } catch {
+    return invalid()
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return invalid()
+  // A null-prototype map: a model id such as `constructor` or `__proto__` is an
+  // ordinary key, never an inherited property.
+  const map: Record<string, string> = Object.create(null)
+  for (const [modelId, harnessId] of Object.entries(parsed as Record<string, unknown>)) {
+    if (!ModelIdSchema.safeParse(modelId).success) return invalid()
+    if (typeof harnessId !== 'string' || !HarnessIdSchema.safeParse(harnessId).success) {
+      return invalid()
+    }
+    map[modelId] = harnessId
+  }
+  return map
 }
 
 function requiredEnvironment(environment: RawEnvironment, name: string): string {

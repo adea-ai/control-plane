@@ -64,9 +64,21 @@ import type {
 } from '@control-plane/deployment'
 import {
   BufferedObservabilityProvider,
+  DeploymentProfiles,
   LocalCoordinationProvider,
   StaticServiceDiscovery,
 } from '@control-plane/deployment'
+import {
+  bindRetainedProfileWorkflowWake,
+  ExecutionProfiles,
+  ProfileAdapterError,
+  type BoundProfileWorkflowWake,
+  type CurrentProfileWorkflowWakeTopologyGuard,
+  type ProfileExecutionGuards,
+  type ProfileWorkflowWakeDriver,
+  type RetainedProfileWorkflowWakeRecords,
+  type TrustedProfilePlacement,
+} from '@control-plane/profile-adapters'
 import {
   CommandInboxService,
   ExecutionLifecycleService,
@@ -89,6 +101,7 @@ import type {
   ExecutionAcceptancePort,
   RemoteControlHostAdapter,
 } from '@control-plane/remote-control-relay'
+import type { ExecutionWorkflowInput } from '@control-plane/orchestration'
 import {
   CompositeSecretsProvider,
   EnvironmentSecretsProvider,
@@ -102,6 +115,7 @@ import {
 } from '@control-plane/workflow-runtime'
 import { ReconciliationScheduler, RetentionSweep } from '@control-plane/deployment'
 import { HostedServerGraphRuntime } from './hosted-graph-runtime.js'
+import { createRetainedGraphReconciliationSubmitter } from './reconciliation-workflow-submitter.js'
 import {
   parseHostedGraphToolConfiguration,
   type HostedGraphToolConfiguration,
@@ -189,6 +203,17 @@ export interface HostedReconciliationConfiguration {
   readonly rateLimit?: ReconciliationRateLimit
 }
 
+/**
+ * Explicit authority inputs for the retained Hosted Server wake path. The
+ * placement is assembled by the caller from trusted host/runtime records;
+ * both guards must re-read current authority and placement on every wake.
+ * This does not supply a production actor or residency source by itself.
+ */
+export interface HostedProfileWorkflowWakeConfiguration {
+  readonly placement: TrustedProfilePlacement
+  readonly guards: ProfileExecutionGuards
+}
+
 export interface HostedServerCompositionOptions {
   readonly memoryWriteback?: MemoryWriteApplicationConfiguration
   readonly contextAuthoring?: ContextAuthoringCompositionOptions
@@ -207,6 +232,14 @@ export interface HostedServerCompositionOptions {
    * HARNESS_UNAVAILABLE_ON_PINNED_RUNTIME.
    */
   readonly pinnedHarnessId?: string
+  /**
+   * Optional per-model harness map (M12/#678): the deployment maps a model id
+   * to the harness id that must serve it. When the map is present it is a
+   * policy, not a fallback: an execution whose model is absent from the map,
+   * or which carries no model at all, is denied instead of being routed to
+   * another harness. Absent leaves routing exactly as it is today.
+   */
+  readonly harnessByModel?: Readonly<Record<string, string>>
   readonly restateIngressUrl?: string
   readonly workflowDeploymentUri?: string
   readonly workflowEndpointPort?: number
@@ -229,6 +262,8 @@ export interface HostedServerCompositionOptions {
   readonly hostedGraphToolConfiguration?: HostedGraphToolConfiguration
   readonly metricAdapter?: MetricAdapter
   readonly reconciliation?: HostedReconciliationConfiguration
+  /** Opts acceptance and reconciliation submissions into retained wake guards. */
+  readonly profileWorkflowWake?: HostedProfileWorkflowWakeConfiguration
   /** Retention sweep cadence override; defaults to one hour. */
   readonly retentionSweepIntervalMs?: number
 }
@@ -267,9 +302,17 @@ export class HostedServerControlPlaneComposition {
   readonly #objectStoreKind: 'filesystem' | 's3-compatible'
   readonly #hostedGraphRuntime: HostedServerGraphRuntime | undefined
   readonly #reconciliationScheduler: ReconciliationScheduler | undefined
+  readonly #profileWorkflowWakeConfiguration: HostedProfileWorkflowWakeConfiguration | undefined
+  readonly #profileWorkflowWakeDriver: ProfileWorkflowWakeDriver | undefined
+  readonly #profileWorkflowWakeTopology: CurrentProfileWorkflowWakeTopologyGuard | undefined
+  readonly #retainedProfileWorkflowWakeRecords: RetainedProfileWorkflowWakeRecords | undefined
+  #profileWorkflowWake: BoundProfileWorkflowWake | undefined
   readonly #retentionSweep: RetentionSweep | undefined
   #endpoint: RestateEndpointHandle | undefined
   #started = false
+  #starting: Promise<void> | undefined
+  #closing: Promise<void> | undefined
+  #closed = false
 
   constructor(options: HostedServerCompositionOptions) {
     const memoryWriteback = resolveMemoryWriteConfiguration(options.memoryWriteback)
@@ -285,6 +328,7 @@ export class HostedServerControlPlaneComposition {
     if (options.hostedGraphEnabled === true) {
       parseHostedGraphToolConfiguration(options.hostedGraphToolConfiguration)
     }
+    this.#profileWorkflowWakeConfiguration = options.profileWorkflowWake
     this.dataDirectory = resolve(options.dataDirectory)
     this.connection =
       options.connection ??
@@ -314,6 +358,42 @@ export class HostedServerControlPlaneComposition {
         }),
       })
     const restateIngressUrl = options.restateIngressUrl ?? 'http://restate:8080'
+    const workflowEndpointPort = options.workflowEndpointPort ?? 9080
+    this.workflow =
+      options.workflowRuntime ??
+      new RemoteRestateRuntime({
+        profile: 'hosted-server',
+        adminUrl: options.restateAdminUrl ?? 'http://restate:9070',
+        ingressUrl: restateIngressUrl,
+        deploymentUri:
+          options.workflowDeploymentUri ?? `http://control-plane-server:${workflowEndpointPort}`,
+      })
+    const workflowDispatcher = new RestateExecutionWorkflowDispatcher({
+      ingressUrl: restateIngressUrl,
+    })
+    this.#profileWorkflowWakeDriver =
+      this.#profileWorkflowWakeConfiguration === undefined
+        ? undefined
+        : Object.freeze({
+            deploymentProfile: DeploymentProfiles.hostedServer,
+            kind: 'restate-ingress',
+            submit: (input: ExecutionWorkflowInput) => workflowDispatcher.submit(input),
+          })
+    this.#profileWorkflowWakeTopology =
+      this.#profileWorkflowWakeDriver === undefined
+        ? undefined
+        : {
+            assertCurrent: async (context, candidate) => {
+              if (
+                candidate !== this.#profileWorkflowWakeDriver ||
+                context.profile !== ExecutionProfiles.selfHosted ||
+                context.deploymentProfile !== this.workflow.profile ||
+                context.expectedWakeKind !== 'restate-ingress'
+              ) {
+                throw new ProfileAdapterError('PROFILE_WAKE_MISMATCH')
+              }
+            },
+          }
     // Consistency metrics flow through the telemetry redaction pipeline with bounded
     // label cardinality; without an injected metric adapter every hook is a no-op.
     const consistencyMetrics =
@@ -326,6 +406,32 @@ export class HostedServerControlPlaneComposition {
         new PostgresGraphDefinitionRepository(this.connection.database, workspaceId),
     })
     const plans = new PostgresExecutionPlanRepository(this.connection.database)
+    const executions = new PostgresExecutionRepository(this.connection.database)
+    const acceptanceCommands = new PostgresCommandAcceptanceRepository(this.connection.database, {
+      budgetAdmission: true,
+    })
+    this.#retainedProfileWorkflowWakeRecords =
+      this.#profileWorkflowWakeConfiguration === undefined
+        ? undefined
+        : {
+            commands: {
+              getByExecutionId: (executionId) => acceptanceCommands.getByExecutionId(executionId),
+              getExecution: (executionId) => executions.getExecution(executionId),
+            },
+            executions,
+            plans,
+          }
+    const workflowSubmitter =
+      this.#profileWorkflowWakeConfiguration === undefined
+        ? workflowDispatcher
+        : {
+            submit: async (input: ExecutionWorkflowInput) => {
+              if (this.#profileWorkflowWake === undefined) {
+                throw new Error('HOSTED_PROFILE_WORKFLOW_WAKE_NOT_BOUND')
+              }
+              await this.#profileWorkflowWake.submit(input)
+            },
+          }
     const catalog = new PostgresCatalogRepository(this.connection.database)
     const catalogApprovals = new PostgresCatalogApprovalRepository(this.connection.database)
     const projectStates = new PostgresProjectStateRepository(this.connection.database)
@@ -356,9 +462,7 @@ export class HostedServerControlPlaneComposition {
     this.executionAcceptanceService = new DurableExecutionAcceptanceService({
       plans,
       commands: new CommandInboxService({
-        repository: new PostgresCommandAcceptanceRepository(this.connection.database, {
-          budgetAdmission: true,
-        }),
+        repository: acceptanceCommands,
         executionIdFactory: createExecutionId,
         executionPlanValidator: new ExecutionPlanAcceptanceValidator(
           plans,
@@ -366,7 +470,7 @@ export class HostedServerControlPlaneComposition {
         ),
         ...(inboxMetrics === undefined ? {} : { metrics: inboxMetrics }),
       }),
-      dispatcher: new RestateExecutionWorkflowDispatcher({ ingressUrl: restateIngressUrl }),
+      dispatcher: workflowSubmitter,
     })
     if (options.remoteControl !== undefined && options.remoteControlFactory !== undefined) {
       throw new Error('HOSTED_REMOTE_CONTROL_CONFIGURATION_CONFLICT')
@@ -443,7 +547,6 @@ export class HostedServerControlPlaneComposition {
       new RepositoryRuntimeNodeCredentialRevocationService({
         repository: new PostgresRuntimeNodeIdentityRepository(this.connection.database),
       })
-    const executions = new PostgresExecutionRepository(this.connection.database)
     const runtimeCommands = new PostgresRuntimeCommandRepository(this.connection.database)
     const executionEvents = new PostgresExecutionEventRepository(this.connection.database)
     const interactions = new PostgresInteractionRepository(this.connection.database)
@@ -491,6 +594,10 @@ export class HostedServerControlPlaneComposition {
       ...(options.pinnedHarnessId === undefined
         ? {}
         : { pinnedHarnessId: options.pinnedHarnessId }),
+      // The per-model map is a deployment policy, not a fallback. It is handed
+      // to the real router unchanged: a map that does not name the execution's
+      // model denies the attempt rather than routing it to another harness.
+      ...(options.harnessByModel === undefined ? {} : { harnessByModel: options.harnessByModel }),
     })
     const activities = new DurableExecutionLifecycleActivities({
       lifecycle: new ExecutionLifecycleService(executions),
@@ -584,9 +691,24 @@ export class HostedServerControlPlaneComposition {
           executions,
           commands: commandAcceptance,
           events: executionEvents,
-          workflowSubmitter: new RestateExecutionWorkflowDispatcher({
-            ingressUrl: restateIngressUrl,
-          }),
+          workflowSubmitter:
+            this.#profileWorkflowWakeConfiguration === undefined
+              ? workflowSubmitter
+              : (() => {
+                  const withRetainedGraph = createRetainedGraphReconciliationSubmitter({
+                    plans,
+                    submitter: workflowSubmitter,
+                  })
+                  return {
+                    submit: async (input: ExecutionWorkflowInput) => {
+                      // An unbound wake refuses before the plan is read.
+                      if (this.#profileWorkflowWake === undefined) {
+                        throw new Error('HOSTED_PROFILE_WORKFLOW_WAKE_NOT_BOUND')
+                      }
+                      await withRetainedGraph.submit(input)
+                    },
+                  }
+                })(),
           cancellations,
         })
       this.reconciliationService = new ExecutionReconciliationService({
@@ -607,7 +729,6 @@ export class HostedServerControlPlaneComposition {
         batchLimit: reconciliation.batchLimit,
       })
     }
-    const workflowEndpointPort = options.workflowEndpointPort ?? 9080
     this.#endpointFactory =
       options.endpointFactory ??
       createRestateEndpointFactory({
@@ -617,15 +738,6 @@ export class HostedServerControlPlaneComposition {
         ...(options.requestIdentityPublicKey === undefined
           ? {}
           : { requestIdentityPublicKey: options.requestIdentityPublicKey }),
-      })
-    this.workflow =
-      options.workflowRuntime ??
-      new RemoteRestateRuntime({
-        profile: 'hosted-server',
-        adminUrl: options.restateAdminUrl ?? 'http://restate:9070',
-        ingressUrl: restateIngressUrl,
-        deploymentUri:
-          options.workflowDeploymentUri ?? `http://control-plane-server:${workflowEndpointPort}`,
       })
     this.discovery = new StaticServiceDiscovery([
       { service: 'postgresql', url: databaseServiceUrl(options.databaseUrl), private: true },
@@ -649,33 +761,90 @@ export class HostedServerControlPlaneComposition {
     })
   }
 
-  async start(): Promise<void> {
-    if (this.#started) throw new Error('HOSTED_CONTROL_PLANE_ALREADY_STARTED')
-    await mkdir(this.dataDirectory, { recursive: true, mode: 0o700 })
-    await this.connection.check()
-    await this.#hostedGraphRuntime?.start()
-    this.#endpoint = await this.#endpointFactory.create()
-    await this.#endpoint.run()
+  start(): Promise<void> {
+    if (this.#closed) return Promise.reject(new Error('HOSTED_CONTROL_PLANE_CLOSED'))
+    if (this.#started || this.#starting !== undefined) {
+      return Promise.reject(new Error('HOSTED_CONTROL_PLANE_ALREADY_STARTED'))
+    }
+    this.#starting = this.#start().finally(() => {
+      this.#starting = undefined
+    })
+    return this.#starting
+  }
+
+  #assertStartupOpen(): void {
+    if (this.#closed) throw new Error('HOSTED_CONTROL_PLANE_CLOSED')
+  }
+
+  async #start(): Promise<void> {
+    this.#profileWorkflowWake = undefined
     try {
+      await mkdir(this.dataDirectory, { recursive: true, mode: 0o700 })
+      this.#assertStartupOpen()
+      await this.connection.check()
+      this.#assertStartupOpen()
+      if (this.#profileWorkflowWakeConfiguration !== undefined) {
+        const driver = this.#profileWorkflowWakeDriver
+        const topology = this.#profileWorkflowWakeTopology
+        const retainedRecords = this.#retainedProfileWorkflowWakeRecords
+        if (driver === undefined || topology === undefined || retainedRecords === undefined) {
+          throw new Error('HOSTED_PROFILE_WORKFLOW_WAKE_CONFIGURATION_INVALID')
+        }
+        const wake = await bindRetainedProfileWorkflowWake({
+          profile: ExecutionProfiles.selfHosted,
+          deployment: {
+            profile: DeploymentProfiles.hostedServer,
+            persistence: { profile: DeploymentProfiles.hostedServer, dialect: 'postgresql' },
+            workflow: this.workflow,
+          },
+          driver,
+          placement: this.#profileWorkflowWakeConfiguration.placement,
+          guards: this.#profileWorkflowWakeConfiguration.guards,
+          topology,
+          retainedRecords,
+        })
+        this.#assertStartupOpen()
+        this.#profileWorkflowWake = wake
+      }
+      await this.#hostedGraphRuntime?.start()
+      this.#assertStartupOpen()
+      this.#endpoint = await this.#endpointFactory.create()
+      this.#assertStartupOpen()
+      await this.#endpoint.run()
+      this.#assertStartupOpen()
       await this.workflow.start()
+      this.#assertStartupOpen()
       await this.remoteControl?.start()
+      this.#assertStartupOpen()
       this.#retentionSweep?.start()
       this.#reconciliationScheduler?.start()
+      this.#started = true
+      this.observability.record({
+        name: 'hosted-server-started',
+        occurredAt: new Date().toISOString(),
+        attributes: { profile: 'hosted-server' },
+      })
     } catch (error) {
-      await this.#retentionSweep?.close()
-      await this.#reconciliationScheduler?.close().catch(() => undefined)
-      await this.remoteControl?.stop()
-      await this.workflow.stop().catch(() => undefined)
-      await this.#endpoint.shutdown().catch(() => undefined)
+      this.#profileWorkflowWake = undefined
+      this.#started = false
+      const cleanup: Array<() => Promise<unknown> | void> = [
+        () => this.#reconciliationScheduler?.close(),
+        () => this.#retentionSweep?.close(),
+        () => this.remoteControl?.stop(),
+        () => this.workflow.stop(),
+        () => this.#endpoint?.shutdown(),
+        () => this.#hostedGraphRuntime?.close(),
+      ]
+      for (const release of cleanup) {
+        try {
+          await release()
+        } catch {
+          // Cleanup is best-effort here; preserve the startup error and try all owners.
+        }
+      }
       this.#endpoint = undefined
       throw error
     }
-    this.#started = true
-    this.observability.record({
-      name: 'hosted-server-started',
-      occurredAt: new Date().toISOString(),
-      attributes: { profile: 'hosted-server' },
-    })
   }
 
   async manifest(): Promise<HostedServerManifest> {
@@ -714,21 +883,53 @@ export class HostedServerControlPlaneComposition {
     }
   }
 
-  async close(): Promise<void> {
+  close(): Promise<void> {
+    this.#closed = true
+    this.#closing ??= this.#close()
+    return this.#closing
+  }
+
+  async #close(): Promise<void> {
+    // Startup owns its failure cleanup; it must never wait for this close.
+    // Drain it first so late acquisitions are released before storage closes.
+    await this.#starting?.catch(() => undefined)
     this.#started = false
-    // Drain the scheduler first: a clean close never abandons an in-flight pass.
-    await this.#reconciliationScheduler?.close()
-    await this.#retentionSweep?.close()
-    await this.remoteControl?.stop()
-    await this.workflow.stop().catch(() => undefined)
-    await this.#endpoint?.shutdown().catch(() => undefined)
-    this.#endpoint = undefined
-    await this.#hostedGraphRuntime?.close().catch(() => undefined)
-    await this.secrets.close()
-    await this.objectStore.close()
-    await this.connection.close()
-    this.coordination.close()
-    this.observability.close()
+    let closeError: unknown
+    let failed = false
+    const release = async (action: () => Promise<unknown> | void): Promise<void> => {
+      try {
+        await action()
+      } catch (error) {
+        if (!failed) {
+          closeError = error
+          failed = true
+        }
+      }
+    }
+    try {
+      // Attempt every release even if one owner fails; preserve the first error.
+      await release(async () => {
+        try {
+          await this.#reconciliationScheduler?.close()
+        } finally {
+          this.#profileWorkflowWake = undefined
+        }
+      })
+      await release(() => this.#retentionSweep?.close())
+      await release(() => this.remoteControl?.stop())
+      await release(() => this.workflow.stop())
+      await release(() => this.#endpoint?.shutdown())
+      this.#endpoint = undefined
+      await release(() => this.#hostedGraphRuntime?.close())
+      await release(() => this.secrets.close())
+      await release(() => this.objectStore.close())
+      await release(() => this.connection.close())
+      await release(() => this.coordination.close())
+      await release(() => this.observability.close())
+    } finally {
+      this.#profileWorkflowWake = undefined
+    }
+    if (failed) throw closeError
   }
 }
 

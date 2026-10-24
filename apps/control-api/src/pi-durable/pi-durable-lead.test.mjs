@@ -7,11 +7,12 @@ import { tmpdir } from 'node:os'
 import { VersioningType } from '@nestjs/common'
 import { NestFactory } from '@nestjs/core'
 import { FastifyAdapter } from '@nestjs/platform-fastify/adapters/fastify-adapter.js'
-import { canonicalJsonStringify } from '@control-plane/contracts'
+import { canonicalJsonStringify, ErrorResponseEnvelopeSchema } from '@control-plane/contracts'
 import { createExecutionPlanTestFixture } from '@control-plane/execution-plan/testing'
 import { createModels, createProvider } from '@earendil-works/pi-ai/models'
 import { openAICompletionsApi } from '@earendil-works/pi-ai/api/openai-completions.lazy'
 import { PiDurableRuntimeAdapter } from '@control-plane/pi-durable-adapter'
+import { createMemoryCommittedCancellationAuthority } from './cancellation-authority.test-fixture.mjs'
 import { PolicyServiceAuthenticator } from '../auth/service-authentication.ts'
 import { NormalizedExceptionFilter } from '../http/errors.ts'
 import { PiDurableLeadModule } from './pi-durable-lead.module.ts'
@@ -120,6 +121,9 @@ async function fixture(run, changes = {}) {
   let adapter
   let app
   let service
+  const committedCancellationAuthority = createMemoryCommittedCancellationAuthority({
+    now: () => at,
+  })
   const envelope = (operation, payload, key = 'transport-command:one') => ({
     caller: { servicePrincipalId: principalId },
     contractVersion: { major: 1, minor: 0 },
@@ -173,6 +177,7 @@ async function fixture(run, changes = {}) {
     adapter = new PiDurableRuntimeAdapter({
       directory,
       now: () => at,
+      committedCancellationAuthority,
       resolveAdmission: async () => admission,
       assertAuthority: async () => {
         if (state.revoked) throw new Error('private-provider-secret')
@@ -364,6 +369,27 @@ async function fixture(run, changes = {}) {
 }
 
 describe('composed Pi Durable lead HTTP endpoints', () => {
+  test('unknown cancellation outcome uses the shared retryable 503 error envelope without status data', () =>
+    fixture(async ({ inject, envelope, service }) => {
+      service.cancel = async () => {
+        throw new PiDurableLeadError('PI_LEAD_CANCELLATION_OUTCOME_UNKNOWN')
+      }
+      const response = await inject(
+        'cancel',
+        envelope('pi-durable.lead.cancel', { dispatchId: `dispatch_${'a'.repeat(32)}` })
+      )
+
+      expect(response.statusCode).toBe(503)
+      const body = ErrorResponseEnvelopeSchema.parse(response.json())
+      expect(body.error).toMatchObject({
+        code: 'PI_LEAD_CANCELLATION_OUTCOME_UNKNOWN',
+        class: 'runtime_unavailable',
+        source: 'workflow',
+        retryable: true,
+      })
+      expect(body).not.toHaveProperty('data')
+    }))
+
   test('audience revoked during final funding await prevents dispatch claim, runtime start and native send', async () => {
     let signalEntered, resumeFunding
     const entered = new Promise((resolve) => {
@@ -738,7 +764,9 @@ describe('composed Pi Durable lead HTTP endpoints', () => {
         }
         const revoked = await inject('cancel', cancel)
         expect(revoked.statusCode).toBe(503)
-        expect(revoked.json().error.code).toBe('PI_LEAD_CANCELLATION_OUTCOME_UNKNOWN')
+        expect(ErrorResponseEnvelopeSchema.parse(revoked.json()).error.code).toBe(
+          'PI_LEAD_CANCELLATION_OUTCOME_UNKNOWN'
+        )
         expect(calls).toEqual([])
         context.state.revoked = false
         const stopped = await inject('cancel', cancel)

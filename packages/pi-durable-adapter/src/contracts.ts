@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import type { Models } from '@earendil-works/pi-ai/models'
+import type { AbortCommitReceipt } from '@earendil-works/pi-durable'
 import type { CurrentExecutionScopeAuthority } from '@control-plane/execution-plan'
 import { IdentifierSchemas } from '@control-plane/contracts'
 import type { DurableToolCallRequest } from '@control-plane/tool-sdk'
@@ -74,6 +75,94 @@ export interface PiDurableRunningAuthority extends DurableExecutionAuthority {
   readonly observedAt: string
 }
 
+const CancellationDigestSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/)
+
+export const PiDurableCancellationGenerationSchema = z
+  .strictObject({
+    schemaVersion: z.literal('pi-inference-generation/v1'),
+    attemptId: IdentifierSchemas.attemptId,
+    turnKey: z.string().min(1).max(4096),
+    inferenceId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$/),
+    inferenceKey: z.string().min(1).max(8192),
+  })
+  .superRefine((generation, context) => {
+    if (generation.inferenceKey !== `${generation.turnKey}:${generation.inferenceId}`)
+      context.addIssue({ code: 'custom', path: ['inferenceKey'], message: 'invalid inference key' })
+  })
+
+const CancellationTargetFields = {
+  targetKind: z.enum(['active_generation', 'no_active_generation', 'untracked_generation']),
+  /** Turn snapshot targeted by this request, including when no generation was observed. */
+  turnKey: z.string().min(1).max(4096),
+  generation: PiDurableCancellationGenerationSchema.nullable(),
+}
+
+/** Historical #1048 retained-request format, used only for effect-free history qualification.
+ * These identifiers and persisted fields never grant current permission to cancel. */
+export const PiDurableCancellationProposalSchema = z
+  .strictObject({
+    handleId: z.string().min(1).max(256),
+    executionId: IdentifierSchemas.executionId,
+    attemptId: IdentifierSchemas.attemptId,
+    workspaceId: IdentifierSchemas.workspaceId,
+    idempotencyKey: z.string().min(1).max(256),
+    requestedAt: z.iso.datetime(),
+    requestDigest: CancellationDigestSchema,
+    admissionDigest: CancellationDigestSchema,
+    ...CancellationTargetFields,
+  })
+  .superRefine((proposal, context) => {
+    if ((proposal.targetKind === 'active_generation') !== (proposal.generation !== null))
+      context.addIssue({ code: 'custom', path: ['generation'], message: 'invalid target binding' })
+    if (
+      proposal.generation &&
+      (proposal.generation.attemptId !== proposal.attemptId ||
+        proposal.generation.turnKey !== proposal.turnKey)
+    )
+      context.addIssue({ code: 'custom', path: ['generation'], message: 'mismatched target' })
+  })
+
+export const PiDurableCommittedCancellationIntentSchema = z
+  .strictObject({
+    schemaVersion: z.literal('pi-committed-cancellation/v1'),
+    intentId: z.uuid(),
+    committedAuthorityVersion: z.number().int().positive(),
+    committedAt: z.iso.datetime(),
+    ...PiDurableCancellationProposalSchema.shape,
+  })
+  .superRefine((intent, context) => {
+    if ((intent.targetKind === 'active_generation') !== (intent.generation !== null))
+      context.addIssue({ code: 'custom', path: ['generation'], message: 'invalid target binding' })
+    if (
+      intent.generation &&
+      (intent.generation.attemptId !== intent.attemptId ||
+        intent.generation.turnKey !== intent.turnKey)
+    )
+      context.addIssue({ code: 'custom', path: ['generation'], message: 'mismatched target' })
+  })
+
+export type PiDurableCancellationProposal = z.output<typeof PiDurableCancellationProposalSchema>
+export type PiDurableCommittedCancellationIntent = z.output<
+  typeof PiDurableCommittedCancellationIntentSchema
+>
+
+/** Historical source/test retention interface. Deliberately absent from runtime/composition
+ * options: neither commit nor acknowledgement authorizes a native cancellation effect. Current
+ * production coordinator contracts are separately defined in cancellation-owner.ts and unavailable.
+ */
+export interface PiDurableCommittedCancellationAuthority {
+  readonly commit: (
+    proposal: PiDurableCancellationProposal
+  ) => Promise<PiDurableCommittedCancellationIntent>
+  /** List handles with unacknowledged intents without parsing their payloads. */
+  readonly pendingHandles: () => Promise<readonly string[]>
+  /** Read one handle's payloads so a malformed entry cannot block other handles. */
+  readonly pendingForHandle: (
+    handleId: string
+  ) => Promise<readonly PiDurableCommittedCancellationIntent[]>
+  readonly acknowledge: (intentId: string) => Promise<void>
+}
+
 export interface PiEngineResult {
   readonly text: string
   readonly submissionId: string
@@ -91,7 +180,31 @@ export interface PiEngineResult {
   }[]
 }
 
+/** Opt-in native qualification only; production factories do not supply this capability. */
+export interface PiGuardedCancellationInput {
+  readonly sessionId: string
+  readonly requestId: string
+  readonly requestDigest: string
+  readonly targetDigest: string
+  readonly expiresAt: string
+  readonly turnKey: string
+  readonly inferenceId: string | null
+}
+
+/** Identity-bound by the engine; a structurally identical object is not a prepared operation. */
+export interface PiGuardedCancellationPreparation extends PiGuardedCancellationInput {}
+
+export interface PiGuardedCancellationEngine {
+  prepare(input: PiGuardedCancellationInput): Promise<PiGuardedCancellationPreparation>
+  commit(preparation: PiGuardedCancellationPreparation): Promise<AbortCommitReceipt>
+  /** Historical evidence from an already-open owner only; never opens or authorizes a session. */
+  readReceipt(identity: PiGuardedCancellationInput): Promise<AbortCommitReceipt | undefined>
+  /** Observes only the matching receipt's tasks; no abort, scheduler activation or journal settlement. */
+  drainReceipt(identity: PiGuardedCancellationInput): Promise<AbortCommitReceipt>
+}
+
 export interface DurablePiEngine {
+  readonly guardedCancellation?: PiGuardedCancellationEngine
   run(input: { sessionId: string; requestId: string; input: string }): Promise<PiEngineResult>
   cancel(sessionId: string): Promise<void>
   close(): Promise<void>
@@ -220,6 +333,10 @@ export interface PiDurableRuntimeOptions {
     authority: DurableExecutionAuthority,
     purpose?: PiDurableAuthorityPurpose
   ) => Promise<void>
+  /** Revalidates retained state for observation without allocating a new budget or attempt. */
+  readonly assertReadAuthority?: (authority: DurableExecutionAuthority) => Promise<void>
+  /** Revalidates retained recovery authority without allocating a new budget or attempt. */
+  readonly assertRecoveryAuthority?: (authority: DurableExecutionAuthority) => Promise<void>
   /** Synchronize canonical host lifecycle before constructing or resuming native tasks. */
   readonly onExecutionRunning?: (authority: PiDurableRunningAuthority) => Promise<void>
   /** Server-owned current scope read; required for every explicit plan2 scope. */

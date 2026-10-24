@@ -304,7 +304,7 @@ test('children read is a strict read-only contract of opaque references and boun
     revision: 2,
     outcome: { state: 'completed', resultRef: id('art'), publication: { status: 'pending' } },
   }
-  const response = {
+  const childrenResponse = {
     contractVersion: request.contractVersion,
     requestId: request.requestId,
     correlation: request.correlation,
@@ -320,7 +320,7 @@ test('children read is a strict read-only contract of opaque references and boun
       complete: true,
     },
   }
-  expect(PiDurableLeadChildrenResponseSchema.safeParse(response).success).toBe(true)
+  expect(PiDurableLeadChildrenResponseSchema.safeParse(childrenResponse).success).toBe(true)
   for (const invalid of [
     { ...child, objective: 'caller or private text' },
     { ...child, planDigest: `sha256:${'a'.repeat(64)}` },
@@ -331,16 +331,16 @@ test('children read is a strict read-only contract of opaque references and boun
   ])
     expect(
       PiDurableLeadChildrenResponseSchema.safeParse({
-        ...response,
-        data: { ...response.data, children: [invalid] },
+        ...childrenResponse,
+        data: { ...childrenResponse.data, children: [invalid] },
       }).success
     ).toBe(false)
   // A page holds at most 256 children; the total says how many exist, and a page is complete
   // exactly when it carries no next cursor.
   const page = (data) =>
     PiDurableLeadChildrenResponseSchema.safeParse({
-      ...response,
-      data: { ...response.data, ...data },
+      ...childrenResponse,
+      data: { ...childrenResponse.data, ...data },
     }).success
   const many = (count) => Array.from({ length: count }, () => child)
   expect(page({ children: many(256), totalChildren: 256, complete: true })).toBe(true)

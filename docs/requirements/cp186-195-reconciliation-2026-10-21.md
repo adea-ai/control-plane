@@ -244,6 +244,10 @@ Paths that exist at a lane's head and are absent from this tree: W3
 `scripts/m11-architecture-audit-regression.test.mjs`; W5 the
 evaluation program record and the baseline scorecard. These are lane artifacts that are not in this tree.
 
+W4's three evidence paths are now present through the merged main security audit
+and differ from their recorded worker blobs, as enumerated above. This source
+reconciliation does not promote historical evidence or close acceptance gates.
+
 W1 and W6 were omitted from the earlier table because their recorded heads could
 not be resolved when it was written. They are now fetched by exact object name
 (see "Reproducing full-clone provenance"), so their paths are compared like the
