@@ -1,0 +1,378 @@
+diff --git a/dist/storage/sqlite/node.js b/dist/storage/sqlite/node.js
+index 6c9de88..7d38e1b 100644
+--- a/dist/storage/sqlite/node.js
++++ b/dist/storage/sqlite/node.js
+@@ -3,6 +3,7 @@ import { dirname } from "node:path";
+ import { pathToFileURL } from "node:url";
+ import { DatabaseSync } from "node:sqlite";
+ import { StorageRejected } from "../../errors.js";
++import { registerWriterOpen, releaseWriterOpen } from "./open-registry.js";
+ import { SqliteStorage } from "./storage.js";
+ const DEFAULT_WAL_AUTO_CHECKPOINT_PAGES = 1_000;
+ const DEFAULT_BUSY_TIMEOUT_MS = 5_000;
+@@ -174,6 +175,7 @@ export class NodeSqliteDatabase extends NodeSqliteExecutor {
+             }
+             finally {
+                 this.database.close();
++                releaseWriterOpen(this);
+             }
+         });
+     }
+@@ -264,6 +266,8 @@ export async function openNodeSqliteDatabase(path, options = {}) {
+         await adapter.exec("PRAGMA journal_mode = WAL");
+         await adapter.exec("PRAGMA synchronous = NORMAL");
+         await adapter.exec(`PRAGMA wal_autocheckpoint = ${checkpointPages}`);
++        // CANDIDATE C7c (not consumable): note the open so a detached snapshot refuses a file this process holds for writing.
++        registerWriterOpen(path, adapter);
+         return adapter;
+     }
+     catch (error) {
+diff --git a/dist/storage/sqlite/open-registry.d.ts b/dist/storage/sqlite/open-registry.d.ts
+new file mode 100644
+index 0000000..82a344c
+--- /dev/null
++++ b/dist/storage/sqlite/open-registry.d.ts
+@@ -0,0 +1,7 @@
++/** CANDIDATE C7c (not consumable). In-process registry of file-backed read-write SQLite opens, keyed by device and inode. */
++export declare function registerWriterOpen(path: string, owner: object): void;
++export declare function releaseWriterOpen(owner: object): void;
++export declare function isOpenForWrite(stat: {
++    readonly dev: number | bigint;
++    readonly ino: number | bigint;
++}): boolean;
+diff --git a/dist/storage/sqlite/open-registry.js b/dist/storage/sqlite/open-registry.js
+new file mode 100644
+index 0000000..b481127
+--- /dev/null
++++ b/dist/storage/sqlite/open-registry.js
+@@ -0,0 +1,39 @@
++import { statSync } from "node:fs";
++/**
++ * CANDIDATE C7c (not consumable). In-process registry of file-backed read-write SQLite opens, keyed by device and inode so a
++ * hard link or another spelling of the same file is the same entry. It sees only opens made through this module instance in this
++ * process. It says nothing about another process, another copy of this package, or a crashed owner.
++ */
++const open = new Map();
++const keys = new WeakMap();
++function identity(path) {
++    const stat = statSync(path);
++    return `${stat.dev}:${stat.ino}`;
++}
++export function registerWriterOpen(path, owner) {
++    if (path === ":memory:")
++        return;
++    const key = identity(path);
++    keys.set(owner, key);
++    let owners = open.get(key);
++    if (owners === undefined) {
++        owners = new Set();
++        open.set(key, owners);
++    }
++    owners.add(owner);
++}
++export function releaseWriterOpen(owner) {
++    const key = keys.get(owner);
++    if (key === undefined)
++        return;
++    keys.delete(owner);
++    const owners = open.get(key);
++    if (owners === undefined)
++        return;
++    owners.delete(owner);
++    if (owners.size === 0)
++        open.delete(key);
++}
++export function isOpenForWrite(stat) {
++    return open.has(`${stat.dev}:${stat.ino}`);
++}
+diff --git a/dist/storage/sqlite/snapshot.d.ts b/dist/storage/sqlite/snapshot.d.ts
+new file mode 100644
+index 0000000..2bf4fc5
+--- /dev/null
++++ b/dist/storage/sqlite/snapshot.d.ts
+@@ -0,0 +1,35 @@
++import type { SqliteStorage } from "./storage.js";
++/** CANDIDATE C7c (not consumable). Six pins the caller holds independently of the artifact. */
++export interface SnapshotPins {
++    readonly mutationId: string;
++    readonly ownerKey: string;
++    readonly lineageId: string;
++    readonly generation: string;
++    readonly epoch: number;
++    readonly lastSeq: number;
++}
++export interface SnapshotClosure {
++    readonly mutationId: string;
++    readonly ownerKey: string;
++    readonly lineageId: string;
++    readonly generation: string;
++    readonly previousEpoch: number;
++    readonly epoch: number;
++    readonly lastSeq: number;
++    readonly closedAt: unknown;
++}
++export interface SnapshotFacts {
++    readonly method: "closed-checkpointed-copy";
++    readonly closure: SnapshotClosure;
++    readonly fenceEpoch: number;
++    readonly cutSeq: number;
++    readonly schemaVersion: number;
++    readonly digest: string;
++}
++declare const issuedBrand: unique symbol;
++export interface SealedSnapshot {
++    readonly [issuedBrand]: never;
++}
++export declare function sealSnapshot(artifactPath: string, pins: SnapshotPins): Promise<SealedSnapshot>;
++export declare function snapshotFacts(handle: SealedSnapshot): SnapshotFacts;
++export declare function withSnapshotStorage<T>(handle: SealedSnapshot, read: (storage: SqliteStorage) => Promise<T>): Promise<T>;
+diff --git a/dist/storage/sqlite/snapshot.js b/dist/storage/sqlite/snapshot.js
+new file mode 100644
+index 0000000..d1a1f4f
+--- /dev/null
++++ b/dist/storage/sqlite/snapshot.js
+@@ -0,0 +1,244 @@
++import { createHash } from "node:crypto";
++import { lstat, readFile, realpath } from "node:fs/promises";
++import { isAbsolute, resolve } from "node:path";
++import { StorageRejected } from "../../errors.js";
++import { isOpenForWrite } from "./open-registry.js";
++import { openNodeSqliteStorage } from "./node.js";
++/**
++ * CANDIDATE C7c (not consumable): detached snapshot, method A (a closed-and-checkpointed disposable copy).
++ *
++ * `sealSnapshot` reads an artifact that the caller says is a disposable copy of a cleanly closed store, derives facts from it
++ * through the C7 read-only open, and returns an opaque frozen handle. It compares the artifact with six pins the caller holds
++ * independently (mutationId, ownerKey, lineageId, generation, epoch, lastSeq). It never writes, never migrates and never
++ * creates anything.
++ *
++ * It does NOT prove that the original store was quiescent, that no other process writes to it, or that the artifact came from
++ * the store the pins name. Stable bytes, an empty in-process registry and coherent rows are not cross-process quiescence; that
++ * is out-of-band attestation the caller owns. The handle is historical evidence of one committed cut. It never settles a
++ * journal and never authorizes an effect. No boolean the caller passes is attestation.
++ */
++const METHOD = "closed-checkpointed-copy";
++const MAX_BYTES = 256 * 1024 * 1024;
++const SIDECARS = ["-wal", "-shm", "-journal"];
++const PIN_KEYS = ["epoch", "generation", "lastSeq", "lineageId", "mutationId", "ownerKey"];
++const sealed = new WeakMap();
++const refuse = (code, options) => new StorageRejected(code, options);
++const text = (value) => typeof value === "string" && value.length > 0 && value.length <= 8192 && value.trim() === value;
++/** Reads every pin exactly once into primitives, so a getter or later mutation cannot change what is checked. */
++function readPins(input) {
++    if (input === null || typeof input !== "object" || Array.isArray(input))
++        throw refuse("PI_SNAPSHOT_PINS_INVALID");
++    const own = Object.keys(input).sort();
++    if (own.length !== PIN_KEYS.length || own.some((key, index) => key !== PIN_KEYS[index]))
++        throw refuse("PI_SNAPSHOT_PINS_INVALID");
++    const pins = {};
++    for (const key of PIN_KEYS) {
++        const descriptor = Object.getOwnPropertyDescriptor(input, key);
++        if (descriptor === undefined || !("value" in descriptor))
++            throw refuse("PI_SNAPSHOT_PINS_INVALID");
++        pins[key] = descriptor.value;
++    }
++    if (!text(pins.mutationId) || !text(pins.ownerKey) || !text(pins.lineageId) || !text(pins.generation))
++        throw refuse("PI_SNAPSHOT_PINS_INVALID");
++    if (!Number.isSafeInteger(pins.epoch) || pins.epoch < 1 || !Number.isSafeInteger(pins.lastSeq) || pins.lastSeq < 0)
++        throw refuse("PI_SNAPSHOT_PINS_INVALID");
++    return Object.freeze(pins);
++}
++async function inspect(path) {
++    let stat;
++    try {
++        stat = await lstat(path);
++    }
++    catch (error) {
++        throw refuse("PI_SNAPSHOT_ARTIFACT_INVALID", { cause: error });
++    }
++    if (stat.isSymbolicLink() || !stat.isFile())
++        throw refuse("PI_SNAPSHOT_ARTIFACT_INVALID");
++    // A second hard link is another name for bytes some other writer may hold: not a detached copy.
++    if (stat.nlink !== 1)
++        throw refuse("PI_SNAPSHOT_NOT_DETACHED");
++    if (isOpenForWrite(stat))
++        throw refuse("PI_SNAPSHOT_NOT_DETACHED");
++    if (stat.size > MAX_BYTES)
++        throw refuse("PI_SNAPSHOT_ARTIFACT_INVALID");
++    return stat;
++}
++async function sidecarsPresent(path) {
++    for (const suffix of SIDECARS) {
++        try {
++            await lstat(`${path}${suffix}`);
++            return true;
++        }
++        catch (error) {
++            if (error?.code !== "ENOENT")
++                throw refuse("PI_STORE_READ_ONLY_INSPECTION_FAILED", { cause: error });
++        }
++    }
++    return false;
++}
++async function fingerprint(path) {
++    const stat = await inspect(path);
++    if (await sidecarsPresent(path))
++        throw refuse("PI_STORE_READ_ONLY_SIDECARS");
++    const bytes = await readFile(path);
++    return Object.freeze({
++        digest: `sha256:${createHash("sha256").update(bytes).digest("hex")}`,
++        size: stat.size,
++        dev: stat.dev,
++        ino: stat.ino,
++        mtimeMs: stat.mtimeMs,
++        ctimeMs: stat.ctimeMs,
++    });
++}
++const same = (a, b) => a.digest === b.digest && a.size === b.size && a.dev === b.dev && a.ino === b.ino && a.mtimeMs === b.mtimeMs && a.ctimeMs === b.ctimeMs;
++async function openArtifact(path) {
++    try {
++        return await openNodeSqliteStorage(path, { mode: "read-only" });
++    }
++    catch (error) {
++        // Keep the default C7 refusals (sidecars, schema) as they are; anything else is a file that is not a store.
++        if (error instanceof StorageRejected)
++            throw error;
++        throw refuse("PI_SNAPSHOT_ARTIFACT_INVALID", { cause: error });
++    }
++}
++async function derive(storage, pins) {
++    const db = storage.db;
++    let check;
++    let schema;
++    let closure;
++    let fence;
++    let metadata;
++    try {
++        check = await db.get("PRAGMA quick_check");
++        schema = await db.get("SELECT version FROM durable_schema WHERE singleton = 1");
++        metadata = await db.get("SELECT next_seq FROM durable_metadata WHERE singleton = 1");
++    }
++    catch (error) {
++        throw refuse("PI_SNAPSHOT_ARTIFACT_INVALID", { cause: error });
++    }
++    if (check?.quick_check !== "ok" || schema === undefined || metadata === undefined)
++        throw refuse("PI_SNAPSHOT_ARTIFACT_INVALID");
++    try {
++        closure = await db.get("SELECT mutation_id, owner_key, lineage_id, generation, previous_epoch, epoch, last_seq, closed_at FROM durable_writer_closure WHERE mutation_id = ?", pins.mutationId);
++        fence = await db.get("SELECT owner_key, epoch, armed, lineage_id, generation FROM durable_writer_fence WHERE singleton = 1");
++    }
++    catch (error) {
++        // A store without the fence or closure tables never recorded a closure.
++        throw refuse("PI_SNAPSHOT_CLOSURE_MISSING", { cause: error });
++    }
++    if (closure === undefined || fence === undefined)
++        throw refuse("PI_SNAPSHOT_CLOSURE_MISSING");
++    const cutSeq = Number(metadata.next_seq) - 1;
++    const number = (value) => (typeof value === "number" || typeof value === "bigint" ? Number(value) : Number.NaN);
++    const row = {
++        mutationId: closure.mutation_id,
++        ownerKey: closure.owner_key,
++        lineageId: closure.lineage_id,
++        generation: closure.generation,
++        previousEpoch: number(closure.previous_epoch),
++        epoch: number(closure.epoch),
++        lastSeq: number(closure.last_seq),
++        closedAt: closure.closed_at,
++    };
++    if (row.mutationId !== pins.mutationId ||
++        row.ownerKey !== pins.ownerKey ||
++        row.lineageId !== pins.lineageId ||
++        row.generation !== pins.generation ||
++        row.epoch !== pins.epoch ||
++        !Number.isSafeInteger(row.previousEpoch) ||
++        row.epoch !== row.previousEpoch + 1)
++        throw refuse("PI_SNAPSHOT_CLOSURE_MISMATCH");
++    const fenceEpoch = number(fence.epoch);
++    if (!Number.isSafeInteger(fenceEpoch))
++        throw refuse("PI_SNAPSHOT_ARTIFACT_INVALID");
++    // A higher epoch means a successor acquired the fence after the closure: the artifact is not at the closed cut.
++    if (fenceEpoch > row.epoch)
++        throw refuse("PI_SNAPSHOT_SUPERSEDED");
++    if (fenceEpoch !== row.epoch || fence.owner_key !== pins.ownerKey || fence.lineage_id !== pins.lineageId || fence.generation !== pins.generation)
++        throw refuse("PI_SNAPSHOT_CLOSURE_MISMATCH");
++    if (!Number.isSafeInteger(cutSeq) || cutSeq < 0 || row.lastSeq !== pins.lastSeq || cutSeq !== pins.lastSeq)
++        throw refuse("PI_SNAPSHOT_CUT_MISMATCH");
++    return { closure: Object.freeze(row), fenceEpoch, cutSeq, schemaVersion: number(schema.version) };
++}
++/**
++ * Seals one artifact. Refusals, all fail closed: PI_SNAPSHOT_PINS_INVALID, PI_SNAPSHOT_ARTIFACT_INVALID (not an absolute canonical
++ * regular file, a symlink, oversized, not a store, failed integrity check), PI_SNAPSHOT_NOT_DETACHED (a second hard link or
++ * opened for writing in this process), PI_STORE_READ_ONLY_SIDECARS and the schema refusals (unchanged from C7),
++ * PI_SNAPSHOT_CLOSURE_MISSING, PI_SNAPSHOT_CLOSURE_MISMATCH, PI_SNAPSHOT_SUPERSEDED, PI_SNAPSHOT_CUT_MISMATCH and
++ * PI_SNAPSHOT_UNSTABLE (bytes, identity or sidecars changed while reading).
++ */
++export async function sealSnapshot(artifactPath, pinsInput) {
++    const pins = readPins(pinsInput);
++    if (typeof artifactPath !== "string" || artifactPath.length === 0 || !isAbsolute(artifactPath) || artifactPath !== resolve(artifactPath))
++        throw refuse("PI_SNAPSHOT_ARTIFACT_INVALID");
++    let canonical;
++    try {
++        canonical = await realpath(artifactPath);
++    }
++    catch (error) {
++        throw refuse("PI_SNAPSHOT_ARTIFACT_INVALID", { cause: error });
++    }
++    if (canonical !== artifactPath)
++        throw refuse("PI_SNAPSHOT_ARTIFACT_INVALID");
++    const before = await fingerprint(artifactPath);
++    const storage = await openArtifact(artifactPath);
++    let facts;
++    try {
++        facts = await derive(storage, pins);
++    }
++    finally {
++        await storage.close();
++    }
++    const after = await fingerprint(artifactPath).catch((error) => {
++        throw error instanceof StorageRejected && error.message === "PI_STORE_READ_ONLY_SIDECARS" ? refuse("PI_SNAPSHOT_UNSTABLE") : error;
++    });
++    if (!same(before, after))
++        throw refuse("PI_SNAPSHOT_UNSTABLE");
++    const handle = Object.freeze(Object.create(null));
++    sealed.set(handle, Object.freeze({
++        path: artifactPath,
++        fingerprint: before,
++        facts: Object.freeze({
++            method: METHOD,
++            closure: facts.closure,
++            fenceEpoch: facts.fenceEpoch,
++            cutSeq: facts.cutSeq,
++            schemaVersion: facts.schemaVersion,
++            digest: before.digest,
++        }),
++    }));
++    return handle;
++}
++function issued(handle) {
++    const entry = typeof handle === "object" && handle !== null ? sealed.get(handle) : undefined;
++    if (entry === undefined)
++        throw refuse("PI_SNAPSHOT_NOT_ISSUED");
++    return entry;
++}
++/** The facts the SDK derived from the artifact. They are derived, never supplied by the caller. */
++export function snapshotFacts(handle) {
++    return issued(handle).facts;
++}
++/**
++ * Runs `read` against a read-only storage over the sealed artifact. The bytes are fingerprinted before the open and after the
++ * read, and the result is returned only if both match the sealed digest; otherwise PI_SNAPSHOT_UNSTABLE and the result is dropped.
++ */
++export async function withSnapshotStorage(handle, read) {
++    const entry = issued(handle);
++    if (typeof read !== "function")
++        throw new TypeError("read must be a function");
++    if (!same(entry.fingerprint, await fingerprint(entry.path)))
++        throw refuse("PI_SNAPSHOT_UNSTABLE");
++    const storage = await openArtifact(entry.path);
++    let result;
++    try {
++        result = await read(storage);
++    }
++    finally {
++        await storage.close();
++    }
++    if (!same(entry.fingerprint, await fingerprint(entry.path)))
++        throw refuse("PI_SNAPSHOT_UNSTABLE");
++    return result;
++}

@@ -16,7 +16,10 @@ a separate stacked candidate.
 Beyond the contract, the candidate also resolves the real path once (a symlink alias cannot hide sidecars at the real path) and
 fails closed on any sidecar inspection error other than a proven absent file.
 
-**Not implemented:** the "documented snapshot-consistent mode" named below. Only the default read-only mode exists; an unknown
+**Not implemented:** the "documented snapshot-consistent mode" named below. A separate offline candidate for a detached
+snapshot (method A, a closed-and-checkpointed disposable copy of a store, with its own sealing call and no change to this open)
+is described in `docs/pi-durable-c7c-detached-snapshot-design.md`; it does not add a mode to this open, does not read a WAL, and
+is not consumable. Only the default read-only mode exists; an unknown
 mode is refused (`PI_STORE_OPEN_MODE_INVALID`), and a store with `-wal`, `-shm` or `-journal` sidecars is refused
 (`PI_STORE_READ_ONLY_SIDECARS`). That check is sidecar presence at the real path plus the schema version; it does not establish
 owner or process liveness, and absent sidecars are not proof that no live writer exists. There is also no issuer, no quiescent-capture method, no SDK adoption and no live use. The
