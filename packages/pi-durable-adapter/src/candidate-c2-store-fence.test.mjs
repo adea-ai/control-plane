@@ -11,6 +11,7 @@ import {
   realpathSync,
   rmSync,
 } from 'node:fs'
+import { createRequire } from 'node:module'
 import { DatabaseSync } from 'node:sqlite'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -19,11 +20,23 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 const here = dirname(fileURLToPath(import.meta.url))
 const adapterRoot = resolve(here, '..')
 const repoRoot = resolve(adapterRoot, '../..')
-const installed = realpathSync(join(adapterRoot, 'node_modules/@earendil-works/pi-durable'))
+// The install layout differs between installs (a per-package symlink locally, a hoisted root hosted), so the
+// SDK is found through module resolution rather than a fixed node_modules path.
+function installedSdkRoot() {
+  let directory = dirname(createRequire(import.meta.url).resolve('@earendil-works/pi-durable'))
+  while (!existsSync(join(directory, 'package.json'))) {
+    const parent = dirname(directory)
+    if (parent === directory) throw new Error('installed pi-durable package root not found')
+    directory = parent
+  }
+  return realpathSync(directory)
+}
+const installed = installedSdkRoot()
 const compatPatch = join(repoRoot, 'patches/@earendil-works%2Fpi-durable@1.1.0.patch')
 const candidatePatch = join(adapterRoot, 'candidates/c2-store-fence/c2-store-fence.candidate.patch')
-// Inside the package's node_modules so the copy resolves the SDK's own dependencies.
-const scratchBase = join(adapterRoot, 'node_modules/.c2-candidate-test')
+// Next to the installed SDK (same node_modules scope directory), so the copy resolves the SDK's own dependencies
+// whichever way the install is laid out.
+const scratchBase = join(dirname(installed), '.c2-candidate-test')
 
 const roots = []
 function makeSdk({ candidate }) {

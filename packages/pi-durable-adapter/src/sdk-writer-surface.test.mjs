@@ -11,6 +11,7 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs'
+import { createRequire } from 'node:module'
 import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -20,7 +21,18 @@ import { fileURLToPath } from 'node:url'
 const here = dirname(fileURLToPath(import.meta.url))
 const adapterRoot = resolve(here, '..')
 const repoRoot = resolve(adapterRoot, '../..')
-const installed = realpathSync(join(adapterRoot, 'node_modules/@earendil-works/pi-durable'))
+// The install layout differs between installs (a per-package symlink locally, a hoisted root hosted), so the
+// SDK is found through module resolution rather than a fixed node_modules path.
+function installedSdkRoot() {
+  let directory = dirname(createRequire(import.meta.url).resolve('@earendil-works/pi-durable'))
+  while (!existsSync(join(directory, 'package.json'))) {
+    const parent = dirname(directory)
+    if (parent === directory) throw new Error('installed pi-durable package root not found')
+    directory = parent
+  }
+  return realpathSync(directory)
+}
+const installed = installedSdkRoot()
 const compatPatch = join(repoRoot, 'patches/@earendil-works%2Fpi-durable@1.1.0.patch')
 const scratchBase = join(adapterRoot, 'node_modules/.sdk-writer-surface-test')
 
