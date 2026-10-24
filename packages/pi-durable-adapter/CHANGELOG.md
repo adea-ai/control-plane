@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.2](https://github.com/adea-ai/control-plane/compare/pi-durable-adapter-v0.11.1...pi-durable-adapter-v0.11.2) (2026-10-24)
+
+
+### Bug Fixes
+
+* **pi:** classify cancellation publication uncertainty after native commit ([#1305](https://github.com/adea-ai/control-plane/issues/1305)) ([f727f7a](https://github.com/adea-ai/control-plane/commit/f727f7aec45418fda49bd243d13dc1e8ed1b22fc))
+
 ## [0.11.1](https://github.com/adea-ai/control-plane/compare/pi-durable-adapter-v0.11.0...pi-durable-adapter-v0.11.1) (2026-10-24)
 
 
