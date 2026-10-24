@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.4](https://github.com/adea-ai/control-plane/compare/pi-durable-adapter-v0.11.3...pi-durable-adapter-v0.11.4) (2026-10-24)
+
+
+### Tests
+
+* **pi-durable-adapter:** offline C7 receipt-ledger same-cut proof ([#1319](https://github.com/adea-ai/control-plane/issues/1319)) ([e628f38](https://github.com/adea-ai/control-plane/commit/e628f386642eda08680359ac3a7292058bac9e47))
+
 ## [0.11.3](https://github.com/adea-ai/control-plane/compare/pi-durable-adapter-v0.11.2...pi-durable-adapter-v0.11.3) (2026-10-24)
 
 

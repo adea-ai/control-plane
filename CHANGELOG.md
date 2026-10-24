@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.114.8](https://github.com/adea-ai/control-plane/compare/workspace-v1.114.7...workspace-v1.114.8) (2026-10-24)
+
+
+### Tests
+
+* **pi-durable-adapter:** offline C7 receipt-ledger same-cut proof ([#1319](https://github.com/adea-ai/control-plane/issues/1319)) ([e628f38](https://github.com/adea-ai/control-plane/commit/e628f386642eda08680359ac3a7292058bac9e47))
+
 ## [1.114.7](https://github.com/adea-ai/control-plane/compare/workspace-v1.114.6...workspace-v1.114.7) (2026-10-24)
 
 
