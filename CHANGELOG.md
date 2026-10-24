@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.114.7](https://github.com/adea-ai/control-plane/compare/workspace-v1.114.6...workspace-v1.114.7) (2026-10-24)
+
+
+### Tests
+
+* **database:** give the tagged-digest tool-call test its own execution id ([d854727](https://github.com/adea-ai/control-plane/commit/d854727f4984392b41bddc2c059e318ea19ee514))
+* **database:** isolate the tagged-digest tool-call test's execution id ([#1314](https://github.com/adea-ai/control-plane/issues/1314)) ([d854727](https://github.com/adea-ai/control-plane/commit/d854727f4984392b41bddc2c059e318ea19ee514))
+
 ## [1.114.6](https://github.com/adea-ai/control-plane/compare/workspace-v1.114.5...workspace-v1.114.6) (2026-10-24)
 
 

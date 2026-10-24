@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.54.2](https://github.com/adea-ai/control-plane/compare/database-v1.54.1...database-v1.54.2) (2026-10-24)
+
+
+### Tests
+
+* **database:** give the tagged-digest tool-call test its own execution id ([d854727](https://github.com/adea-ai/control-plane/commit/d854727f4984392b41bddc2c059e318ea19ee514))
+* **database:** isolate the tagged-digest tool-call test's execution id ([#1314](https://github.com/adea-ai/control-plane/issues/1314)) ([d854727](https://github.com/adea-ai/control-plane/commit/d854727f4984392b41bddc2c059e318ea19ee514))
+
 ## [1.54.1](https://github.com/adea-ai/control-plane/compare/database-v1.54.0...database-v1.54.1) (2026-10-24)
 
 
