@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.114.11](https://github.com/adea-ai/control-plane/compare/workspace-v1.114.10...workspace-v1.114.11) (2026-10-24)
+
+
+### Tests
+
+* **ci:** run the three TLS operations per scenario in one child process ([#1326](https://github.com/adea-ai/control-plane/issues/1326)) ([830cfc2](https://github.com/adea-ai/control-plane/commit/830cfc27c91f3f592a40fa6f4b83abc84df73eda))
+
 ## [1.114.10](https://github.com/adea-ai/control-plane/compare/workspace-v1.114.9...workspace-v1.114.10) (2026-10-24)
 
 
