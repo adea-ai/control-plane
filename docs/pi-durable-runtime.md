@@ -157,6 +157,12 @@ expiry cleanup and a fresh canonical attempt are required. Startup and periodic
 scanners release proven unused allocations, including admission interrupted
 before a preparation receipt exists. In-flight or ambiguous sends retain holds.
 
+Lead-composition close refuses new public recovery calls and stops the recovery
+timer. Accepted public and periodic recovery passes finish before terminal
+settlement and runtime stores close. A public recovery failure remains visible
+to its caller and does not skip teardown. Shutdown does not infer cancellation
+authority or cancel admitted inference.
+
 `prepare` also carries an optional `childAllowance` (`pi-lead-child-allowance/v1`): what the accepted
 lead plan holds back for child executions, read from the integrity-verified plan the attempt runs
 under, bound to its `executionPlanDigest` and to the pinned profile version it was compiled from

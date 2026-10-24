@@ -66,6 +66,30 @@ describe('Hosted server composition', () => {
     })
   })
 
+  test('forwards an explicitly supplied profile wake configuration through production startup', () => {
+    const environment = {
+      DATABASE_URL: 'postgresql://app:secret@postgres/control_plane',
+    }
+    const profileWorkflowWake = {
+      placement: {
+        controlPlaneHostId: 'control-plane-host',
+        runtimeHostId: 'runtime-host',
+        runtimeLocation: 'remote_host',
+        coLocated: false,
+      },
+      guards: {
+        authority: { assertCurrent: async () => undefined },
+        residency: { assertCurrent: async () => undefined },
+      },
+    }
+
+    expect(resolveHostedCompositionConfiguration(environment).profileWorkflowWake).toBeUndefined()
+    expect(
+      resolveHostedCompositionConfiguration(environment, { profileWorkflowWake })
+        .profileWorkflowWake
+    ).toBe(profileWorkflowWake)
+  })
+
   test('reports PostgreSQL and separate Restate dependencies without changing core contracts', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'control-plane-hosted-'))
     const calls = []

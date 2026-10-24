@@ -288,7 +288,7 @@ describe('Control Plane SDK public client', () => {
       dependencies: {
         '@control-plane/contracts': 'workspace:^',
         '@control-plane/runtime-sdk': 'workspace:^',
-        zod: '4.6.5',
+        zod: '4.6.6',
       },
       publishConfig: { access: 'public', provenance: true },
     })

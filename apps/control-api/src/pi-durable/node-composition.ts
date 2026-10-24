@@ -37,8 +37,8 @@ export interface NodePiDurableLeadCompositionOptions {
   readonly usage: PiDurableUsageAuthorityOptions
   readonly provider: NodePiDurableCompositionOptions['resolveProvider']
   readonly reconcileInference: NodePiDurableCompositionOptions['reconcileInference']
-  // Test seam: the restart proof injects the engine so it can hold a native dispatch open.
   readonly engineFactory?: NodePiDurableCompositionOptions['engineFactory']
+  /** Server-owned transaction/lease coordinator. Omit until product and CP owners share its CAS. */
   readonly verifyApproval?: NodePiDurableCompositionOptions['verifyApproval']
   readonly parentInbox?: NodePiDurableCompositionOptions['parentInbox']
   readonly consumeParentInbox?: NodePiDurableCompositionOptions['consumeParentInbox']
@@ -59,7 +59,7 @@ export interface NodePiDurableLeadCompositionOptions {
   /** A child must independently reload its canonical lineage, selection and authority. */
   readonly childAuthority?: Pick<
     NodePiDurableCompositionOptions,
-    'resolveAdmission' | 'assertAuthority'
+    'resolveAdmission' | 'assertAuthority' | 'assertReadAuthority' | 'assertRecoveryAuthority'
   >
   readonly preparationAuthority?: PiLeadPreparationAuthority
   /** Server-bound canonical child scanner. No child identity is accepted from an HTTP payload. */
@@ -133,6 +133,10 @@ export async function createNodePiDurableLeadComposition(
           resolveAdmission: (request) => admission.canonicalAuthority.resolveAdmission(request),
           assertAuthority: (authority, purpose) =>
             admission.canonicalAuthority.assertAuthority(authority, purpose),
+          assertRecoveryAuthority: (authority) =>
+            admission.canonicalAuthority.assertRecoveryAuthority(authority),
+          assertReadAuthority: (authority) =>
+            admission.canonicalAuthority.assertReadAuthority(authority),
         },
         options.childAuthority
       ),
@@ -142,6 +146,7 @@ export async function createNodePiDurableLeadComposition(
           await leadLifecycle.onExecutionRunning(authority)
       },
       resolveProvider: options.provider,
+      ...(options.engineFactory ? { engineFactory: options.engineFactory } : {}),
       ...(options.admission.scopeAuthority
         ? { scopeAuthority: options.admission.scopeAuthority }
         : {}),
@@ -206,6 +211,11 @@ export async function createNodePiDurableLeadComposition(
       adapter: runtime.adapter,
       receipts: new SqlitePiDurableLeadReceiptStore(database),
       findRuntimeHandle: (request) => runtime!.adapter.findExistingHandle(request),
+      fence: {
+        findRetainedAdmission: (handle) => runtime!.adapter.findRetainedAdmission(handle),
+        cancelFenced: (handle, input, authorize) =>
+          runtime!.adapter.cancelFenced(handle, input, authorize),
+      },
       ...(preparations ? { preparations } : {}),
       ...(options.delegationService ? { delegationService: options.delegationService } : {}),
       ...(options.childDelegations ? { childDelegations: options.childDelegations } : {}),

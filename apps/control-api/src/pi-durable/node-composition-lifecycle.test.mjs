@@ -334,28 +334,32 @@ test('a configured child reader reaches retained receipt lookup without starting
   }
 }, 30000)
 
-test('close drains the held periodic Pi scan before closing its journal', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'pi-lead-periodic-close-'))
+test('close drains a held periodic scan and concurrent closes share its completion', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'pi-lead-close-in-flight-'))
+  const journal = journalReadCounter()
+  const ledger = fakeLedger()
   const started = Promise.withResolvers()
   const release = Promise.withResolvers()
-  const journal = journalReadCounter()
   let scans = 0
-  let completed = 0
+  let completedScans = 0
   let composition
   let watchdog
   try {
     composition = await createNodePiDurableLeadComposition(
       baseOptions(directory, {
+        ledger,
         onAdapterReady: journal.attach,
         childProgress: {
           scan: async (adapter) => {
             scans += 1
+            // Construction runs the first scan; hold only the periodic pass.
             if (scans === 2) {
               started.resolve()
               await release.promise
             }
+            // The store must remain open until the held scan finishes.
             adapter.journal.list()
-            completed += 1
+            completedScans += 1
           },
         },
       })
@@ -367,21 +371,34 @@ test('close drains the held periodic Pi scan before closing its journal', async 
       }),
     ])
     clearTimeout(watchdog)
-    const closing = composition.close()
+    const firstClose = composition.close()
+    const secondClose = composition.close()
+    expect(secondClose).toBe(firstClose)
     let closed = false
-    void closing.then(() => {
+    const closing = firstClose.then(() => {
       closed = true
     })
+    // Give queued close continuations a turn without releasing the scan.
     await new Promise((resolve) => setImmediate(resolve))
     expect(closed).toBe(false)
-    expect(completed).toBe(1)
+    expect(completedScans).toBe(1)
+    expect(scans).toBe(2)
+
     release.resolve()
-    await closing
-    expect(completed).toBe(2)
+    await Promise.all([closing, secondClose])
+    expect(closed).toBe(true)
+    expect(completedScans).toBe(2)
     const readsAtClose = journal.reads
+    expect(composition.close()).toBe(firstClose)
+    await expect(composition.recover()).rejects.toThrow('PI_LEAD_COMPOSITION_CLOSED')
+    await expect(composition.settleTerminalAccounting()).rejects.toThrow(
+      'PI_LEAD_TERMINAL_SETTLEMENT_CLOSED'
+    )
     await pause(12 * fastInterval)
     expect(scans).toBe(2)
+    expect(completedScans).toBe(2)
     expect(journal.reads).toBe(readsAtClose)
+    expect(ledger.settles).toBe(0)
   } finally {
     clearTimeout(watchdog)
     release.resolve()
@@ -391,7 +408,7 @@ test('close drains the held periodic Pi scan before closing its journal', async 
 }, 30000)
 
 for (const failFirstScan of [false, true]) {
-  test(`close drains accepted public Pi recoveries before store teardown (scan failure: ${failFirstScan})`, async () => {
+  test(`close drains both public recoveries before store teardown (scan failure: ${failFirstScan})`, async () => {
     const directory = await mkdtemp(join(tmpdir(), 'pi-lead-public-recover-close-'))
     const entered = Promise.withResolvers()
     const releases = [Promise.withResolvers(), Promise.withResolvers()]
@@ -399,6 +416,7 @@ for (const failFirstScan of [false, true]) {
     const journal = journalReadCounter()
     let scans = 0
     let adapterCloses = 0
+    let storeCloses = 0
     let composition
     let recoveries = []
     let closing
@@ -426,6 +444,11 @@ for (const failFirstScan of [false, true]) {
         adapterCloses += 1
         return closeAdapter()
       }
+      const closeStore = composition.adapter.journal.close.bind(composition.adapter.journal)
+      composition.adapter.journal.close = () => {
+        storeCloses += 1
+        closeStore()
+      }
       recoveries = [composition.recover(), composition.recover()].map((recovery) =>
         recovery.then(
           () => undefined,
@@ -449,17 +472,26 @@ for (const failFirstScan of [false, true]) {
       expect(closed).toBe(false)
       expect(concurrent).toBe(closing)
       expect(adapterCloses).toBe(0)
+      expect(storeCloses).toBe(0)
       releases[0].resolve()
       expect(await recoveries[0]).toBe(failFirstScan ? scanError : undefined)
       await new Promise((resolve) => setImmediate(resolve))
       expect(closed).toBe(false)
-      expect(adapterCloses).toBe(0)
+      expect(storeCloses).toBe(0)
       releases[1].resolve()
       expect(await recoveries[1]).toBeUndefined()
       await Promise.all([completion, concurrent])
+      expect(closed).toBe(true)
       expect(adapterCloses).toBe(1)
+      expect(storeCloses).toBe(1)
       const readsAtClose = journal.reads
+      expect(composition.close()).toBe(closing)
       await expect(composition.recover()).rejects.toThrow('PI_LEAD_COMPOSITION_CLOSED')
+      await expect(composition.settleTerminalAccounting()).rejects.toThrow(
+        'PI_LEAD_TERMINAL_SETTLEMENT_CLOSED'
+      )
+      await new Promise((resolve) => setImmediate(resolve))
+      expect(scans).toBe(3)
       expect(journal.reads).toBe(readsAtClose)
     } finally {
       clearTimeout(watchdog)

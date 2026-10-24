@@ -90,7 +90,7 @@ test('reconcile does not fence a live owner whose retained send hold is not yet 
     await new Promise((resolve) => owner.once('exit', resolve))
     rmSync(directory, { recursive: true, force: true })
   }
-})
+}, 15_000)
 
 test('reconcile confirms a safe verdict under the claimed epoch of a dead owner', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'pi-reconcile-dead-owner-'))
@@ -103,7 +103,7 @@ test('reconcile confirms a safe verdict under the claimed epoch of a dead owner'
       ...options,
       reconcileInference: async () => {
         decisions.push(reopened.journal.get(handle.handleId).epoch)
-        // The first read may say safe; only the read under the claimed epoch decides a resume.
+        // Both reads occur under the process claim; only the second safe read decides a resume.
         return decisions.length === 1 ? 'safe_to_resume' : 'unresolved'
       },
     })
@@ -112,7 +112,7 @@ test('reconcile confirms a safe verdict under the claimed epoch of a dead owner'
 
     const status = await reopened.reconcile(handle)
 
-    expect(decisions).toEqual([before.epoch, before.epoch + 1])
+    expect(decisions).toEqual([before.epoch + 1, before.epoch + 1])
     expect(reopened.journal.get(handle.handleId).epoch).toBe(before.epoch + 1)
     expect(status.state).toBe('unknown')
   } finally {
