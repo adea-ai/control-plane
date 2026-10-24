@@ -59,7 +59,7 @@ current-candidate test pass is claimed here.
 
 The published scope is the diff from the base `ab931d068142a0c5629ed4d6cc2c96a1b377a986`
 to the published head, which is the head that carries this section. The complete changed scope is
-**305 paths: 93 added, 212 modified**; no path was deleted.
+**307 paths: 95 added, 212 modified**; no path was deleted.
 `tests/pi-durable-cp1048-evidence-discipline.test.mjs` checks this list, these counts and this
 area table against the repository, so the published scope cannot drift away from the code
 without that lane failing.
@@ -94,7 +94,7 @@ without that lane failing.
 | `packages/memory-writeback`         | 0     | 2        | 2     |
 | `packages/model-gateway`            | 0     | 2        | 2     |
 | `packages/orchestration`            | 0     | 5        | 5     |
-| `packages/pi-durable-adapter`       | 26    | 20       | 46    |
+| `packages/pi-durable-adapter`       | 28    | 20       | 48    |
 | `packages/policy`                   | 0     | 5        | 5     |
 | `packages/production-readiness`     | 7     | 2        | 9     |
 | `packages/profile-adapters`         | 3     | 7        | 10    |
@@ -292,6 +292,8 @@ M  packages/pi-durable-adapter/src/journal.test.mjs
 M  packages/pi-durable-adapter/src/journal.ts
 A  packages/pi-durable-adapter/src/native-cancellation-boundary.test.mjs
 A  packages/pi-durable-adapter/src/native-cancellation-boundary.ts
+A  packages/pi-durable-adapter/src/native-cancellation-publication-crash.node.fixture.mjs
+A  packages/pi-durable-adapter/src/native-cancellation-publication-crash.test.mjs
 A  packages/pi-durable-adapter/src/native-cancellation-publication.fixture.mjs
 A  packages/pi-durable-adapter/src/native-cancellation-publication.node.fixture.mjs
 A  packages/pi-durable-adapter/src/native-cancellation-publication.test.mjs
