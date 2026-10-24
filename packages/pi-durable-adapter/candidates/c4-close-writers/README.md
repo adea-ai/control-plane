@@ -17,16 +17,36 @@ Tests apply it only to temporary copies of the installed SDK and run on disposab
   holder is fenced like any other writer. `lastSeq` is the last committed sequence, read inside the same
   transaction that bumps the epoch.
 
-`mutationId` is read once and validated before the first await. A replay of the same `mutationId` on the same
-storage returns the same receipt after re-reading the stored row; the same `mutationId` from any other storage, or
-with a changed row, fails `PI_STORE_CLOSURE_CONFLICT`. Other refusals: `PI_STORE_FENCE_NOT_HELD` (unbound storage),
-`PI_STORE_FENCED` (the store no longer matches the held token), `PI_STORE_CLOSURE_REQUEST_INVALID`,
-`PI_STORE_FENCE_EPOCH_EXHAUSTED` (before any write).
+`mutationId` is read once and validated before the first await. Other refusals: `PI_STORE_FENCE_NOT_HELD`
+(unbound storage), `PI_STORE_FENCED` (the store no longer matches the held token), `PI_STORE_CLOSURE_REQUEST_INVALID`,
+`PI_STORE_FENCE_EPOCH_EXHAUSTED` (before any write), `PI_STORE_CLOSURE_CONFLICT` (below).
+
+## Same-storage replay (implemented), and its limits
+
+The storage object retains, for its lifetime, immutable evidence for every mutation it closed: the receipt and the
+holder token it closed. Replay never writes a second row and never bumps the epoch again. Three cases are covered,
+each with deterministic tests:
+
+- **Sequential replay of any mutation this storage closed**, not only the latest (the storage may reacquire and close
+  again). The stored row is re-read and every field (mutation id, owner, lineage, generation, previous epoch, epoch,
+  last sequence, closed-at) is compared with the retained receipt. A changed or missing row is
+  `PI_STORE_CLOSURE_CONFLICT`.
+- **Concurrent duplicate** of the same `mutationId`: callers share one in-flight attempt and get the same receipt.
+- **Response lost after the commit:** the close committed but the call rejected, so the storage is still bound to its
+  holder token. A retry of the same `mutationId` reads the persisted row inside the transaction and adopts it only if
+  its owner, lineage, generation, previous epoch and epoch equal the retained holder evidence (previous epoch =
+  held epoch, epoch = held epoch + 1); otherwise `PI_STORE_CLOSURE_CONFLICT`. Last sequence and closed-at are taken
+  from the store, because there is no retained evidence to check them against. A retry with a **different**
+  `mutationId` is not a replay and fails `PI_STORE_FENCED`.
+
+Not supported: the same `mutationId` from another storage object, another process, or after this storage object was
+dropped and reopened (`PI_STORE_CLOSURE_CONFLICT` or `PI_STORE_FENCE_NOT_HELD`). Reopening loses the retained evidence;
+the row can still be read, but nothing here re-attaches it to a caller.
 
 ## What the receipt is, and is not
 
 It is evidence that, at that epoch, the store accepted no commit after `lastSeq` from the old holder or from any
-other writer without the new token. It is committed in the store and SELECT-readable from a detached snapshot.
+other writer without the new token. It is committed in the store and SELECT-readable through a separate read-only connection to the live database file (the tests do this; a true detached snapshot, taken from a copy of the file, is not exercised in this slice).
 It grants no authority. A caller still checks it against what it independently holds with
 `assertPiWriterClosureReceipt`.
 
@@ -35,9 +55,9 @@ It grants no authority. A caller still checks it against what it independently h
 - **Session admission sealing.** The contract's `closeWriters` also seals Session admission and settles
   admitted commits at the Session level. This patch settles at the storage level only (commits are serialized by
   the transaction). Admission sealing is a later slice and needs its own design against `Session.close`.
-- **Retry safety across storages and processes.** Replay works on the same storage object only. A caller whose
-  response was lost after the storage was dropped has no replay path; the receipt row can be read but the
-  mutation cannot be re-issued. The reference model does not prove otherwise.
+- **Retry safety across storages and processes.** Replay works on the same storage object only (see above). A caller
+  whose storage object was dropped has no replay path; the receipt row can be read but the mutation cannot be
+  re-attached. The reference model does not prove otherwise.
 - C1 (writer-surface declaration), other backends (C6) and the read-only open (C7).
 
 ## Rollback status: NOT rollback-safe

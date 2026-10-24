@@ -142,7 +142,7 @@ describe('candidate C4 closeWriterFence (disposable SQLite, patched copy only)',
       observedSeq: lastSeq,
     })
     expect(evidence.qualifiedAuthorization).toBe(false)
-    // Evidence is in the store, readable from a detached read-only snapshot.
+    // Evidence is in the store, readable through a separate read-only connection to the live database file.
     expect(fenceEpoch(path)).toBe(2)
     expect(rows(path, 'SELECT * FROM durable_writer_closure')).toEqual([
       {
@@ -211,17 +211,219 @@ describe('candidate C4 closeWriterFence (disposable SQLite, patched copy only)',
     await other.close(context)
   })
 
-  test('a replay is refused when the stored row no longer matches', async () => {
+  // One negative control per stored field: a replay returns cached evidence only while the whole stored row equals it.
+  const tampers = {
+    owner_key: "owner_key = 'owner:evil'",
+    lineage_id: "lineage_id = 'lineage:evil'",
+    generation: "generation = 'gen:evil'",
+    previous_epoch: 'previous_epoch = previous_epoch + 1',
+    epoch: 'epoch = epoch + 1',
+    last_seq: 'last_seq = last_seq + 1',
+    closed_at: "closed_at = '2000-01-01T00:00:00.000Z'",
+  }
+  for (const [field, assignment] of Object.entries(tampers))
+    test(`a replay is refused when the stored ${field} no longer matches the cached receipt`, async () => {
+      const { storage, path } = await heldStorage()
+      await write(storage)
+      const receipt = await storage.closeWriterFence({ mutationId: 'mutation:tamper' })
+      // Control: before any change, the replay returns the identical cached receipt.
+      expect(await storage.closeWriterFence({ mutationId: 'mutation:tamper' })).toBe(receipt)
+      const raw = new DatabaseSync(path)
+      raw.exec(
+        `UPDATE durable_writer_closure SET ${assignment} WHERE mutation_id = 'mutation:tamper'`
+      )
+      raw.close()
+      const before = rows(path, 'SELECT * FROM durable_writer_closure')
+      const epochBefore = fenceEpoch(path)
+      expect(await code(storage.closeWriterFence({ mutationId: 'mutation:tamper' }))).toBe(
+        'PI_STORE_CLOSURE_CONFLICT'
+      )
+      // The refused replay re-issued nothing and moved no epoch.
+      expect(rows(path, 'SELECT * FROM durable_writer_closure')).toEqual(before)
+      expect(fenceEpoch(path)).toBe(epochBefore)
+      await storage.close(context)
+    })
+
+  test('a replay is refused when the stored row is gone', async () => {
     const { storage, path } = await heldStorage()
-    await storage.closeWriterFence({ mutationId: 'mutation:tamper' })
+    await storage.closeWriterFence({ mutationId: 'mutation:gone' })
     const raw = new DatabaseSync(path)
-    raw.exec(
-      "UPDATE durable_writer_closure SET last_seq = last_seq + 1 WHERE mutation_id = 'mutation:tamper'"
-    )
+    raw.exec("DELETE FROM durable_writer_closure WHERE mutation_id = 'mutation:gone'")
     raw.close()
-    expect(await code(storage.closeWriterFence({ mutationId: 'mutation:tamper' }))).toBe(
+    expect(await code(storage.closeWriterFence({ mutationId: 'mutation:gone' }))).toBe(
       'PI_STORE_CLOSURE_CONFLICT'
     )
+    expect(fenceEpoch(path)).toBe(2)
+    expect(rows(path, 'SELECT mutation_id FROM durable_writer_closure')).toEqual([])
+    await storage.close(context)
+  })
+
+  // Holds the first transaction.get of the next transaction until released.
+  function gateNextGet(storage) {
+    const db = storage.db
+    const original = db.transaction.bind(db)
+    let release
+    let reached
+    const gate = new Promise((open) => (release = open))
+    const entered = new Promise((arrive) => (reached = arrive))
+    db.transaction = (callback, ...rest) => {
+      db.transaction = original
+      return original(
+        (transaction) => {
+          const get = transaction.get.bind(transaction)
+          transaction.get = async (...args) => {
+            reached()
+            await gate
+            return get(...args)
+          }
+          return callback(transaction)
+        },
+        ...rest
+      )
+    }
+    return { entered, release }
+  }
+  // The next transaction commits, then its result is lost to the caller.
+  function loseNextResponse(storage) {
+    const db = storage.db
+    const original = db.transaction.bind(db)
+    db.transaction = async (...args) => {
+      db.transaction = original
+      await original(...args)
+      throw new Error('response lost')
+    }
+  }
+  const closureRows = (path) => rows(path, 'SELECT * FROM durable_writer_closure')
+
+  test('a concurrent duplicate shares one attempt: one row, one epoch bump, the same receipt', async () => {
+    const { storage, path } = await heldStorage()
+    await write(storage)
+    const { entered, release } = gateNextGet(storage)
+    const first = storage.closeWriterFence({ mutationId: 'mutation:dup' })
+    await entered
+    const second = storage.closeWriterFence({ mutationId: 'mutation:dup' })
+    release()
+    const [a, b] = await Promise.all([first, second])
+    expect(b).toBe(a)
+    expect(fenceEpoch(path)).toBe(2)
+    expect(closureRows(path).length).toBe(1)
+    await storage.close(context)
+  })
+
+  test('concurrent closes with different ids: exactly one wins and the other is fenced', async () => {
+    const { storage, path } = await heldStorage()
+    const results = await Promise.allSettled([
+      storage.closeWriterFence({ mutationId: 'mutation:x' }),
+      storage.closeWriterFence({ mutationId: 'mutation:y' }),
+    ])
+    expect(results.map((r) => r.status).toSorted()).toEqual(['fulfilled', 'rejected'])
+    expect(results.find((r) => r.status === 'rejected').reason.message).toBe('PI_STORE_FENCED')
+    expect(fenceEpoch(path)).toBe(2)
+    expect(closureRows(path).length).toBe(1)
+    await storage.close(context)
+  })
+
+  test('a response lost after the commit: the retry returns the persisted receipt, with no second row or bump', async () => {
+    const { storage, path } = await heldStorage()
+    await write(storage)
+    loseNextResponse(storage)
+    expect(await code(storage.closeWriterFence({ mutationId: 'mutation:lost' }))).toBe(
+      'response lost'
+    )
+    // The commit survived: the epoch moved once and the row exists.
+    expect(fenceEpoch(path)).toBe(2)
+    const [persisted] = closureRows(path)
+    const receipt = await storage.closeWriterFence({ mutationId: 'mutation:lost' })
+    expect(receipt).toMatchObject({
+      mutationId: 'mutation:lost',
+      ownerKey: 'owner:a',
+      lineageId: 'lineage:1',
+      generation: 'gen:1',
+      previousEpoch: 1,
+      epoch: 2,
+      lastSeq: persisted.last_seq,
+      closedAt: persisted.closed_at,
+    })
+    expect(Object.isFrozen(receipt)).toBe(true)
+    assertPiWriterClosureReceipt(receipt, {
+      mutationId: 'mutation:lost',
+      lineageId: 'lineage:1',
+      generation: 'gen:1',
+      previousEpoch: 1,
+      observedSeq: persisted.last_seq,
+    })
+    expect(fenceEpoch(path)).toBe(2)
+    expect(closureRows(path)).toEqual([persisted])
+    // The storage is now unbound and a further replay returns the same retained receipt.
+    expect(await storage.closeWriterFence({ mutationId: 'mutation:lost' })).toBe(receipt)
+    expect(await code(write(storage))).toBe('PI_STORE_FENCED')
+    await storage.close(context)
+  })
+
+  test('after a lost response, a different mutationId is not a replay and is fenced', async () => {
+    const { storage, path } = await heldStorage()
+    loseNextResponse(storage)
+    await code(storage.closeWriterFence({ mutationId: 'mutation:lost-a' }))
+    expect(await code(storage.closeWriterFence({ mutationId: 'mutation:lost-b' }))).toBe(
+      'PI_STORE_FENCED'
+    )
+    expect(fenceEpoch(path)).toBe(2)
+    expect(closureRows(path).length).toBe(1)
+    await storage.close(context)
+  })
+
+  // The persisted row must match the retained holder evidence in every identity field before it is adopted.
+  const identityTampers = {
+    owner_key: "owner_key = 'owner:evil'",
+    lineage_id: "lineage_id = 'lineage:evil'",
+    generation: "generation = 'gen:evil'",
+    previous_epoch: 'previous_epoch = previous_epoch + 1',
+    epoch: 'epoch = epoch + 1',
+  }
+  for (const [field, assignment] of Object.entries(identityTampers))
+    test(`after a lost response, a persisted ${field} that differs from the holder evidence is a conflict`, async () => {
+      const { storage, path } = await heldStorage()
+      loseNextResponse(storage)
+      await code(storage.closeWriterFence({ mutationId: 'mutation:lost-tamper' }))
+      const raw = new DatabaseSync(path)
+      raw.exec(
+        `UPDATE durable_writer_closure SET ${assignment} WHERE mutation_id = 'mutation:lost-tamper'`
+      )
+      raw.close()
+      const before = closureRows(path)
+      const epochBefore = fenceEpoch(path)
+      expect(await code(storage.closeWriterFence({ mutationId: 'mutation:lost-tamper' }))).toBe(
+        'PI_STORE_CLOSURE_CONFLICT'
+      )
+      expect(closureRows(path)).toEqual(before)
+      expect(fenceEpoch(path)).toBe(epochBefore)
+      await storage.close(context)
+    })
+
+  test('replay covers every mutation this storage closed, not only the latest', async () => {
+    const { storage, path } = await heldStorage()
+    const first = await storage.closeWriterFence({ mutationId: 'mutation:first' })
+    // Reacquire on the same storage at the receipt epoch, write, then close a second mutation.
+    await storage.acquireWriterFence(acquireRequest({ expectedEpoch: first.epoch }))
+    const seq = await write(storage)
+    const second = await storage.closeWriterFence({ mutationId: 'mutation:second' })
+    expect(second.previousEpoch).toBe(3)
+    expect(second.epoch).toBe(4)
+    expect(second.lastSeq).toBe(seq)
+    expect(await storage.closeWriterFence({ mutationId: 'mutation:first' })).toBe(first)
+    expect(await storage.closeWriterFence({ mutationId: 'mutation:second' })).toBe(second)
+    expect(fenceEpoch(path)).toBe(4)
+    expect(closureRows(path).length).toBe(2)
+    // The older mutation's evidence is still checked against its own stored row.
+    const raw = new DatabaseSync(path)
+    raw.exec(
+      "UPDATE durable_writer_closure SET lineage_id = 'lineage:evil' WHERE mutation_id = 'mutation:first'"
+    )
+    raw.close()
+    expect(await code(storage.closeWriterFence({ mutationId: 'mutation:first' }))).toBe(
+      'PI_STORE_CLOSURE_CONFLICT'
+    )
+    expect(await storage.closeWriterFence({ mutationId: 'mutation:second' })).toBe(second)
     await storage.close(context)
   })
 
