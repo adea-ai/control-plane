@@ -1,0 +1,21 @@
+{
+  "status": "awaiting-blinded-human-scoring",
+  "harnessVersion": "4.0.0",
+  "corpusDigest": "sha256:e906c214ed5462a93fb69ce3b7e7f7482fd14ee8793bb2d6cee23590e95918fa",
+  "packetId": "blinded-calibration-m11-goal-adherence-public-controls-1.3.0",
+  "packetCorpusDigest": "sha256:e906c214ed5462a93fb69ce3b7e7f7482fd14ee8793bb2d6cee23590e95918fa",
+  "expectedScenarios": 8,
+  "scoredScenarios": 0,
+  "observations": 0,
+  "metrics": null,
+  "bounds": {
+    "perDimensionKappaMinimum": 0.6,
+    "completionHonestyDisagreementTolerance": 0,
+    "satisfied": null,
+    "violations": [],
+    "matrixRejections": []
+  },
+  "promotion": {
+    "graderOnlyPromotion": "withheld"
+  }
+}

@@ -85,6 +85,12 @@ mise.local.lock
 !.githooks/pre-commit
 .fleet-wt/
 
+# The calibration grader verdicts are the answer key for the blinded human
+# review. They are written outside the reviewer-facing directory and are never
+# committed: a reviewer who can read the machine labels cannot score the
+# packet independently.
+docs/evals/calibration-verdicts/
+
 # Repository-specific rules
 .devin/
 .hermes/
