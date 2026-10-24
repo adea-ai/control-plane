@@ -3,7 +3,7 @@ import {
   readPiFrozenReceipt,
   sealPiReceiptSnapshot,
   UnavailablePiReceiptSnapshotIssuer,
-} from './native-receipt-snapshot.ts'
+} from './restore-generation-authority.ts'
 
 const hash = (c) => `sha256:${c.repeat(64)}`
 const expiresAt = '2026-10-20T12:01:00.000Z'

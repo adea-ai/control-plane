@@ -12,9 +12,16 @@ path, hash or "coherent" boolean, never reads a live database or WAL, only reads
 
 ## What exists
 
-- `native-receipt-snapshot.ts` defines the opaque handle `PiIssuedReceiptSnapshot`, the
-  refusing-by-default issuer port (`UnavailablePiReceiptSnapshotIssuer`), the issuer seam
-  `sealPiReceiptSnapshot` and the reader `readPiFrozenReceipt`.
+- `restore-generation-authority.ts` (a module the package index does not re-export) defines
+  the opaque handle `PiIssuedReceiptSnapshot`, the refusing-by-default issuer port
+  (`UnavailablePiReceiptSnapshotIssuer`), the issuer seam `sealPiReceiptSnapshot` and the
+  reader `readPiFrozenReceipt`, after that module's own restore-generation evidence reader.
+  The code lives there, and not in its own file, only so the built output stays inside the
+  committed dist budget: every new source file costs at least two allocated 4 KiB blocks
+  (`.js` and `.d.ts`). For the same reason the declarations carry `//` comments and
+  `PiFrozenReceipt` is written out as a type instead of `z.infer` of the schema; behavior,
+  validation order and error codes are unchanged. Its tests stay in
+  `native-receipt-snapshot.test.mjs`.
 - The handle exposes no path, hash, store, statement or flag. A plain object, JSON clone,
   prototype child or proxy of a real handle is refused.
 - The trusted issuer asserts, as sealed provenance and not as input to the reader, that the
