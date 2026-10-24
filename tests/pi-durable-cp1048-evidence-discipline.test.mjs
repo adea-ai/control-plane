@@ -97,17 +97,34 @@ function scopeBetween(from, to) {
   })
 }
 
-function blobAt(revision, path) {
-  return git(['rev-parse', `${revision}:${path}`]).trim()
+/** Parse unquoted, NUL-terminated `git ls-tree -r -z --full-tree` records. */
+function parseGitTree(output) {
+  const objects = new Map()
+  if (output === '') return objects
+  if (!output.endsWith('\0')) throw new Error('Git tree output is not NUL-terminated')
+  const paths = new Set()
+  for (const record of output.slice(0, -1).split('\0')) {
+    const match = record.match(
+      /^(100644|100755|120000|160000) (blob|commit) ([0-9a-f]{40}|[0-9a-f]{64})\t([\s\S]+)$/
+    )
+    if (!match) throw new Error('Malformed Git tree record')
+    const [, mode, type, objectId, path] = match
+    if ((mode === '160000') !== (type === 'commit'))
+      throw new Error('Invalid Git tree object mode/type')
+    if (path.split('/').some((part) => part === '' || part === '.' || part === '..'))
+      throw new Error('Invalid Git tree path')
+    if (paths.has(path)) throw new Error(`Duplicate Git tree path: ${path}`)
+    paths.add(path)
+    // Preserve Git's path/object semantics for files, symlinks and gitlinks.
+    objects.set(path, objectId)
+  }
+  return objects
 }
 
-function pathAt(revision, path) {
-  try {
-    git(['cat-file', '-e', `${revision}:${path}`])
-    return true
-  } catch {
-    return false
-  }
+function objectAt(tree, path) {
+  const objectId = tree.get(path)
+  if (objectId === undefined) throw new Error(`Git tree has no object at: ${path}`)
+  return objectId
 }
 
 const ledger = await readFile(join(root, ledgerRelative), 'utf8')
@@ -163,8 +180,10 @@ describe('the CP #1048 published scope ledger', () => {
   })
 
   test.skipIf(!baseReady)('every published path is classified against the base tree', () => {
+    const baseTree = parseGitTree(git(['ls-tree', '-r', '-z', '--full-tree', base]))
+    const headTree = parseGitTree(git(['ls-tree', '-r', '-z', '--full-tree', 'HEAD']))
     for (const entry of listed) {
-      const presentAtBase = pathAt(base, entry.path)
+      const presentAtBase = baseTree.has(entry.path)
       if (entry.status === 'A') {
         expect({ path: entry.path, presentAtBase }).toEqual({
           path: entry.path,
@@ -175,7 +194,7 @@ describe('the CP #1048 published scope ledger', () => {
           path: entry.path,
           presentAtBase: true,
         })
-        expect(blobAt(base, entry.path)).not.toBe(blobAt('HEAD', entry.path))
+        expect(objectAt(baseTree, entry.path)).not.toBe(objectAt(headTree, entry.path))
       }
     }
   })
@@ -207,5 +226,52 @@ describe('the CP #1048 evidence head discipline', () => {
   test('the acceptance map never presents a commit id as the pull-request head', async () => {
     const map = await readFile(join(root, mapRelative), 'utf8')
     expect(map).not.toMatch(/PR head\s+`[0-9a-f]{40}`/)
+  })
+})
+
+describe('the CP #1048 batched Git object inventory', () => {
+  const first = 'a'.repeat(40)
+  const second = 'b'.repeat(40)
+
+  test('parses complete blob paths, executable files and symlinks without quoting or splitting filenames', () => {
+    const tree = parseGitTree(
+      `100644 blob ${first}\tordinary.txt\0` +
+        `100755 blob ${second}\tnested/executable\0` +
+        `120000 blob ${first}\tpath with\ttab and\nnewline\0` +
+        `160000 commit ${second}\tnested-gitlink\0`
+    )
+    expect([...tree]).toEqual([
+      ['ordinary.txt', first],
+      ['nested/executable', second],
+      ['path with\ttab and\nnewline', first],
+      ['nested-gitlink', second],
+    ])
+    expect(objectAt(tree, 'nested-gitlink')).toBe(second)
+    expect(parseGitTree('').size).toBe(0)
+  })
+
+  test('missing paths fail rather than becoming unequal undefined values', () => {
+    const tree = parseGitTree(`100644 blob ${first}\tpresent.txt\0`)
+    expect(objectAt(tree, 'present.txt')).toBe(first)
+    expect(tree.has('absent.txt')).toBe(false)
+    expect(() => objectAt(tree, 'absent.txt')).toThrow('Git tree has no object at: absent.txt')
+  })
+
+  test('rejects malformed, truncated, duplicate and invalid mode/type or path records', () => {
+    for (const output of [
+      `100644 blob ${first}\tunterminated`,
+      '\0',
+      `100644 blob not-an-object-id\tfile\0`,
+      `100644 blob ${first} no-tab\0`,
+      `100644 blob ${first}\t\0`,
+      `040000 tree ${first}\tdirectory\0`,
+      `160000 blob ${first}\twrong-mode\0`,
+      `100644 commit ${first}\twrong-type\0`,
+      `100644 blob ${first}\tduplicate\u0000100755 blob ${second}\tduplicate\0`,
+      `100644 blob ${first}\t/absolute\0`,
+      `100644 blob ${first}\tnested/../escape\0`,
+      `100644 blob ${first}\tnested//empty\0`,
+    ])
+      expect(() => parseGitTree(output)).toThrow()
   })
 })
