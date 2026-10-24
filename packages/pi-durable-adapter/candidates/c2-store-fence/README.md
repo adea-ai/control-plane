@@ -23,7 +23,9 @@ production activation is involved.
   with `PI_STORE_FENCED` before any write.
 
 Not in this candidate: `closeWriters` and the closure receipt (C4), the writer-surface declaration
-(C1), other backends (C6) and the read-only open (C7). See the C1–C7 contract.
+(C1), other backends (C6) and the read-only open (C7). See the C1–C7 contract. C4 (#1317), the read-only open C7
+(#1318) and Session admission sealing (`../c4b-session-admission-sealing/`, #1321) now exist as separate stacked offline
+candidates, each applied only to temporary SDK copies in tests; C1 and C6 do not exist.
 
 ## Retry safety is not shown
 
@@ -49,7 +51,7 @@ byte-identical and compat-readable. There is no downgrade path, and none is clai
   1"). A store that has opened under the candidate cannot be rolled back to the compatibility patch.
   Any consumption plan must account for this against the rollback requirements (#1025).
 - **Open-time write:** applying migration 2 is an open-time write to an older store. The C7
-  read-only open must not migrate.
+  read-only open candidate (#1318) never migrates: it refuses newer or uninitialized schemas and reads this one as is.
 - Reads are not fenced. Only commits are.
 
 ## Test

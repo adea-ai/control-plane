@@ -43,7 +43,9 @@ path, hash or "coherent" boolean, never reads a live database or WAL, only reads
   backup under exclusive lock), who attests it and how the SDK replays
   `pi.guarded-abort-receipts` from `documents` / `document_revisions` without opening
   the store writable are undecided and belong to the SDK or a separately authorized
-  change. The compat patch is untouched.
+  change. The compat patch is untouched. Offline candidates now cover the read side only: the C7 read-only open (#1318) and
+  a test-only replay (#1319) read the ledger from a cleanly closed disposable store at the C4 closure's cut. They are test
+  code on temporary SDK copies, not an SDK API, and they decide none of the questions above.
 - `sealPiReceiptSnapshot` is not exported from the package index and no runtime path calls
   it, so there is no current wiring that mints a handle. That is encapsulation and the
   absence of wiring, not an enforced production boundary: any code that imports the module

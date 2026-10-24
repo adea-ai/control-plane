@@ -74,8 +74,8 @@ repository file, and it opens no live store.
   does not change how tasks are joined or what they write.
 - **Quiescent capture, an issuer and a production caller.** None exists, and this does not describe how a store should be
   captured.
-- C1 (writer-surface declaration) and other backends (C6). The C4 README's note that admission sealing is "a later slice"
-  is superseded by this candidate but was left unedited here to keep the change to three new files.
+- C1 (writer-surface declaration) and other backends (C6). The C4 README now points to this candidate where it once said
+  admission sealing was "a later slice".
 
 ## Rollback status: NOT rollback-safe
 
