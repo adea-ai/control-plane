@@ -50,13 +50,18 @@ afterAll(() => rmSync(root, { recursive: true, force: true }))
 //     package manager's empty `.bun-tag-<hash>` marker.
 //   - Anything else, including `.mjs`, `.cjs`, `.jsx`, `.ts` (non-declaration), `.tsx`, `.wasm`, `.node`
 //     and extensionless files, is UNSUPPORTED: the inventory test fails and the file must be classified.
-// What it detects: SQL statements held in one string literal ('...', "..." or `...`, any case) that start with a
-// mutating verb, a mutating phrase anywhere else inside a literal (multi-statement or CTE strings), and SQL call
-// sites on database-like receivers (transaction, executor, tx, trx, connection, conn, db, database, adapter, sql,
-// super) whose first argument is not a single plain literal (variables, concatenation).
-// Limits, not covered: SQL assembled from several variables and passed through a variable (pinned as non-literal
-// call sites, not read), mutating verbs inside comments (ignored by design), and files outside the package.
-// A source the tokenizer cannot parse to the end throws, so a syntax the scanner does not understand fails closed.
+// This is a small heuristic tokenizer, not a JavaScript parser. It finds string and template literals (skipping
+// comments and regular expressions by a preceding-token heuristic) and calls to run/exec/prepare/get/all.
+// What it detects: SQL statements held in one string literal ('...', "..." or `...`, any case, JS escapes decoded)
+// that start with a mutating verb, a mutating phrase anywhere else inside a literal (multi-statement or CTE
+// strings), and SQL call sites on database-like receivers (transaction, executor, tx, trx, connection, conn, db,
+// database, adapter, sql, super) whose first argument is not one plain literal. A literal is plain only when it has
+// no `${...}` interpolation and no \x, \u or octal escape and nothing follows it but `,` or `)`; variables,
+// concatenation, interpolated templates and escaped SQL are all reported as non-literal and pinned by site.
+// Limits, not covered: the content of non-literal SQL is not read (the site is pinned, a reviewer classifies it),
+// receivers with other names are not recognized, mutating verbs inside comments are ignored by design, and files
+// outside the package are not scanned. A source the tokenizer cannot parse to the end throws, so syntax the scanner
+// does not understand fails closed.
 const SCANNED_EXTENSION = /\.js$/i
 // `.bun-tag-<hash>` is the empty marker file the package manager leaves in an installed package directory.
 const DATA_EXTENSION = /(?:\.d\.[cm]?ts|\.map|\.md|\.json)$|^\.bun-tag-[0-9a-f]+$/i
@@ -115,6 +120,7 @@ function tokenize(source, name) {
   }
   function string(quote) {
     const start = i
+    let interpolated = false
     i += 1
     while (true) {
       if (i >= source.length) fail('an unterminated string')
@@ -124,10 +130,11 @@ function tokenize(source, name) {
       else if (quote !== '`' && c === '\n') fail('a newline inside a string')
       else if (quote === '`' && c === '$' && source[i + 1] === '{') {
         i += 2
+        interpolated = true
         code(true)
       } else i += 1
     }
-    literals.push({ quote, start, end: i, text: source.slice(start + 1, i) })
+    literals.push({ quote, start, end: i, interpolated, text: source.slice(start + 1, i) })
     i += 1
   }
   function regex() {
@@ -213,8 +220,30 @@ const STATEMENT_SHAPE =
 const MUTATING_ANYWHERE =
   /\b(?:INSERT\s+(?:OR\s+[A-Z]+\s+)?INTO|REPLACE\s+INTO|DELETE\s+FROM|UPDATE\s+\S+\s+SET|DROP\s+(?:TABLE|INDEX|VIEW|TRIGGER)|ALTER\s+TABLE|CREATE\s+(?:TEMP(?:ORARY)?\s+)?(?:UNIQUE\s+)?(?:TABLE|INDEX|VIEW|TRIGGER)|ATTACH\s+DATABASE|VACUUM\s+INTO)\b/i
 
+// Decodes JS string escapes so `'\x44ELETE FROM t'` is classified as the statement it is. An escape sequence that
+// cannot be decoded leaves the text as written; the call-site rule below still pins any SQL argument using \x, \u or
+// octal escapes.
+const ESCAPE =
+  /\\(?:u\{([0-9a-fA-F]+)\}|u([0-9a-fA-F]{4})|x([0-9a-fA-F]{2})|([0-7]{1,3})|\r\n|[\n\r\u2028\u2029]|([\s\S]))/g
+const SIMPLE = { n: '\n', t: '\t', r: '\r', b: '\b', f: '\f', v: '\v' }
+function decode(raw) {
+  try {
+    return raw.replace(ESCAPE, (match, braced, unicode, hex, octal, character) => {
+      if (braced !== undefined) return String.fromCodePoint(Number.parseInt(braced, 16))
+      if (unicode !== undefined) return String.fromCharCode(Number.parseInt(unicode, 16))
+      if (hex !== undefined) return String.fromCharCode(Number.parseInt(hex, 16))
+      if (octal !== undefined) return String.fromCharCode(Number.parseInt(octal, 8))
+      return character === undefined ? '' : (SIMPLE[character] ?? character)
+    })
+  } catch {
+    return raw
+  }
+}
+const ENCODED_ESCAPE = /\\(?:u|x|[0-7])/
+
 function analyze(source, name) {
-  const { literals, calls } = tokenize(source, name)
+  const { literals: tokens, calls } = tokenize(source, name)
+  const literals = tokens.map((token) => ({ ...token, raw: token.text, text: decode(token.text) }))
   const statements = []
   const embedded = []
   const sqlArguments = new Set(calls.map((call) => call.argStart))
@@ -239,7 +268,17 @@ function analyze(source, name) {
     const literal = literals.find((candidate) => candidate.start === call.argStart)
     if (literal !== undefined) {
       const next = source.slice(literal.end + 1).match(/^\s*(.)/)
-      if (next !== null && (next[1] === ',' || next[1] === ')')) continue
+      const closed = next !== null && (next[1] === ',' || next[1] === ')')
+      // A literal is only a plain literal when nothing is interpolated or encoded in it: a template with
+      // `${...}` or a \x, \u or octal escape can hide the statement from a reader, so it needs a pinned site.
+      const plain = !literal.interpolated && !ENCODED_ESCAPE.test(literal.raw)
+      if (closed && plain) continue
+      if (closed) {
+        const kind = literal.interpolated ? 'interpolated' : 'escaped'
+        const preview = literal.raw.replace(/\s+/g, ' ').trim().slice(0, 40)
+        nonLiteral.push(`${name}: ${call.method}(${kind} ${literal.quote}${preview})`)
+        continue
+      }
     }
     const expression = source.slice(call.argStart).split(/[,)]/, 1)[0].trim().slice(0, 40)
     nonLiteral.push(`${name}: ${call.method}(${expression})`)
@@ -353,15 +392,22 @@ describe('C1 scanner coverage and fail-closed behavior', () => {
   test('SQL call sites whose argument is not one plain literal are pinned, so a new one must be classified', () => {
     // cloudflare.js is the Durable Object SQL adapter: a separate, unfenced SQLite surface that forwards whatever
     // statement it is given. node.js and migrations.js forward statements built elsewhere. storage.js `get(sql)`
-    // runs a SELECT assembled from literals. None is part of the candidate fence; C6 must classify cloudflare.js.
+    // and the interpolated `all(...)` templates are SELECTs whose clause lists are assembled from literals; node.js
+    // interpolates a numeric PRAGMA value. None is part of the candidate fence; C6 must classify cloudflare.js.
     expect(counted(surfaces().flatMap((surface) => surface.nonLiteral))).toEqual({
       'storage/sqlite/cloudflare.js: all(sql)': 1,
       'storage/sqlite/cloudflare.js: exec(sql)': 5,
       'storage/sqlite/cloudflare.js: get(sql)': 1,
       'storage/sqlite/cloudflare.js: run(sql)': 1,
       'storage/sqlite/migrations.js: exec(statement)': 1,
+      'storage/sqlite/node.js: exec(interpolated `PRAGMA wal_autocheckpoint = ${checkpoint)': 1,
       'storage/sqlite/node.js: exec(sql)': 1,
       'storage/sqlite/node.js: prepare(sql)': 1,
+      'storage/sqlite/storage.js: all(interpolated `SELECT record FROM conversations WHERE $)': 1,
+      'storage/sqlite/storage.js: all(interpolated `SELECT record FROM documents WHERE ${cla)': 1,
+      'storage/sqlite/storage.js: all(interpolated `SELECT record FROM entries WHERE ${claus)': 2,
+      'storage/sqlite/storage.js: all(interpolated `SELECT record FROM submissions WHERE ${c)': 1,
+      'storage/sqlite/storage.js: all(interpolated `SELECT record FROM tasks WHERE ${clauses)': 1,
       'storage/sqlite/storage.js: get(sql)': 1,
     })
   })
@@ -405,7 +451,10 @@ describe('C1 scanner negative controls (synthetic sources)', () => {
       tx.run(\`update t set a = \${value ? 'x' : "y"} where id = 1\`);
     `)
     expect(analysis.statements).toEqual(['DELETE FROM t', 'UPDATE t'])
-    expect(analysis.nonLiteral).toEqual([])
+    // The quote escapes and \n are plain; the interpolated template needs a pinned site.
+    expect(analysis.nonLiteral).toEqual([
+      'control.js: run(interpolated `update t set a = ${value ? \'x\' : "y"} wh)',
+    ])
   })
 
   test('mutating phrases inside another literal are reported, not ignored', () => {
@@ -432,9 +481,41 @@ describe('C1 scanner negative controls (synthetic sources)', () => {
     `)
     expect(analysis.nonLiteral).toEqual([
       'control.js: run(sql)',
+      'control.js: get(interpolated `select ${x})',
       'control.js: exec(a + b)',
       'control.js: run("DEL" + "ETE FROM t")',
       'control.js: prepare(sqlFor(kind)',
+    ])
+  })
+
+  test('a template that only interpolates, or SQL written with escapes, is not a plain literal', () => {
+    const analysis = run(`
+      db.exec(\`\${sql}\`);
+      db.exec(\`delete from t where id = \${id}\`);
+      db.exec('\\x44ELETE FROM t');
+      db.exec("\\u0044ROP TABLE t");
+      db.exec('\\u{44}ROP TABLE u');
+      db.exec('\\104ROP TABLE v');
+      db.exec('select 1; \\x64elete from t');
+      db.exec('delete from t where a = \\'x\\'\\n');
+    `)
+    expect(analysis.statements).toEqual([
+      'DELETE FROM t',
+      'DELETE FROM t',
+      'DROP TABLE t',
+      'DROP TABLE u',
+      'DROP TABLE v',
+      'DELETE FROM t',
+    ])
+    expect(analysis.embedded).toEqual(['control.js: select 1; delete from t'])
+    expect(analysis.nonLiteral).toEqual([
+      'control.js: exec(interpolated `${sql})',
+      'control.js: exec(interpolated `delete from t where id = ${id})',
+      "control.js: exec(escaped '\\x44ELETE FROM t)",
+      'control.js: exec(escaped "\\u0044ROP TABLE t)',
+      "control.js: exec(escaped '\\u{44}ROP TABLE u)",
+      "control.js: exec(escaped '\\104ROP TABLE v)",
+      "control.js: exec(escaped 'select 1; \\x64elete from t)",
     ])
   })
 
