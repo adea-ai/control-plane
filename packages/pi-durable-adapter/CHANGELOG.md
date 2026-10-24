@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.7](https://github.com/adea-ai/control-plane/compare/pi-durable-adapter-v0.11.6...pi-durable-adapter-v0.11.7) (2026-10-24)
+
+
+### Tests
+
+* **pi-durable:** offline C7c detached snapshot candidate, method A ([#1328](https://github.com/adea-ai/control-plane/issues/1328)) ([637f892](https://github.com/adea-ai/control-plane/commit/637f89236ab35a3d252f75ccb57a02a71e250a5b))
+
 ## [0.11.6](https://github.com/adea-ai/control-plane/compare/pi-durable-adapter-v0.11.5...pi-durable-adapter-v0.11.6) (2026-10-24)
 
 
