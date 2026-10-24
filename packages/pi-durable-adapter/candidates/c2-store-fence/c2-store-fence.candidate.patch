@@ -59,7 +59,7 @@ index edf79b3..437b424 100644
      commitGuarded(writes: readonly StorageWrite[], finalGuard: () => void, context: Context): Promise<Seq>;
      mintId<I extends Id<string>>(): Promise<I>;
 diff --git a/dist/storage/sqlite/storage.js b/dist/storage/sqlite/storage.js
-index 3b424e9..1507978 100644
+index 3b424e9..eec3e34 100644
 --- a/dist/storage/sqlite/storage.js
 +++ b/dist/storage/sqlite/storage.js
 @@ -74,6 +74,7 @@ export class SqliteStorage {
@@ -70,7 +70,7 @@ index 3b424e9..1507978 100644
      closing;
      admittedReads = 0;
      readsDrained;
-@@ -100,6 +101,39 @@ export class SqliteStorage {
+@@ -100,6 +101,47 @@ export class SqliteStorage {
              throw error;
          }
      }
@@ -80,22 +80,30 @@ index 3b424e9..1507978 100644
 +     */
 +    async acquireWriterFence(request) {
 +        this.assertOpen();
++        // Read each property exactly once, before validation and before the first await. Everything below uses only
++        // these primitives; the caller's object (or its accessors) is never read again while the transaction is pending.
++        if (request === null || typeof request !== "object")
++            throw new StorageRejected("PI_STORE_FENCE_REQUEST_INVALID");
++        const { ownerKey, lineageId, generation, expectedEpoch, expectedGeneration } = request;
 +        const text = (value) => typeof value === "string" && value.length > 0 && value.length <= 8192 && value.trim() === value;
-+        if (request === null || typeof request !== "object" || !text(request.ownerKey) || !text(request.lineageId) || !text(request.generation) ||
-+            !Number.isSafeInteger(request.expectedEpoch) || request.expectedEpoch < 0 ||
-+            (request.expectedGeneration !== undefined && !text(request.expectedGeneration)))
++        if (!text(ownerKey) || !text(lineageId) || !text(generation) ||
++            !Number.isSafeInteger(expectedEpoch) || expectedEpoch < 0 ||
++            (expectedGeneration !== undefined && !text(expectedGeneration)))
 +            throw new StorageRejected("PI_STORE_FENCE_REQUEST_INVALID");
 +        const token = await this.db.transaction(async (transaction) => {
 +            const row = await transaction.get("SELECT owner_key, epoch, armed, lineage_id, generation FROM durable_writer_fence WHERE singleton = 1");
 +            if (row === undefined)
 +                throw new StorageRejected("PI_STORE_FENCE_MISSING");
-+            if (row.epoch !== request.expectedEpoch)
++            if (row.epoch !== expectedEpoch)
 +                throw new StorageRejected("PI_STORE_FENCE_STALE");
-+            if (row.armed === 1 && request.expectedGeneration !== undefined && row.generation !== request.expectedGeneration)
++            if (row.armed === 1 && expectedGeneration !== undefined && row.generation !== expectedGeneration)
 +                throw new StorageRejected("PI_STORE_FENCE_GENERATION");
++            // A stored epoch that is not a safe integer, or whose successor is not one, is refused before any write.
++            if (!Number.isSafeInteger(row.epoch) || !Number.isSafeInteger(row.epoch + 1))
++                throw new StorageRejected("PI_STORE_FENCE_EPOCH_EXHAUSTED");
 +            const epoch = row.epoch + 1;
-+            await transaction.run("UPDATE durable_writer_fence SET owner_key = ?, epoch = ?, armed = 1, lineage_id = ?, generation = ? WHERE singleton = 1", request.ownerKey, epoch, request.lineageId, request.generation);
-+            return Object.freeze({ ownerKey: request.ownerKey, epoch, lineageId: request.lineageId, generation: request.generation });
++            await transaction.run("UPDATE durable_writer_fence SET owner_key = ?, epoch = ?, armed = 1, lineage_id = ?, generation = ? WHERE singleton = 1", ownerKey, epoch, lineageId, generation);
++            return Object.freeze({ ownerKey, epoch, lineageId, generation });
 +        });
 +        this.fence = token;
 +        return token;
@@ -110,7 +118,7 @@ index 3b424e9..1507978 100644
      async commitGuarded(writes, finalGuard, context) {
          if (typeof this.db.transactionGuarded !== "function") throw new StorageRejected("PI_GUARDED_COMMIT_UNAVAILABLE");
          if (typeof finalGuard !== "function") throw new StorageRejected("Final guard must be a synchronous function");
-@@ -113,6 +147,7 @@ export class SqliteStorage {
+@@ -113,6 +155,7 @@ export class SqliteStorage {
              ? (callback) => this.db.transaction(callback)
              : (callback) => this.db.transactionGuarded(callback, finalGuard);
          const seq = await transact(async (transaction) => {

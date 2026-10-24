@@ -13,13 +13,27 @@ production activation is involved.
   inserted unarmed so existing writers behave as before until a writer is acquired;
 - `SqliteStorage.acquireWriterFence({ ownerKey, lineageId, generation, expectedEpoch, expectedGeneration? })`:
   one transaction compare-and-sets the epoch to `expectedEpoch + 1`, arms the fence, and binds that
-  storage to the new token;
+  storage to the new token. Each request property is read exactly once, before validation and before
+  the first await (accessors included), and only those primitives are used for the compare-and-set, the
+  update and the returned token; the caller's object is never read again. A request epoch that is not a
+  safe integer is refused (`PI_STORE_FENCE_REQUEST_INVALID`), and a stored epoch that is not a safe
+  integer, or whose successor is not, is refused before the update (`PI_STORE_FENCE_EPOCH_EXHAUSTED`);
 - a fence check at the start of every `commit` / `commitGuarded` transaction: once armed, any commit
   without the current token, including one from an unregistered or older holder in any process, fails
   with `PI_STORE_FENCED` before any write.
 
 Not in this candidate: `closeWriters` and the closure receipt (C4), the writer-surface declaration
 (C1), other backends (C6) and the read-only open (C7). See the C1–C7 contract.
+
+## Retry safety is not shown
+
+`acquireWriterFence` has no request ledger: a caller whose response was lost cannot replay the same
+acquisition, and a second call after a lost success fails `PI_STORE_FENCE_STALE`. The reference-model
+tests (`native-store-fence-reference-model.test.mjs`) install a registration coordinator that dedupes lost
+responses, but that behavior belongs to the model, not to this candidate. They do not prove retry safety of
+`acquireWriterFence`, and nothing here should be cited as proving it. Any integration needs its own idempotency
+design and tests. Likewise, `ownerKey` is stored and compared, but there is no per-owner closure contract; binding
+a closure receipt to an owner is a design recommendation for the integration, not something this candidate does.
 
 ## Rollback status: NOT rollback-safe
 

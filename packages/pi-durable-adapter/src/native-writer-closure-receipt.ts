@@ -48,11 +48,24 @@ export type PiWriterClosureEvidence = {
   readonly receipt: PiWriterClosureReceipt
 }
 
+// The expectation is checked as strictly as the receipt: a NaN or missing floor would make every
+// `lastSeq < observedSeq` comparison false and accept evidence below the floor the caller holds.
+const ExpectationSchema = z.strictObject({
+  mutationId: Reference,
+  lineageId: Reference,
+  generation: Reference,
+  previousEpoch: Epoch,
+  observedSeq: Epoch,
+})
+
 /** Fails closed with a stable code. The result is evidence only, never permission. */
 export function assertPiWriterClosureReceipt(
   receiptInput: unknown,
-  expected: PiWriterClosureExpectation
+  expectedInput: PiWriterClosureExpectation
 ): PiWriterClosureEvidence {
+  const checked = ExpectationSchema.safeParse(expectedInput)
+  if (!checked.success) throw new Error('PI_WRITER_CLOSURE_EXPECTATION_INVALID')
+  const expected = checked.data
   const parsed = PiWriterClosureReceiptSchema.safeParse(receiptInput)
   if (!parsed.success) throw new Error('PI_WRITER_CLOSURE_RECEIPT_INVALID')
   const receipt = parsed.data

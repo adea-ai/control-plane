@@ -11,6 +11,7 @@ import {
   realpathSync,
   rmSync,
 } from 'node:fs'
+import { DatabaseSync } from 'node:sqlite'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
@@ -207,6 +208,154 @@ describe('candidate C2 store fence (disposable SQLite, patched copy only)', () =
     // None of the refusals advanced the epoch.
     expect((await storage.acquireWriterFence(request({ expectedEpoch: 1 }))).epoch).toBe(2)
     await storage.close(context)
+  })
+
+  // Holds the first transaction.get of the next acquire until released, so the caller can act while it is pending.
+  function gateNextGet(storage) {
+    const db = storage.db
+    const original = db.transaction.bind(db)
+    let release
+    let reached
+    const gate = new Promise((open) => (release = open))
+    const entered = new Promise((arrive) => (reached = arrive))
+    db.transaction = (callback, ...rest) => {
+      db.transaction = original
+      return original(
+        (transaction) => {
+          const get = transaction.get.bind(transaction)
+          transaction.get = async (...args) => {
+            reached()
+            await gate
+            return get(...args)
+          }
+          return callback(transaction)
+        },
+        ...rest
+      )
+    }
+    return { entered, release }
+  }
+  const fenceRow = (path) => {
+    const database = new DatabaseSync(path, { readOnly: true })
+    try {
+      return { ...database.prepare('SELECT * FROM durable_writer_fence').get() }
+    } finally {
+      database.close()
+    }
+  }
+
+  test('acquire uses only the pins captured before the first await, whatever the caller does while it is pending', async () => {
+    const path = dbPath()
+    const storage = await candidate.openNodeSqliteStorage(path)
+    const input = request({ expectedGeneration: 'gen:expected' })
+    const { entered, release } = gateNextGet(storage)
+    const pending = storage.acquireWriterFence(input)
+    await entered
+    Object.assign(input, {
+      ownerKey: 'owner:evil',
+      lineageId: 'lineage:evil',
+      generation: 'gen:evil',
+      expectedEpoch: 99,
+      expectedGeneration: 'gen:other',
+    })
+    release()
+    expect(await pending).toEqual({
+      ownerKey: 'owner:a',
+      epoch: 1,
+      lineageId: 'lineage:1',
+      generation: 'gen:1',
+    })
+    expect(fenceRow(path)).toEqual({
+      singleton: 1,
+      owner_key: 'owner:a',
+      epoch: 1,
+      armed: 1,
+      lineage_id: 'lineage:1',
+      generation: 'gen:1',
+    })
+    // The bound storage is still the holder: it commits, and the mutated request had no effect on it.
+    await write(storage)
+    await storage.close(context)
+  })
+
+  test('acquire reads each accessor-based property exactly once and never rereads the request', async () => {
+    const path = dbPath()
+    const storage = await candidate.openNodeSqliteStorage(path)
+    const reads = {}
+    const values = {
+      ownerKey: ['owner:a', 'owner:evil'],
+      lineageId: ['lineage:1', 'lineage:evil'],
+      generation: ['gen:1', 'gen:evil'],
+      expectedEpoch: [0, 99],
+      expectedGeneration: [undefined, 'gen:other'],
+    }
+    const input = {}
+    for (const [name, [first, later]] of Object.entries(values))
+      Object.defineProperty(input, name, {
+        enumerable: true,
+        get() {
+          reads[name] = (reads[name] ?? 0) + 1
+          return reads[name] === 1 ? first : later
+        },
+      })
+    const { entered, release } = gateNextGet(storage)
+    const pending = storage.acquireWriterFence(input)
+    await entered
+    release()
+    expect(await pending).toEqual({
+      ownerKey: 'owner:a',
+      epoch: 1,
+      lineageId: 'lineage:1',
+      generation: 'gen:1',
+    })
+    expect(reads).toEqual({
+      ownerKey: 1,
+      lineageId: 1,
+      generation: 1,
+      expectedEpoch: 1,
+      expectedGeneration: 1,
+    })
+    // An accessor that throws is a refusal, not a partial acquire.
+    const throwing = { ...request({ expectedEpoch: 1 }) }
+    Object.defineProperty(throwing, 'lineageId', {
+      enumerable: true,
+      get() {
+        throw new Error('accessor boom')
+      },
+    })
+    expect(await code(storage.acquireWriterFence(throwing))).toBe('accessor boom')
+    expect(fenceRow(path).epoch).toBe(1)
+    await storage.close(context)
+  })
+
+  test('acquire refuses an exhausted stored epoch and unsafe request epochs before any write', async () => {
+    const path = dbPath()
+    const storage = await candidate.openNodeSqliteStorage(path)
+    await storage.close(context)
+    const raw = new DatabaseSync(path)
+    raw.exec(`UPDATE durable_writer_fence SET epoch = ${Number.MAX_SAFE_INTEGER}`)
+    raw.close()
+    const reopened = await candidate.openNodeSqliteStorage(path)
+    const before = fenceRow(path)
+    expect(before.epoch).toBe(Number.MAX_SAFE_INTEGER)
+    expect(
+      await code(reopened.acquireWriterFence(request({ expectedEpoch: Number.MAX_SAFE_INTEGER })))
+    ).toBe('PI_STORE_FENCE_EPOCH_EXHAUSTED')
+    // Nothing was written and the storage was not bound to a token.
+    expect(fenceRow(path)).toEqual(before)
+    for (const unsafe of [
+      Number.MAX_SAFE_INTEGER + 1,
+      Number.POSITIVE_INFINITY,
+      Number.NaN,
+      1.5,
+      '1',
+      undefined,
+    ])
+      expect(await code(reopened.acquireWriterFence(request({ expectedEpoch: unsafe })))).toBe(
+        'PI_STORE_FENCE_REQUEST_INVALID'
+      )
+    expect(fenceRow(path)).toEqual(before)
+    await reopened.close(context)
   })
 
   test('reads are not fenced', async () => {

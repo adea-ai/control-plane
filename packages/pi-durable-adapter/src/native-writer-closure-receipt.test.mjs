@@ -78,3 +78,66 @@ test('a receipt from a rolled-back epoch or an earlier closure is not accepted f
     code(() => assertPiWriterClosureReceipt(receipt({ previousEpoch: 0, epoch: 1 }), expected))
   ).toBe('PI_WRITER_CLOSURE_EPOCH')
 })
+
+test('a malformed or non-finite expectation is refused, so no floor can be silently skipped', () => {
+  const unsafe = [
+    Number.NaN,
+    undefined,
+    null,
+    Number.POSITIVE_INFINITY,
+    Number.NEGATIVE_INFINITY,
+    -1,
+    1.5,
+    '10',
+    Number.MAX_SAFE_INTEGER + 1,
+  ]
+  const bad = [null, undefined, 'expected', [], { ...expected, extra: true }]
+  for (const field of ['mutationId', 'lineageId', 'generation', 'previousEpoch', 'observedSeq'])
+    bad.push(Object.fromEntries(Object.entries(expected).filter(([key]) => key !== field)))
+  for (const field of ['previousEpoch', 'observedSeq'])
+    for (const value of unsafe) bad.push({ ...expected, [field]: value })
+  for (const field of ['mutationId', 'lineageId', 'generation'])
+    for (const value of ['', ' padded', 7, undefined, null])
+      bad.push({ ...expected, [field]: value })
+  for (const input of bad)
+    expect(code(() => assertPiWriterClosureReceipt(receipt(), input))).toBe(
+      'PI_WRITER_CLOSURE_EXPECTATION_INVALID'
+    )
+  // The reported hole: NaN used to make the sequence comparison false and accept below-floor evidence.
+  expect(
+    code(() =>
+      assertPiWriterClosureReceipt(receipt({ lastSeq: 0 }), {
+        ...expected,
+        observedSeq: Number.NaN,
+      })
+    )
+  ).toBe('PI_WRITER_CLOSURE_EXPECTATION_INVALID')
+  // A valid expectation still behaves as before at the boundaries.
+  expect(
+    assertPiWriterClosureReceipt(receipt({ lastSeq: 0 }), { ...expected, observedSeq: 0 }).receipt
+      .lastSeq
+  ).toBe(0)
+  expect(code(() => assertPiWriterClosureReceipt(receipt({ lastSeq: 0 }), expected))).toBe(
+    'PI_WRITER_CLOSURE_SEQUENCE'
+  )
+})
+
+test('epochs beyond the safe integer range are refused on both sides', () => {
+  const max = Number.MAX_SAFE_INTEGER
+  // previousEpoch at the maximum would need an unsafe successor, so the receipt cannot be valid.
+  for (const bad of [
+    receipt({ previousEpoch: max, epoch: max + 1 }),
+    receipt({ previousEpoch: max - 1, epoch: max + 1 }),
+    receipt({ lastSeq: max + 1 }),
+  ])
+    expect(code(() => assertPiWriterClosureReceipt(bad, { ...expected, previousEpoch: max }))).toBe(
+      'PI_WRITER_CLOSURE_RECEIPT_INVALID'
+    )
+  // The last representable advance is accepted.
+  expect(
+    assertPiWriterClosureReceipt(receipt({ previousEpoch: max - 1, epoch: max }), {
+      ...expected,
+      previousEpoch: max - 1,
+    }).receipt.epoch
+  ).toBe(max)
+})

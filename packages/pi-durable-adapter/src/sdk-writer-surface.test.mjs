@@ -9,6 +9,7 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
+  writeFileSync,
 } from 'node:fs'
 import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -24,6 +25,7 @@ const compatPatch = join(repoRoot, 'patches/@earendil-works%2Fpi-durable@1.1.0.p
 const scratchBase = join(adapterRoot, 'node_modules/.sdk-writer-surface-test')
 
 let root
+let pkgRoot
 let dist
 beforeAll(() => {
   mkdirSync(scratchBase, { recursive: true })
@@ -36,31 +38,215 @@ beforeAll(() => {
     if (!existsSync(join(pkg, 'dist/harness/guarded-abort.js')))
       throw new Error('compatibility patch did not apply to the copy')
   }
+  pkgRoot = pkg
   dist = join(pkg, 'dist')
 })
 afterAll(() => rmSync(root, { recursive: true, force: true }))
 
-function files(directory) {
-  return readdirSync(directory, { withFileTypes: true }).flatMap((entry) =>
-    entry.isDirectory()
-      ? files(join(directory, entry.name))
-      : entry.name.endsWith('.js')
-        ? [join(directory, entry.name)]
-        : []
+// --- Scanner -------------------------------------------------------------------------------------
+// Supported inputs, stated so that anything else fails closed instead of going unscanned:
+//   - Scanned: `.js` ES modules (the SDK's compiled output), any case of the extension.
+//   - Ignored as non-executable data: declarations (`.d.ts`, `.d.mts`, `.d.cts`), `.map`, `.md`, `.json` and the
+//     package manager's empty `.bun-tag-<hash>` marker.
+//   - Anything else, including `.mjs`, `.cjs`, `.jsx`, `.ts` (non-declaration), `.tsx`, `.wasm`, `.node`
+//     and extensionless files, is UNSUPPORTED: the inventory test fails and the file must be classified.
+// What it detects: SQL statements held in one string literal ('...', "..." or `...`, any case) that start with a
+// mutating verb, a mutating phrase anywhere else inside a literal (multi-statement or CTE strings), and SQL call
+// sites on database-like receivers (transaction, executor, tx, trx, connection, conn, db, database, adapter, sql,
+// super) whose first argument is not a single plain literal (variables, concatenation).
+// Limits, not covered: SQL assembled from several variables and passed through a variable (pinned as non-literal
+// call sites, not read), mutating verbs inside comments (ignored by design), and files outside the package.
+// A source the tokenizer cannot parse to the end throws, so a syntax the scanner does not understand fails closed.
+const SCANNED_EXTENSION = /\.js$/i
+// `.bun-tag-<hash>` is the empty marker file the package manager leaves in an installed package directory.
+const DATA_EXTENSION = /(?:\.d\.[cm]?ts|\.map|\.md|\.json)$|^\.bun-tag-[0-9a-f]+$/i
+const walk = (directory) =>
+  readdirSync(directory, { withFileTypes: true }).flatMap((entry) =>
+    entry.name === 'node_modules' || entry.name === '.git'
+      ? []
+      : entry.isDirectory()
+        ? walk(join(directory, entry.name))
+        : [join(directory, entry.name)]
   )
+function inventory(rootDirectory) {
+  const scanned = []
+  const ignored = []
+  const unsupported = []
+  for (const path of walk(rootDirectory).toSorted()) {
+    const name = relative(rootDirectory, path)
+    if (DATA_EXTENSION.test(name)) ignored.push(name)
+    else if (SCANNED_EXTENSION.test(name)) scanned.push(name)
+    else unsupported.push(name)
+  }
+  return { scanned, ignored, unsupported }
 }
+const files = (directory) => walk(directory).filter((path) => SCANNED_EXTENSION.test(path))
 const text = (path) => readFileSync(path, 'utf8')
-const SQL =
-  /(["`])\s*(INSERT(?: OR IGNORE)?\s+INTO|UPDATE|DELETE\s+FROM|CREATE|DROP|ALTER|PRAGMA|BEGIN|COMMIT|ROLLBACK)\b([^"`]*)\1/g
-function statements(source) {
-  return [...source.matchAll(SQL)].map((match) => {
-    const verb = match[2].replace(/\s+/g, ' ')
-    const rest = match[3].trim().split(/\s+/)
+
+const REGEX_PRECEDERS = new Set('(,=:[!&|?{};+-*%<>~^')
+const REGEX_KEYWORDS = new Set([
+  'return',
+  'typeof',
+  'case',
+  'in',
+  'of',
+  'void',
+  'delete',
+  'throw',
+  'new',
+  'else',
+  'do',
+  'instanceof',
+  'yield',
+  'await',
+])
+const CALL_RECEIVER =
+  /\b(?:transaction|executor|tx|trx|connection|conn|db|database|adapter|sql|super)\s*$/
+const SQL_METHODS = new Set(['run', 'exec', 'prepare', 'get', 'all'])
+const IDENTIFIER = /[A-Za-z0-9_$]/
+
+// Tokenizes JS enough to find string literals and SQL-method calls while skipping comments and regex literals.
+function tokenize(source, name) {
+  const literals = []
+  const calls = []
+  let i = 0
+  const fail = (what) => {
+    throw new Error(`writer-surface scanner cannot parse ${what} in ${name} at offset ${i}`)
+  }
+  function string(quote) {
+    const start = i
+    i += 1
+    while (true) {
+      if (i >= source.length) fail('an unterminated string')
+      const c = source[i]
+      if (c === '\\') i += 2
+      else if (c === quote) break
+      else if (quote !== '`' && c === '\n') fail('a newline inside a string')
+      else if (quote === '`' && c === '$' && source[i + 1] === '{') {
+        i += 2
+        code(true)
+      } else i += 1
+    }
+    literals.push({ quote, start, end: i, text: source.slice(start + 1, i) })
+    i += 1
+  }
+  function regex() {
+    i += 1
+    let inClass = false
+    while (true) {
+      if (i >= source.length || source[i] === '\n') fail('an unterminated regular expression')
+      const c = source[i]
+      if (c === '\\') i += 1
+      else if (c === '[') inClass = true
+      else if (c === ']') inClass = false
+      else if (c === '/' && !inClass) break
+      i += 1
+    }
+    i += 1
+  }
+  function code(inInterpolation) {
+    let depth = 0
+    let previous = ''
+    let word = ''
+    while (i < source.length) {
+      const c = source[i]
+      const pair = source.slice(i, i + 2)
+      if (/\s/.test(c)) i += 1
+      else if (pair === '//') {
+        while (i < source.length && source[i] !== '\n') i += 1
+      } else if (pair === '/*') {
+        const close = source.indexOf('*/', i + 2)
+        if (close === -1) fail('an unterminated comment')
+        i = close + 2
+      } else if (c === '"' || c === "'" || c === '`') {
+        string(c)
+        previous = c
+        word = ''
+      } else if (c === '/') {
+        if (previous === '' || REGEX_PRECEDERS.has(previous) || REGEX_KEYWORDS.has(word)) regex()
+        else i += 1
+        previous = '/'
+        word = ''
+      } else if (c === '{') {
+        depth += 1
+        i += 1
+        previous = c
+        word = ''
+      } else if (c === '}') {
+        i += 1
+        if (depth === 0) {
+          if (inInterpolation) return
+          fail('an unmatched closing brace')
+        }
+        depth -= 1
+        previous = c
+        word = ''
+      } else if (IDENTIFIER.test(c)) {
+        let end = i
+        while (end < source.length && IDENTIFIER.test(source[end])) end += 1
+        word = source.slice(i, end)
+        const afterWord = source.slice(end).match(/^\s*\(\s*/)
+        if (SQL_METHODS.has(word) && source[i - 1] === '.' && afterWord !== null)
+          if (CALL_RECEIVER.test(source.slice(Math.max(0, i - 40), i - 1)))
+            calls.push({ method: word, argStart: end + afterWord[0].length })
+        i = end
+        previous = 'a'
+      } else {
+        previous = c
+        word = ''
+        i += 1
+      }
+    }
+    if (inInterpolation) fail('an unterminated template interpolation')
+  }
+  code(false)
+  return { literals, calls }
+}
+
+// A literal is a statement when it has a full statement shape (any case), or when it is the first argument of a SQL
+// call and starts with any mutating or transaction verb. The second rule keeps bare words such as a `"commit"`
+// type tag out of the list, while a lowercase `run('commit')` is still seen.
+const MUTATING_START =
+  /^\s*(INSERT(?:\s+OR\s+[A-Z]+)?\s+INTO|REPLACE\s+INTO|UPDATE|DELETE\s+FROM|CREATE|DROP|ALTER|PRAGMA|BEGIN|COMMIT|ROLLBACK|SAVEPOINT|RELEASE|VACUUM|REINDEX|ATTACH|DETACH)\b([\s\S]*)$/i
+const STATEMENT_SHAPE =
+  /^\s*(?:INSERT(?:\s+OR\s+[A-Z]+)?\s+INTO\s+\S|REPLACE\s+INTO\s+\S|UPDATE\s+\S+\s+SET\b|DELETE\s+FROM\s+\S|CREATE\s+(?:(?:TEMP|TEMPORARY|UNIQUE|VIRTUAL)\s+)*(?:TABLE|INDEX|VIEW|TRIGGER)\b|DROP\s+(?:TABLE|INDEX|VIEW|TRIGGER)\b|ALTER\s+TABLE\b|PRAGMA\s+\w|ATTACH\s+\S|DETACH\s+\S|VACUUM\b|REINDEX\b|SAVEPOINT\s+\S|RELEASE\s+\S)/i
+const MUTATING_ANYWHERE =
+  /\b(?:INSERT\s+(?:OR\s+[A-Z]+\s+)?INTO|REPLACE\s+INTO|DELETE\s+FROM|UPDATE\s+\S+\s+SET|DROP\s+(?:TABLE|INDEX|VIEW|TRIGGER)|ALTER\s+TABLE|CREATE\s+(?:TEMP(?:ORARY)?\s+)?(?:UNIQUE\s+)?(?:TABLE|INDEX|VIEW|TRIGGER)|ATTACH\s+DATABASE|VACUUM\s+INTO)\b/i
+
+function analyze(source, name) {
+  const { literals, calls } = tokenize(source, name)
+  const statements = []
+  const embedded = []
+  const sqlArguments = new Set(calls.map((call) => call.argStart))
+  for (const literal of literals) {
+    const match = literal.text.match(MUTATING_START)
+    if (
+      match === null ||
+      !(sqlArguments.has(literal.start) || STATEMENT_SHAPE.test(literal.text))
+    ) {
+      if (MUTATING_ANYWHERE.test(literal.text))
+        embedded.push(`${name}: ${literal.text.trim().slice(0, 60)}`)
+      continue
+    }
+    const verb = match[1].toUpperCase().replace(/\s+/g, ' ')
+    const rest = match[2].trim().split(/\s+/)
     const target =
       verb === 'UPDATE' ? rest[0] : /INTO|FROM/.test(verb) ? rest[0] : rest.slice(0, 3).join(' ')
-    return `${verb} ${target ?? ''}`.trim()
-  })
+    statements.push(`${verb} ${target ?? ''}`.trim())
+  }
+  const nonLiteral = []
+  for (const call of calls) {
+    const literal = literals.find((candidate) => candidate.start === call.argStart)
+    if (literal !== undefined) {
+      const next = source.slice(literal.end + 1).match(/^\s*(.)/)
+      if (next !== null && (next[1] === ',' || next[1] === ')')) continue
+    }
+    const expression = source.slice(call.argStart).split(/[,)]/, 1)[0].trim().slice(0, 40)
+    nonLiteral.push(`${name}: ${call.method}(${expression})`)
+  }
+  return { statements, embedded, nonLiteral }
 }
+const statements = (source) => analyze(source, 'source').statements
 const counted = (list) => {
   const counts = {}
   for (const item of list) counts[item] = (counts[item] ?? 0) + 1
@@ -142,5 +328,169 @@ describe('SDK native-store write surface (C1), pinned from installed source text
       'storage/jsonl/storage.js: remove': 2,
       'storage/jsonl/storage.js: writeFile': 1,
     })
+  })
+})
+
+describe('C1 scanner coverage and fail-closed behavior', () => {
+  const surfaces = () =>
+    files(dist).map((path) => ({
+      name: relative(dist, path),
+      ...analyze(text(path), relative(dist, path)),
+    }))
+
+  test('every file in the package is scanned, known data or reported as unsupported (none today)', () => {
+    const { scanned, ignored, unsupported } = inventory(pkgRoot)
+    expect(unsupported).toEqual([])
+    expect(scanned.length).toBeGreaterThan(0)
+    expect(scanned.every((name) => name.startsWith('dist/'))).toBe(true)
+    expect(ignored.every((name) => DATA_EXTENSION.test(name))).toBe(true)
+  })
+
+  test('no mutating phrase is hidden inside a literal that does not start with a statement', () => {
+    expect(surfaces().flatMap((surface) => surface.embedded)).toEqual([])
+  })
+
+  test('SQL call sites whose argument is not one plain literal are pinned, so a new one must be classified', () => {
+    // cloudflare.js is the Durable Object SQL adapter: a separate, unfenced SQLite surface that forwards whatever
+    // statement it is given. node.js and migrations.js forward statements built elsewhere. storage.js `get(sql)`
+    // runs a SELECT assembled from literals. None is part of the candidate fence; C6 must classify cloudflare.js.
+    expect(counted(surfaces().flatMap((surface) => surface.nonLiteral))).toEqual({
+      'storage/sqlite/cloudflare.js: all(sql)': 1,
+      'storage/sqlite/cloudflare.js: exec(sql)': 5,
+      'storage/sqlite/cloudflare.js: get(sql)': 1,
+      'storage/sqlite/cloudflare.js: run(sql)': 1,
+      'storage/sqlite/migrations.js: exec(statement)': 1,
+      'storage/sqlite/node.js: exec(sql)': 1,
+      'storage/sqlite/node.js: prepare(sql)': 1,
+      'storage/sqlite/storage.js: get(sql)': 1,
+    })
+  })
+})
+
+describe('C1 scanner negative controls (synthetic sources)', () => {
+  const run = (source) => analyze(source, 'control.js')
+
+  test('single-quoted, double-quoted and template statements are seen in any case', () => {
+    expect(
+      run(`
+        tx.run('insert into t (a) values (1)');
+        tx.run("update t set a = 1");
+        tx.run(\`
+          Delete From t WHERE a = 1\`);
+        tx.exec('insert or replace into t values (1)');
+        tx.exec('REPLACE INTO t VALUES (1)');
+        db.exec('drop table t');
+        db.exec('create table x (a)');
+        database.exec('commit');
+      `).statements
+    ).toEqual([
+      'INSERT INTO t',
+      'UPDATE t',
+      'DELETE FROM t',
+      'INSERT OR REPLACE INTO t',
+      'REPLACE INTO t',
+      'DROP table t',
+      'CREATE table x (a)',
+      'COMMIT',
+    ])
+  })
+
+  test('statements holding quotes, escapes and apostrophes in comments or regexes are not confused', () => {
+    const analysis = run(`
+      // don't break on this apostrophe
+      /* nor "this" 'one' */
+      const pattern = /['"\`]/g;
+      const divided = a / b / c;
+      tx.run('delete from t where a = \\'x\\' and b = "y"');
+      tx.run(\`update t set a = \${value ? 'x' : "y"} where id = 1\`);
+    `)
+    expect(analysis.statements).toEqual(['DELETE FROM t', 'UPDATE t'])
+    expect(analysis.nonLiteral).toEqual([])
+  })
+
+  test('mutating phrases inside another literal are reported, not ignored', () => {
+    const analysis = run(`
+      tx.get('select 1; delete from t');
+      tx.get('with x as (select 1) update t set a = 1');
+      const prose = "Failed to update the thing";
+    `)
+    expect(analysis.embedded.map((entry) => entry.split(': ')[1])).toEqual([
+      'select 1; delete from t',
+      'with x as (select 1) update t set a = 1',
+    ])
+  })
+
+  test('SQL call sites with variables or concatenation are reported as non-literal', () => {
+    const analysis = run(`
+      await transaction.run(sql, 1);
+      await executor.get(\`select \${x}\`);
+      db.exec(a + b);
+      tx.run("DEL" + "ETE FROM t");
+      database.prepare(sqlFor(kind));
+      queue.run(() => 1);
+      statement.run(...params);
+    `)
+    expect(analysis.nonLiteral).toEqual([
+      'control.js: run(sql)',
+      'control.js: exec(a + b)',
+      'control.js: run("DEL" + "ETE FROM t")',
+      'control.js: prepare(sqlFor(kind)',
+    ])
+  })
+
+  test('mutating words inside comments are ignored, which is a stated limit', () => {
+    expect(run('/* tx.run("DELETE FROM t") */ // tx.run("DROP TABLE t")').statements).toEqual([])
+  })
+
+  test('sources the tokenizer cannot finish parsing throw instead of being skipped', () => {
+    for (const source of [
+      'tx.run("DELETE FROM t',
+      'tx.run(`DELETE FROM t',
+      'tx.run(`DELETE ${',
+      '/* DELETE FROM t',
+      'const r = /unterminated',
+      '}',
+    ])
+      expect(() => run(source)).toThrow(/cannot parse/)
+  })
+
+  test('unsupported writer file types are listed, not skipped', () => {
+    const base = mkdtempSync(join(scratchBase, 'inventory-'))
+    try {
+      mkdirSync(join(base, 'dist/storage'), { recursive: true })
+      mkdirSync(join(base, 'node_modules/ignored'), { recursive: true })
+      for (const name of [
+        'dist/a.js',
+        'dist/UPPER.JS',
+        'dist/a.d.ts',
+        'dist/a.js.map',
+        'dist/b.cjs',
+        'dist/c.mjs',
+        'dist/d.ts',
+        'dist/e.tsx',
+        'dist/f.jsx',
+        'dist/g.wasm',
+        'dist/h.node',
+        'dist/storage/writer',
+        'package.json',
+        '.bun-tag-93d8e0fc656a2572',
+        'node_modules/ignored/x.cjs',
+      ])
+        writeFileSync(join(base, name), '')
+      const found = inventory(base)
+      expect(found.scanned).toEqual(['dist/UPPER.JS', 'dist/a.js'])
+      expect(found.unsupported).toEqual([
+        'dist/b.cjs',
+        'dist/c.mjs',
+        'dist/d.ts',
+        'dist/e.tsx',
+        'dist/f.jsx',
+        'dist/g.wasm',
+        'dist/h.node',
+        'dist/storage/writer',
+      ])
+    } finally {
+      rmSync(base, { recursive: true, force: true })
+    }
   })
 })
