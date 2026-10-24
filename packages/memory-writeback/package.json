@@ -24,7 +24,7 @@
   "dependencies": {
     "@control-plane/contracts": "workspace:*",
     "@control-plane/domain": "workspace:*",
-    "zod": "4.6.5"
+    "zod": "4.6.6"
   },
   "engines": {
     "node": "24.21.0"

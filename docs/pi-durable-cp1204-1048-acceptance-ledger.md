@@ -59,38 +59,58 @@ current-candidate test pass is claimed here.
 
 The published scope is the diff from the base `ab931d068142a0c5629ed4d6cc2c96a1b377a986`
 to the published head, which is the head that carries this section. The complete changed scope is
-**233 paths: 80 added, 153 modified**; no path was deleted.
+**259 paths: 80 added, 179 modified**; no path was deleted.
 `tests/pi-durable-cp1048-evidence-discipline.test.mjs` checks this list, these counts and this
 area table against the repository, so the published scope cannot drift away from the code
 without that lane failing.
 
-| Area                          | Added | Modified | Total |
-| ----------------------------- | ----- | -------- | ----- |
-| `(repository root)`           | 0     | 4        | 4     |
-| `apps/control-api`            | 17    | 25       | 42    |
-| `apps/hosted-control-plane`   | 2     | 5        | 7     |
-| `apps/workflow-worker`        | 0     | 6        | 6     |
-| `docs`                        | 8     | 4        | 12    |
-| `docs/architecture`           | 0     | 2        | 2     |
-| `docs/evals`                  | 0     | 1        | 1     |
-| `docs/evidence`               | 4     | 0        | 4     |
-| `docs/requirements`           | 0     | 1        | 1     |
-| `packages/acp-adapter`        | 0     | 4        | 4     |
-| `packages/config`             | 0     | 4        | 4     |
-| `packages/contracts`          | 1     | 6        | 7     |
-| `packages/control-sdk`        | 2     | 7        | 9     |
-| `packages/database`           | 1     | 4        | 5     |
-| `packages/domain`             | 0     | 6        | 6     |
-| `packages/orchestration`      | 0     | 4        | 4     |
-| `packages/pi-durable-adapter` | 23    | 20       | 43    |
-| `packages/policy`             | 0     | 5        | 5     |
-| `packages/profile-adapters`   | 3     | 6        | 9     |
-| `packages/runtime-sdk`        | 0     | 1        | 1     |
-| `packages/sqlite-persistence` | 0     | 7        | 7     |
-| `packages/tool-execution`     | 0     | 4        | 4     |
-| `patches`                     | 2     | 0        | 2     |
-| `scripts`                     | 1     | 6        | 7     |
-| `tests`                       | 16    | 21       | 37    |
+| Area                                | Added | Modified | Total |
+| ----------------------------------- | ----- | -------- | ----- |
+| `(repository root)`                 | 0     | 4        | 4     |
+| `apps/control-api`                  | 17    | 25       | 42    |
+| `apps/hosted-control-plane`         | 2     | 5        | 7     |
+| `apps/local-control-plane`          | 0     | 1        | 1     |
+| `apps/runtime-worker`               | 0     | 1        | 1     |
+| `apps/workflow-worker`              | 0     | 6        | 6     |
+| `docs`                              | 8     | 4        | 12    |
+| `docs/architecture`                 | 0     | 2        | 2     |
+| `docs/evals`                        | 0     | 1        | 1     |
+| `docs/evidence`                     | 4     | 0        | 4     |
+| `docs/requirements`                 | 0     | 1        | 1     |
+| `infrastructure`                    | 0     | 2        | 2     |
+| `packages/acp-adapter`              | 0     | 4        | 4     |
+| `packages/config`                   | 0     | 4        | 4     |
+| `packages/context`                  | 0     | 1        | 1     |
+| `packages/contracts`                | 1     | 7        | 8     |
+| `packages/control-sdk`              | 2     | 8        | 10    |
+| `packages/cortana-context-adapter`  | 0     | 1        | 1     |
+| `packages/credential-vault`         | 0     | 1        | 1     |
+| `packages/database`                 | 1     | 4        | 5     |
+| `packages/domain`                   | 0     | 6        | 6     |
+| `packages/events`                   | 0     | 1        | 1     |
+| `packages/execution-plan`           | 0     | 1        | 1     |
+| `packages/langgraph-adapter`        | 0     | 1        | 1     |
+| `packages/managed-pi-adapter`       | 0     | 1        | 1     |
+| `packages/memory-writeback`         | 0     | 1        | 1     |
+| `packages/model-gateway`            | 0     | 1        | 1     |
+| `packages/orchestration`            | 0     | 4        | 4     |
+| `packages/pi-durable-adapter`       | 23    | 20       | 43    |
+| `packages/policy`                   | 0     | 5        | 5     |
+| `packages/production-readiness`     | 0     | 1        | 1     |
+| `packages/profile-adapters`         | 3     | 6        | 9     |
+| `packages/profile-portability`      | 0     | 1        | 1     |
+| `packages/remote-control-relay`     | 0     | 1        | 1     |
+| `packages/runtime-gateway-protocol` | 0     | 1        | 1     |
+| `packages/runtime-sdk`              | 0     | 3        | 3     |
+| `packages/sandbox`                  | 0     | 1        | 1     |
+| `packages/sqlite-persistence`       | 0     | 7        | 7     |
+| `packages/tool-execution`           | 0     | 4        | 4     |
+| `packages/tool-sdk`                 | 0     | 1        | 1     |
+| `packages/usage-ledger`             | 0     | 1        | 1     |
+| `packages/workflow-runtime`         | 0     | 1        | 1     |
+| `patches`                           | 2     | 0        | 2     |
+| `scripts`                           | 1     | 6        | 7     |
+| `tests`                             | 16    | 22       | 38    |
 
 The complete path list, as published:
 
@@ -146,6 +166,8 @@ M  apps/hosted-control-plane/src/index.test.mjs
 M  apps/hosted-control-plane/src/index.ts
 M  apps/hosted-control-plane/src/reconciliation-wiring.test.mjs
 A  apps/hosted-control-plane/src/reconciliation-workflow-submitter.ts
+M  apps/local-control-plane/package.json
+M  apps/runtime-worker/package.json
 M  apps/workflow-worker/CHANGELOG.md
 M  apps/workflow-worker/package.json
 M  apps/workflow-worker/src/cloud-composition.ts
@@ -173,6 +195,8 @@ M  docs/pi-durable-runtime.md
 A  docs/profile-recovery-acceptance-map.md
 M  docs/requirements/cp186-195-reconciliation-2026-10-21.md
 M  docs/testing.md
+M  infrastructure/containers/managed-pi/bun.lock
+M  infrastructure/containers/managed-pi/package.json
 M  package.json
 M  packages/acp-adapter/CHANGELOG.md
 M  packages/acp-adapter/package.json
@@ -182,11 +206,13 @@ M  packages/config/CHANGELOG.md
 M  packages/config/package.json
 M  packages/config/src/managed-cloud.test.mjs
 M  packages/config/src/managed-cloud.ts
+M  packages/context/package.json
 M  packages/contracts/CHANGELOG.md
 M  packages/contracts/package.json
 M  packages/contracts/src/control-api.test.mjs
 M  packages/contracts/src/control-api.ts
 M  packages/contracts/src/decision-resolution.ts
+M  packages/contracts/src/index.test.mjs
 M  packages/contracts/src/index.ts
 A  packages/contracts/src/pi-child-publication.ts
 M  packages/control-sdk/CHANGELOG.md
@@ -195,9 +221,12 @@ M  packages/control-sdk/package.json
 M  packages/control-sdk/scripts/openapi.mjs
 M  packages/control-sdk/src/client.ts
 M  packages/control-sdk/src/compatibility.test.mjs
+M  packages/control-sdk/src/index.test.mjs
 A  packages/control-sdk/src/openapi-model-id-parity.test.mjs
 M  packages/control-sdk/src/operations.ts
 A  packages/control-sdk/src/pi-child-publication.test.mjs
+M  packages/cortana-context-adapter/package.json
+M  packages/credential-vault/package.json
 M  packages/database/CHANGELOG.md
 M  packages/database/package.json
 A  packages/database/src/execution-repository.test.mjs
@@ -209,6 +238,12 @@ M  packages/domain/src/command-inbox.test.mjs
 M  packages/domain/src/command-inbox.ts
 M  packages/domain/src/execution-lifecycle.test.mjs
 M  packages/domain/src/execution-lifecycle.ts
+M  packages/events/package.json
+M  packages/execution-plan/package.json
+M  packages/langgraph-adapter/package.json
+M  packages/managed-pi-adapter/package.json
+M  packages/memory-writeback/package.json
+M  packages/model-gateway/package.json
 M  packages/orchestration/CHANGELOG.md
 M  packages/orchestration/package.json
 M  packages/orchestration/src/delegation.test.mjs
@@ -261,6 +296,7 @@ M  packages/policy/package.json
 M  packages/policy/src/decision-resolution.test.mjs
 M  packages/policy/src/decision-resolution.ts
 M  packages/policy/src/index.ts
+M  packages/production-readiness/package.json
 M  packages/profile-adapters/README.md
 M  packages/profile-adapters/package.json
 M  packages/profile-adapters/src/guards.ts
@@ -270,7 +306,13 @@ A  packages/profile-adapters/src/wake-restart.worker.mjs
 M  packages/profile-adapters/src/wake.ts
 A  packages/profile-adapters/tsconfig.type-tests.json
 A  packages/profile-adapters/type-tests/retained-wake-repository-assignment.ts
+M  packages/profile-portability/package.json
+M  packages/remote-control-relay/package.json
+M  packages/runtime-gateway-protocol/package.json
+M  packages/runtime-sdk/package.json
+M  packages/runtime-sdk/src/index.test.mjs
 M  packages/runtime-sdk/src/pi-durable-lead.test.mjs
+M  packages/sandbox/package.json
 M  packages/sqlite-persistence/CHANGELOG.md
 M  packages/sqlite-persistence/package.json
 M  packages/sqlite-persistence/src/delegation-repository.ts
@@ -282,6 +324,9 @@ M  packages/tool-execution/CHANGELOG.md
 M  packages/tool-execution/package.json
 M  packages/tool-execution/src/tool-execution.test.mjs
 M  packages/tool-execution/src/tool-execution.ts
+M  packages/tool-sdk/package.json
+M  packages/usage-ledger/package.json
+M  packages/workflow-runtime/package.json
 A  patches/@earendil-works%2Fpi-durable@1.1.0.patch
 A  patches/pi-durable-1.1.0-NOTICE.md
 M  scripts/docker-pull-backoff.mjs
@@ -306,6 +351,7 @@ M  tests/m11-architecture-audit-regression.test.mjs
 M  tests/m11-architecture-audit.test.mjs
 M  tests/m11-requirements-ledger.test.mjs
 M  tests/m11-standalone-e2e.test.mjs
+M  tests/managed-pi-docker-packaging.test.mjs
 M  tests/pi-child-continuation-process.fixture.mjs
 M  tests/pi-child-continuation-sqlite.test.mjs
 M  tests/pi-durable-canonical-authority.test.mjs
