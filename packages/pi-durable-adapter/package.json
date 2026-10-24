@@ -1,6 +1,6 @@
 {
   "name": "@control-plane/pi-durable-adapter",
-  "version": "0.11.5",
+  "version": "0.11.6",
   "private": true,
   "files": [
     "dist"
