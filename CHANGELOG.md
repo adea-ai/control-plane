@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.114.4](https://github.com/adea-ai/control-plane/compare/workspace-v1.114.3...workspace-v1.114.4) (2026-10-24)
+
+
+### Tests
+
+* **pi:** cover crash after native cancellation before journal publication ([#1307](https://github.com/adea-ai/control-plane/issues/1307)) ([8265104](https://github.com/adea-ai/control-plane/commit/8265104c0c4ffea5e74586b5863e6799b60f0906))
+
 ## [1.114.3](https://github.com/adea-ai/control-plane/compare/workspace-v1.114.2...workspace-v1.114.3) (2026-10-24)
 
 
