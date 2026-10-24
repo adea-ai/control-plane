@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.114.12](https://github.com/adea-ai/control-plane/compare/workspace-v1.114.11...workspace-v1.114.12) (2026-10-24)
+
+
+### Tests
+
+* **pi:** enforce the CP [#1048](https://github.com/adea-ai/control-plane/issues/1048) whole-scope check only where the ledger work is carried ([#1329](https://github.com/adea-ai/control-plane/issues/1329)) ([790a8d2](https://github.com/adea-ai/control-plane/commit/790a8d2844dcc26312da8fa999e43f474dec450e))
+
 ## [1.114.11](https://github.com/adea-ai/control-plane/compare/workspace-v1.114.10...workspace-v1.114.11) (2026-10-24)
 
 
