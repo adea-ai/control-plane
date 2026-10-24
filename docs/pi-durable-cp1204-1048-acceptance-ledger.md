@@ -59,7 +59,10 @@ current-candidate test pass is claimed here.
 
 The published scope is the diff from the base `ab931d068142a0c5629ed4d6cc2c96a1b377a986`
 to the published head, which is the head that carries this section. The complete changed scope is
-**307 paths: 95 added, 212 modified**; no path was deleted.
+**309 paths: 97 added, 212 modified**; no path was deleted. Two of those added paths, both
+test files, belong to CP #1284 (retry admission fences across a database reopen, and lead
+cancellation result retention) and not to the #1048 work; they are registered here so the
+published list stays the whole scope of the branch that carries them.
 `tests/pi-durable-cp1048-evidence-discipline.test.mjs` checks this list, these counts and this
 area table against the repository, so the published scope cannot drift away from the code
 without that lane failing.
@@ -103,14 +106,14 @@ without that lane failing.
 | `packages/runtime-gateway-protocol` | 0     | 2        | 2     |
 | `packages/runtime-sdk`              | 0     | 5        | 5     |
 | `packages/sandbox`                  | 0     | 2        | 2     |
-| `packages/sqlite-persistence`       | 0     | 8        | 8     |
+| `packages/sqlite-persistence`       | 1     | 8        | 9     |
 | `packages/tool-execution`           | 0     | 4        | 4     |
 | `packages/tool-sdk`                 | 0     | 2        | 2     |
 | `packages/usage-ledger`             | 0     | 2        | 2     |
 | `packages/workflow-runtime`         | 0     | 2        | 2     |
 | `patches`                           | 2     | 0        | 2     |
 | `scripts`                           | 1     | 8        | 9     |
-| `tests`                             | 16    | 22       | 38    |
+| `tests`                             | 17    | 22       | 39    |
 
 The complete path list, as published:
 
@@ -356,6 +359,7 @@ M  packages/sandbox/CHANGELOG.md
 M  packages/sandbox/package.json
 M  packages/sqlite-persistence/CHANGELOG.md
 M  packages/sqlite-persistence/package.json
+A  packages/sqlite-persistence/src/child-budget-admission-retry-compaction.test.mjs
 M  packages/sqlite-persistence/src/delegation-repository.ts
 M  packages/sqlite-persistence/src/delegation-terminal-receipt.test.mjs
 M  packages/sqlite-persistence/src/delegation-terminal-receipt.ts
@@ -383,6 +387,7 @@ M  scripts/requirements-ledger.mjs
 M  scripts/run-bun-test-group.mjs
 M  scripts/run-integration-tests.mjs
 A  scripts/security-trust-boundary-probes.mjs
+A  tests/delegation-lead-cancellation-result-retention.test.mjs
 M  tests/docker-pull-backoff.test.mjs
 A  tests/fixtures/pi-durable-child-host-cleanup.mjs
 M  tests/fixtures/pi-lead-restart/host.mjs
