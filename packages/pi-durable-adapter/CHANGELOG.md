@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.5](https://github.com/adea-ai/control-plane/compare/pi-durable-adapter-v0.11.4...pi-durable-adapter-v0.11.5) (2026-10-24)
+
+
+### Documentation
+
+* **pi-durable:** reconcile C2/C4/C7 candidate descriptions with merged [#1318](https://github.com/adea-ai/control-plane/issues/1318), [#1319](https://github.com/adea-ai/control-plane/issues/1319), [#1321](https://github.com/adea-ai/control-plane/issues/1321) ([#1322](https://github.com/adea-ai/control-plane/issues/1322)) ([a713a1a](https://github.com/adea-ai/control-plane/commit/a713a1a458f3b596148fde6cb74eb067cc968998))
+
 ## [0.11.4](https://github.com/adea-ai/control-plane/compare/pi-durable-adapter-v0.11.3...pi-durable-adapter-v0.11.4) (2026-10-24)
 
 

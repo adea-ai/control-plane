@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.114.9](https://github.com/adea-ai/control-plane/compare/workspace-v1.114.8...workspace-v1.114.9) (2026-10-24)
+
+
+### Documentation
+
+* **pi-durable:** reconcile C2/C4/C7 candidate descriptions with merged [#1318](https://github.com/adea-ai/control-plane/issues/1318), [#1319](https://github.com/adea-ai/control-plane/issues/1319), [#1321](https://github.com/adea-ai/control-plane/issues/1321) ([#1322](https://github.com/adea-ai/control-plane/issues/1322)) ([a713a1a](https://github.com/adea-ai/control-plane/commit/a713a1a458f3b596148fde6cb74eb067cc968998))
+
 ## [1.114.8](https://github.com/adea-ai/control-plane/compare/workspace-v1.114.7...workspace-v1.114.8) (2026-10-24)
 
 
