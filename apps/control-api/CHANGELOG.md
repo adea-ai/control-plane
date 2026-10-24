@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.36.1](https://github.com/adea-ai/control-plane/compare/control-api-v1.36.0...control-api-v1.36.1) (2026-10-24)
+
+
+### Bug Fixes
+
+* reduce dependency closure and preserve budget checks ([#1270](https://github.com/adea-ai/control-plane/issues/1270)) ([01fa230](https://github.com/adea-ai/control-plane/commit/01fa230233cc796b6c7f93d020006212b89631f6))
+
+
+### Tests
+
+* **profiles:** prove profile recovery and fenced rollback evidence ([#1048](https://github.com/adea-ai/control-plane/issues/1048)) ([da1a38c](https://github.com/adea-ai/control-plane/commit/da1a38cbb4f20da086313451077593d8df3e283d))
+
 ## [1.36.0](https://github.com/adea-ai/control-plane/compare/control-api-v1.35.0...control-api-v1.36.0) (2026-10-23)
 
 

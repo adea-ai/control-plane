@@ -1,6 +1,6 @@
 {
   "name": "@control-plane/hosted-control-plane",
-  "version": "1.21.4",
+  "version": "1.21.5",
   "private": true,
   "files": [
     "dist"

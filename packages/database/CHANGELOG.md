@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.54.1](https://github.com/adea-ai/control-plane/compare/database-v1.54.0...database-v1.54.1) (2026-10-24)
+
+
+### Tests
+
+* **profiles:** prove profile recovery and fenced rollback evidence ([#1048](https://github.com/adea-ai/control-plane/issues/1048)) ([da1a38c](https://github.com/adea-ai/control-plane/commit/da1a38cbb4f20da086313451077593d8df3e283d))
+
 ## [1.54.0](https://github.com/adea-ai/control-plane/compare/database-v1.53.0...database-v1.54.0) (2026-10-23)
 
 

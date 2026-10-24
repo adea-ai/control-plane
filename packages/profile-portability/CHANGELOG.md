@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.7.4](https://github.com/adea-ai/control-plane/compare/profile-portability-v1.7.3...profile-portability-v1.7.4) (2026-10-24)
+
+
+### Bug Fixes
+
+* reduce dependency closure and preserve budget checks ([#1270](https://github.com/adea-ai/control-plane/issues/1270)) ([01fa230](https://github.com/adea-ai/control-plane/commit/01fa230233cc796b6c7f93d020006212b89631f6))
+
 ## [1.7.3](https://github.com/adea-ai/control-plane/compare/profile-portability-v1.7.2...profile-portability-v1.7.3) (2026-10-22)
 
 

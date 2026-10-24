@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.15.1](https://github.com/adea-ai/control-plane/compare/acp-adapter-v1.15.0...acp-adapter-v1.15.1) (2026-10-24)
+
+
+### Bug Fixes
+
+* reduce dependency closure and preserve budget checks ([#1270](https://github.com/adea-ai/control-plane/issues/1270)) ([01fa230](https://github.com/adea-ai/control-plane/commit/01fa230233cc796b6c7f93d020006212b89631f6))
+
 ## [1.15.0](https://github.com/adea-ai/control-plane/compare/acp-adapter-v1.14.0...acp-adapter-v1.15.0) (2026-10-23)
 
 

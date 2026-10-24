@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.23.1](https://github.com/adea-ai/control-plane/compare/contracts-v1.23.0...contracts-v1.23.1) (2026-10-24)
+
+
+### Bug Fixes
+
+* reconcile audit identities and declaration budget ([#1303](https://github.com/adea-ai/control-plane/issues/1303)) ([b65e2c7](https://github.com/adea-ai/control-plane/commit/b65e2c770cd5d2fa7a3007bdff71613e18748860))
+* reduce dependency closure and preserve budget checks ([#1270](https://github.com/adea-ai/control-plane/issues/1270)) ([01fa230](https://github.com/adea-ai/control-plane/commit/01fa230233cc796b6c7f93d020006212b89631f6))
+
 ## [1.23.0](https://github.com/adea-ai/control-plane/compare/contracts-v1.22.0...contracts-v1.23.0) (2026-10-23)
 
 
