@@ -9,7 +9,9 @@ import {
   readdirSync,
   readFileSync,
   realpathSync,
+  rmdirSync,
   rmSync,
+  writeFileSync,
 } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { createRequire } from 'node:module'
@@ -25,12 +27,13 @@ import { readPiFrozenReceipt, sealPiReceiptSnapshot } from './restore-generation
 //
 // It shows, on temporary copies of the installed SDK with the compat, C2, C4 and C7 candidate patches applied and on
 // disposable SQLite files, that the `pi.guarded-abort-receipts` ledger read through the C7 read-only open is the same
-// ledger, from the same cut, that a live owner reads from a byte copy of the same store, and that the cut is the one a C4
+// ledger, from the same cut, that a read-write reopen of a byte copy of the same store reads, and that the cut is the one a C4
 // closure receipt names. Both ledgers then seal and read identically through the #1312 snapshot reader.
 //
 // Limits. The replay below is test code, not a production issuer. The provenance passed to `sealPiReceiptSnapshot` is
 // this test's own assertion, as for any issuer, and is not SDK attestation. The cut is identified by a C4 closure on one
-// storage object after the Harness was closed; this proves nothing about another process, a crashed owner or a store that
+// storage object. The writer is closed first; `Harness.close` then closes the storage it was given and writes nothing in
+// these tests, which the unchanged `lastSeq` shows. This proves nothing about another process, a crashed owner or a store that
 // was not closed this way, and it describes no quiescent-capture method. Nothing here adopts the SDK, issues anything,
 // captures anything or touches a live store.
 const here = dirname(fileURLToPath(import.meta.url))
@@ -56,13 +59,26 @@ const patches = [
 const compatPatch = join(repoRoot, 'patches/@earendil-works%2Fpi-durable@1.1.0.patch')
 const scratchBase = join(dirname(installed), '.c7-ledger-test')
 
+// Removes only the directories this run created, then the shared base only if nothing else is left in it, so a concurrent
+// run's (or anything else's) files under the same base are never touched.
+function removeOwned(base, owned) {
+  for (const path of owned) rmSync(path, { recursive: true, force: true })
+  try {
+    rmdirSync(base)
+  } catch (error) {
+    if (error.code !== 'ENOTEMPTY' && error.code !== 'ENOENT') throw error
+  }
+}
+
 let sdk
 let node
 let dir
 let counter = 0
+const owned = []
 beforeAll(async () => {
   mkdirSync(scratchBase, { recursive: true })
   const root = mkdtempSync(join(scratchBase, 'sdk-'))
+  owned.push(root)
   const pkg = join(root, 'pi-durable')
   cpSync(installed, pkg, { recursive: true, dereference: true })
   execFileSync('git', ['init', '-q'], { cwd: pkg })
@@ -73,9 +89,10 @@ beforeAll(async () => {
   sdk = await load('dist/index.js')
   node = await load('dist/storage/sqlite/node.js')
   dir = mkdtempSync(join(scratchBase, 'db-'))
+  owned.push(dir)
 })
 afterAll(() => {
-  rmSync(scratchBase, { recursive: true, force: true })
+  removeOwned(scratchBase, owned)
 })
 
 const hash = (c) => `sha256:${c.repeat(64)}`
@@ -187,7 +204,7 @@ const sealed = (ledger, conversationId, ownerEpoch) =>
   })
 
 describe('candidate C7 receipt-ledger same-cut proof (disposable SQLite, patched SDK copy only)', () => {
-  test('the read-only ledger is the live owner ledger from the same cut, and that cut is the C4 closure', async () => {
+  test('the read-only ledger equals the ledger a read-write reopen of a byte copy reads, from the same cut, and that cut is the C4 closure', async () => {
     const path = dbPath()
     const written = await produce(path, ['cancel:one', 'cancel:two'], {
       mutationId: 'mutation:ledger',
@@ -196,7 +213,8 @@ describe('candidate C7 receipt-ledger same-cut proof (disposable SQLite, patched
     await written.storage.close(context)
     expect(receipts.length).toBe(2)
 
-    // The cut is named by the closure: nothing can be committed after it, by the former holder or by anyone else.
+    // The cut is named by the closure: the former holder and any unfenced or unauthorized opener can no longer commit
+    // after it. An authorized successor can still acquire the fence at the closure epoch and write (see the controls below).
     const stranger = await node.openNodeSqliteStorage(path)
     expect(
       await code(
@@ -207,8 +225,9 @@ describe('candidate C7 receipt-ledger same-cut proof (disposable SQLite, patched
     ).toBe('PI_STORE_FENCED')
     await stranger.close(context)
 
-    // A live owner reads a byte copy (a read-write open must not touch the original).
-    const copy = `${path}.live-owner`
+    // The comparator is a read-write reopen of a byte copy (no fence is acquired; a read-write open must not touch the
+    // original).
+    const copy = `${path}.rw-copy`
     copyFileSync(path, copy)
     const owner = await node.openNodeSqliteStorage(copy)
     const live = await replay(owner)
@@ -298,7 +317,7 @@ describe('candidate C7 receipt-ledger same-cut proof (disposable SQLite, patched
       'PI_STORE_READ_ONLY_SIDECARS'
     )
     // Control: the main file alone is stale and still sits exactly at the closure cut, so a lexical or lenient read
-    // would have produced a ledger that is not the owner's.
+    // would have produced a ledger that is not the successor's.
     const stale = immutableDatabase(path)
     let staleLastSeq
     try {
@@ -316,7 +335,7 @@ describe('candidate C7 receipt-ledger same-cut proof (disposable SQLite, patched
     await next.harness.close(context)
   })
 
-  test('the equality has teeth: a live owner with one more receipt differs in ledger, cut and read outcome', async () => {
+  test('the equality has teeth: a successor that acquires the fence on a copy and commits one more receipt differs in ledger, cut and read outcome', async () => {
     const path = dbPath()
     const { storage, closure, conversationId } = await produce(path, ['cancel:one'], {
       mutationId: 'mutation:teeth',
@@ -326,7 +345,7 @@ describe('candidate C7 receipt-ledger same-cut proof (disposable SQLite, patched
     const detached = await replay(reader)
     await reader.close(context)
 
-    const copy = `${path}.live-owner`
+    const copy = `${path}.rw-copy`
     copyFileSync(path, copy)
     const owner = await node.openNodeSqliteStorage(copy)
     await owner.acquireWriterFence(holder({ ownerKey: 'owner:next', expectedEpoch: closure.epoch }))
@@ -351,5 +370,19 @@ describe('candidate C7 receipt-ledger same-cut proof (disposable SQLite, patched
         pinsFor('cancel:extra')
       ).outcome
     ).toBe('found')
+  })
+
+  test("cleanup removes only this run's own directories: a sibling run's sentinel under the same base survives", () => {
+    const base = mkdtempSync(join(dir, 'cleanup-base-'))
+    const mine = [mkdtempSync(join(base, 'sdk-')), mkdtempSync(join(base, 'db-'))]
+    const sibling = mkdtempSync(join(base, 'sdk-'))
+    const sentinel = join(sibling, 'sentinel')
+    writeFileSync(sentinel, 'active')
+    removeOwned(base, mine)
+    expect(mine.some((path) => existsSync(path))).toBe(false)
+    expect(readFileSync(sentinel, 'utf8')).toBe('active')
+    // Control: the shared base is removed only once nothing else is left in it.
+    removeOwned(base, [sibling])
+    expect(existsSync(base)).toBe(false)
   })
 })
