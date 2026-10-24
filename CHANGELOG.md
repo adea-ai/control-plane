@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.114.13](https://github.com/adea-ai/control-plane/compare/workspace-v1.114.12...workspace-v1.114.13) (2026-10-24)
+
+
+### Tests
+
+* **pi-durable:** offline C7c detached snapshot candidate, method A ([#1328](https://github.com/adea-ai/control-plane/issues/1328)) ([637f892](https://github.com/adea-ai/control-plane/commit/637f89236ab35a3d252f75ccb57a02a71e250a5b))
+
 ## [1.114.12](https://github.com/adea-ai/control-plane/compare/workspace-v1.114.11...workspace-v1.114.12) (2026-10-24)
 
 
