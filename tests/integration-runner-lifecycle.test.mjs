@@ -1190,8 +1190,11 @@ describe('integration runner resource ownership', () => {
   test(
     'separate invocations cannot reuse an owned fixture volume',
     () => {
-      const first = executeRunner()
-      const second = executeRunner()
+      // One shard exercises the complete ownership lifecycle; the default-partition
+      // test above separately checks every integration command. Keep these sequential
+      // so the second allocation must remain fresh after the first fixture is removed.
+      const first = executeRunner({ INTEGRATION_SHARD: '1' })
+      const second = executeRunner({ INTEGRATION_SHARD: '1' })
       const startedProject = (result) =>
         result.calls.find(({ program, args }) => program === 'docker' && args.includes('up'))
           .project
@@ -1226,7 +1229,8 @@ describe('integration runner resource ownership', () => {
   test(
     'a previously running PostgreSQL service is preserved',
     () => {
-      const result = executeRunner({ FAKE_POSTGRES_RUNNING: 'true' })
+      // Preservation depends on service ownership, not the number of integration files.
+      const result = executeRunner({ FAKE_POSTGRES_RUNNING: 'true', INTEGRATION_SHARD: '1' })
       expect(result.status).toBe(0)
       expect(destructiveCalls(result)).toEqual([])
       expect(
