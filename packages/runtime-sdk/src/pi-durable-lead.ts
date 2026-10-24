@@ -24,12 +24,12 @@ export const PiDurableLeadPreparationRefSchema = z.string().regex(/^prep_[a-f0-9
 const Caller = StateChangingCommandEnvelopeSchema.shape.caller.unwrap().strict()
 const Correlation = StateChangingCommandEnvelopeSchema.shape.correlation.strict()
 export const PiDurableLeadCommandEnvelopeSchema = StateChangingCommandEnvelopeSchema.extend({
-  caller: Caller,
-  correlation: Correlation,
+  caller: Caller as typeof Caller,
+  correlation: Correlation as typeof Correlation,
 }).strict()
 export const PiDurableLeadReadEnvelopeSchema = ReadRequestEnvelopeSchema.extend({
-  caller: Caller,
-  correlation: Correlation,
+  caller: Caller as typeof Caller,
+  correlation: Correlation as typeof Correlation,
 }).strict()
 /** Requested target reference: the session, task, and generation a caller
  *  asks to bind to an intent, echoed back on every receipt. UNTRUSTED by
@@ -61,7 +61,9 @@ export const PiDurableLeadObservedTargetSchema = z
     sessionId: z.string().trim().min(1).max(256),
     taskId: z.string().trim().min(1).max(256),
     /** The runtime-observed generation, when the runtime has observed one. */
-    generation: RuntimeObservedGenerationSchema.optional(),
+    generation: RuntimeObservedGenerationSchema.optional() as z.ZodOptional<
+      typeof RuntimeObservedGenerationSchema
+    >,
   })
   .readonly()
 export type PiDurableLeadObservedTarget = z.output<typeof PiDurableLeadObservedTargetSchema>
@@ -128,9 +130,13 @@ export const PiDurableLeadDispatchRequestSchema = PiDurableLeadCommandEnvelopeSc
   operation: z.literal('pi-durable.lead.dispatch'),
   payload: z
     .object({
-      intentId: IntentId,
-      preparationRef: PiDurableLeadPreparationRefSchema.optional(),
-      requestedTarget: PiDurableLeadRequestedTargetSchema.optional(),
+      intentId: IntentId as typeof IntentId,
+      preparationRef: PiDurableLeadPreparationRefSchema.optional() as z.ZodOptional<
+        typeof PiDurableLeadPreparationRefSchema
+      >,
+      requestedTarget: PiDurableLeadRequestedTargetSchema.optional() as z.ZodOptional<
+        typeof PiDurableLeadRequestedTargetSchema
+      >,
     })
     .strict(),
 })
@@ -146,7 +152,7 @@ export const PiDurableLeadProgressRequestSchema = PiDurableLeadReadEnvelopeSchem
   operation: z.literal('pi-durable.lead.progress'),
   parameters: z
     .object({
-      dispatchId: DispatchId,
+      dispatchId: DispatchId as typeof DispatchId,
       afterSequence: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
     })
     .strict(),
@@ -162,9 +168,11 @@ export const PiDurableLeadChildrenRequestSchema = PiDurableLeadReadEnvelopeSchem
   operation: z.literal('pi-durable.lead.children'),
   parameters: z
     .object({
-      dispatchId: DispatchId,
+      dispatchId: DispatchId as typeof DispatchId,
       /** Resume strictly after this child (acceptance time, then delegation ID). */
-      after: PiDurableLeadChildrenCursorSchema.optional(),
+      after: PiDurableLeadChildrenCursorSchema.optional() as z.ZodOptional<
+        typeof PiDurableLeadChildrenCursorSchema
+      >,
       /** Page size, 1..256; the default is the maximum. */
       limit: z.number().int().min(1).max(PI_DURABLE_LEAD_CHILDREN_MAX_PAGE).optional(),
     })
@@ -178,13 +186,17 @@ export const PiDurableLeadCancelRequestSchema = PiDurableLeadCommandEnvelopeSche
 export const PiDurableLeadReceiptResponseSchema = z
   .object({
     schemaVersion: z.literal('pi-lead-dispatch/v1'),
-    dispatchId: DispatchId,
-    intentId: IntentId,
-    executionId: IdentifierSchemas.executionId,
-    attemptId: IdentifierSchemas.attemptId,
+    dispatchId: DispatchId as typeof DispatchId,
+    intentId: IntentId as typeof IntentId,
+    executionId: IdentifierSchemas.executionId as typeof IdentifierSchemas.executionId,
+    attemptId: IdentifierSchemas.attemptId as typeof IdentifierSchemas.attemptId,
     runtimeSessionId: RuntimeExecutionHandleSchema.shape.externalSessionId.unwrap(),
-    requestedTarget: PiDurableLeadRequestedTargetSchema.optional(),
-    observedTarget: PiDurableLeadObservedTargetSchema.optional(),
+    requestedTarget: PiDurableLeadRequestedTargetSchema.optional() as z.ZodOptional<
+      typeof PiDurableLeadRequestedTargetSchema
+    >,
+    observedTarget: PiDurableLeadObservedTargetSchema.optional() as z.ZodOptional<
+      typeof PiDurableLeadObservedTargetSchema
+    >,
   })
   .strict()
   .superRefine((receipt, context) => {
@@ -195,12 +207,13 @@ const PlanDigest = z.string().regex(/^sha256:[a-f0-9]{64}$/)
 const ChildAllowanceBinding = {
   schemaVersion: z.literal('pi-lead-child-allowance/v1'),
   /** The accepted plan the statement is read from; the same plan the lead attempt runs under. */
-  executionPlanDigest: PlanDigest,
+  executionPlanDigest: PlanDigest as typeof PlanDigest,
   /** Pinned profile version the plan was compiled from; matches a caller's opaque profile pin. */
   profile: z
     .strictObject({
-      profileId: IdentifierSchemas.profileId,
-      profileVersionId: IdentifierSchemas.profileVersionId,
+      profileId: IdentifierSchemas.profileId as typeof IdentifierSchemas.profileId,
+      profileVersionId:
+        IdentifierSchemas.profileVersionId as typeof IdentifierSchemas.profileVersionId,
       version: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
       revision: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
     })
@@ -223,15 +236,17 @@ export const PiDurableLeadChildAllowanceSchema = z.discriminatedUnion('state', [
 export const PiDurableLeadPreparationSchema = z
   .object({
     schemaVersion: z.literal('pi-lead-preparation/v1'),
-    preparationRef: PiDurableLeadPreparationRefSchema,
-    intentId: IntentId,
-    executionId: IdentifierSchemas.executionId,
-    attemptId: IdentifierSchemas.attemptId,
-    selectionRef: ModelSelectionRefSchema,
+    preparationRef: PiDurableLeadPreparationRefSchema as typeof PiDurableLeadPreparationRefSchema,
+    intentId: IntentId as typeof IntentId,
+    executionId: IdentifierSchemas.executionId as typeof IdentifierSchemas.executionId,
+    attemptId: IdentifierSchemas.attemptId as typeof IdentifierSchemas.attemptId,
+    selectionRef: ModelSelectionRefSchema as typeof ModelSelectionRefSchema,
     selectionRevision: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
     funding: ModelSelectionFundingViewSchema.options[0],
     /** Absent from a control plane that predates this disclosure; absence is not `not_stated`. */
-    childAllowance: PiDurableLeadChildAllowanceSchema.optional(),
+    childAllowance: PiDurableLeadChildAllowanceSchema.optional() as z.ZodOptional<
+      typeof PiDurableLeadChildAllowanceSchema
+    >,
     expiresAt: z.iso.datetime(),
     replayed: z.boolean(),
   })
@@ -253,26 +268,30 @@ export const PiDurableLeadPreparationSchema = z
       })
   })
 export const PiDurableLeadPrepareResponseSchema = response.extend({
-  data: PiDurableLeadPreparationSchema,
+  data: PiDurableLeadPreparationSchema as typeof PiDurableLeadPreparationSchema,
 })
 /** Stored dispatch metadata; lookup never creates an execution or runtime session. */
 export const PiDurableLeadLookupResponseSchema = response.extend({
   data: z
     .object({
       schemaVersion: z.literal('pi-lead-lookup/v1'),
-      workspaceId: IdentifierSchemas.workspaceId,
-      intentId: IntentId,
+      workspaceId: IdentifierSchemas.workspaceId as typeof IdentifierSchemas.workspaceId,
+      intentId: IntentId as typeof IntentId,
       receipt: z
         .object({
-          dispatchId: DispatchId,
-          executionId: IdentifierSchemas.executionId,
-          attemptId: IdentifierSchemas.attemptId,
+          dispatchId: DispatchId as typeof DispatchId,
+          executionId: IdentifierSchemas.executionId as typeof IdentifierSchemas.executionId,
+          attemptId: IdentifierSchemas.attemptId as typeof IdentifierSchemas.attemptId,
           state: z.enum(['dispatching', 'dispatched', 'reconciliation_required']),
           runtimeSessionId: RuntimeExecutionHandleSchema.shape.externalSessionId
             .unwrap()
             .optional(),
-          requestedTarget: PiDurableLeadRequestedTargetSchema.optional(),
-          observedTarget: PiDurableLeadObservedTargetSchema.optional(),
+          requestedTarget: PiDurableLeadRequestedTargetSchema.optional() as z.ZodOptional<
+            typeof PiDurableLeadRequestedTargetSchema
+          >,
+          observedTarget: PiDurableLeadObservedTargetSchema.optional() as z.ZodOptional<
+            typeof PiDurableLeadObservedTargetSchema
+          >,
         })
         .strict()
         .superRefine((receipt, context) => {
@@ -286,19 +305,21 @@ export const PiDurableLeadLookupResponseSchema = response.extend({
 })
 export const PiDurableLeadDispatchResponseSchema = response.extend({
   data: PiDurableLeadReceiptResponseSchema.extend({
-    state: RuntimeExecutionStateSchema,
+    state: RuntimeExecutionStateSchema as typeof RuntimeExecutionStateSchema,
     replayed: z.boolean(),
   }),
 })
 export const PiDurableLeadStatusResponseSchema = response.extend({
   data: PiDurableLeadReceiptResponseSchema.extend({
-    state: RuntimeExecutionStateSchema,
-    status: RuntimeExecutionStatusSchema,
+    state: RuntimeExecutionStateSchema as typeof RuntimeExecutionStateSchema,
+    status: RuntimeExecutionStatusSchema as typeof RuntimeExecutionStatusSchema,
   }),
 })
 export const PiDurableLeadProgressResponseSchema = response.extend({
   data: PiDurableLeadReceiptResponseSchema.extend({
-    events: z.array(RuntimeExecutionProgressSchema).max(256),
+    events: z.array(RuntimeExecutionProgressSchema).max(256) as z.ZodArray<
+      typeof RuntimeExecutionProgressSchema
+    >,
     nextSequence: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
   }),
 })
@@ -314,8 +335,10 @@ const ChildReference = z
 export const PiDurableLeadChildOutcomeSchema = z
   .object({
     state: z.enum(['completed', 'failed', 'cancelled']),
-    resultRef: IdentifierSchemas.artifactId.optional(),
-    failureCode: ChildReference.optional(),
+    resultRef: IdentifierSchemas.artifactId.optional() as z.ZodOptional<
+      typeof IdentifierSchemas.artifactId
+    >,
+    failureCode: ChildReference.optional() as z.ZodOptional<typeof ChildReference>,
     publication: z
       .object({
         status: z.enum(['pending', 'published']),
@@ -331,10 +354,12 @@ export const PiDurableLeadChildOutcomeSchema = z
  */
 export const PiDurableLeadChildSchema = z
   .object({
-    delegationId: IdentifierSchemas.delegationId,
-    childExecutionId: IdentifierSchemas.executionId,
-    childAttemptId: IdentifierSchemas.attemptId.optional(),
-    role: ChildReference,
+    delegationId: IdentifierSchemas.delegationId as typeof IdentifierSchemas.delegationId,
+    childExecutionId: IdentifierSchemas.executionId as typeof IdentifierSchemas.executionId,
+    childAttemptId: IdentifierSchemas.attemptId.optional() as z.ZodOptional<
+      typeof IdentifierSchemas.attemptId
+    >,
+    role: ChildReference as typeof ChildReference,
     state: z.enum([
       'requested',
       'dispatched',
@@ -350,7 +375,9 @@ export const PiDurableLeadChildSchema = z
     acceptedAt: z.iso.datetime(),
     updatedAt: z.iso.datetime(),
     revision: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
-    outcome: PiDurableLeadChildOutcomeSchema.optional(),
+    outcome: PiDurableLeadChildOutcomeSchema.optional() as z.ZodOptional<
+      typeof PiDurableLeadChildOutcomeSchema
+    >,
   })
   .strict()
 /**
@@ -361,10 +388,14 @@ export const PiDurableLeadChildSchema = z
  */
 export const PiDurableLeadChildrenResponseSchema = response.extend({
   data: PiDurableLeadReceiptResponseSchema.extend({
-    children: z.array(PiDurableLeadChildSchema).max(PI_DURABLE_LEAD_CHILDREN_MAX_PAGE),
+    children: z
+      .array(PiDurableLeadChildSchema)
+      .max(PI_DURABLE_LEAD_CHILDREN_MAX_PAGE) as z.ZodArray<typeof PiDurableLeadChildSchema>,
     totalChildren: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
     complete: z.boolean(),
-    next: PiDurableLeadChildrenCursorSchema.optional(),
+    next: PiDurableLeadChildrenCursorSchema.optional() as z.ZodOptional<
+      typeof PiDurableLeadChildrenCursorSchema
+    >,
   }).superRefine((value, context) => {
     if (value.complete === (value.next !== undefined))
       context.addIssue({

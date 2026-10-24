@@ -448,7 +448,7 @@ export const DelegateInputSchema = z
     role: ReferenceSchema,
     profileVersionId: IdentifierSchemas.profileVersionId,
     objective: z.string().min(1).max(8_192),
-    parentPlan: ExecutionPlanSchema,
+    parentPlan: ExecutionPlanSchema as typeof ExecutionPlanSchema,
     childPlan: z.unknown(),
     policy: DelegationPolicySchema,
     acceptedAt: TimestampSchema,

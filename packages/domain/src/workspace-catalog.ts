@@ -223,7 +223,10 @@ export class WorkspaceCatalog {
       : { items }
   }
 
-  async getSkill(skillId: string, skillVersionId?: string) {
+  async getSkill(
+    skillId: string,
+    skillVersionId?: string
+  ): Promise<{ skill: Skill; versions: SkillVersion[]; version: SkillVersion | undefined }> {
     const skill = await this.#visibleSkill(skillId)
     const versions = sortVersions(
       (await this.store.listSkillVersions(skill.skillId)).filter(
@@ -241,7 +244,14 @@ export class WorkspaceCatalog {
     return { skill, versions, version }
   }
 
-  async getAgentProfile(profileId: string, profileVersionId?: string) {
+  async getAgentProfile(
+    profileId: string,
+    profileVersionId?: string
+  ): Promise<{
+    profile: AgentProfile
+    versions: AgentProfileVersion[]
+    version: AgentProfileVersion | undefined
+  }> {
     const profile = await this.#visibleProfile(profileId)
     const versions = sortVersions(
       (await this.store.listAgentProfileVersions(profile.profileId)).filter(

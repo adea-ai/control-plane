@@ -59,7 +59,7 @@ current-candidate test pass is claimed here.
 
 The published scope is the diff from the base `ab931d068142a0c5629ed4d6cc2c96a1b377a986`
 to the published head, which is the head that carries this section. The complete changed scope is
-**276 paths: 90 added, 186 modified**; no path was deleted.
+**280 paths: 90 added, 190 modified**; no path was deleted.
 `tests/pi-durable-cp1048-evidence-discipline.test.mjs` checks this list, these counts and this
 area table against the repository, so the published scope cannot drift away from the code
 without that lane failing.
@@ -81,12 +81,12 @@ without that lane failing.
 | `packages/acp-adapter`              | 0     | 4        | 4     |
 | `packages/config`                   | 0     | 4        | 4     |
 | `packages/context`                  | 0     | 1        | 1     |
-| `packages/contracts`                | 1     | 8        | 9     |
+| `packages/contracts`                | 1     | 9        | 10    |
 | `packages/control-sdk`              | 2     | 8        | 10    |
 | `packages/cortana-context-adapter`  | 0     | 1        | 1     |
 | `packages/credential-vault`         | 0     | 1        | 1     |
 | `packages/database`                 | 1     | 4        | 5     |
-| `packages/domain`                   | 0     | 6        | 6     |
+| `packages/domain`                   | 0     | 8        | 8     |
 | `packages/events`                   | 0     | 1        | 1     |
 | `packages/execution-plan`           | 0     | 1        | 1     |
 | `packages/langgraph-adapter`        | 0     | 1        | 1     |
@@ -103,7 +103,7 @@ without that lane failing.
 | `packages/runtime-gateway-protocol` | 0     | 1        | 1     |
 | `packages/runtime-sdk`              | 0     | 4        | 4     |
 | `packages/sandbox`                  | 0     | 1        | 1     |
-| `packages/sqlite-persistence`       | 0     | 7        | 7     |
+| `packages/sqlite-persistence`       | 0     | 8        | 8     |
 | `packages/tool-execution`           | 0     | 4        | 4     |
 | `packages/tool-sdk`                 | 0     | 1        | 1     |
 | `packages/usage-ledger`             | 0     | 1        | 1     |
@@ -219,6 +219,7 @@ M  packages/contracts/src/decision-resolution.ts
 M  packages/contracts/src/index.test.mjs
 M  packages/contracts/src/index.ts
 A  packages/contracts/src/pi-child-publication.ts
+M  packages/contracts/src/runtime-discovery.ts
 M  packages/contracts/src/workspace-catalog.ts
 M  packages/control-sdk/CHANGELOG.md
 M  packages/control-sdk/openapi/control-plane.v3.json
@@ -243,6 +244,8 @@ M  packages/domain/src/command-inbox.test.mjs
 M  packages/domain/src/command-inbox.ts
 M  packages/domain/src/execution-lifecycle.test.mjs
 M  packages/domain/src/execution-lifecycle.ts
+M  packages/domain/src/versioned-catalog.ts
+M  packages/domain/src/workspace-catalog.ts
 M  packages/events/package.json
 M  packages/execution-plan/package.json
 M  packages/langgraph-adapter/package.json
@@ -332,6 +335,7 @@ M  packages/sqlite-persistence/package.json
 M  packages/sqlite-persistence/src/delegation-repository.ts
 M  packages/sqlite-persistence/src/delegation-terminal-receipt.test.mjs
 M  packages/sqlite-persistence/src/delegation-terminal-receipt.ts
+M  packages/sqlite-persistence/src/delegation-tool-admission-repository.ts
 M  packages/sqlite-persistence/src/durability-repositories.test.mjs
 M  packages/sqlite-persistence/src/durability-repositories.ts
 M  packages/tool-execution/CHANGELOG.md
