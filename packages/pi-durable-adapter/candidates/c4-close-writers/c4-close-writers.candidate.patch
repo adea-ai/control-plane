@@ -25,7 +25,7 @@ index 2addec6..12b1bb6 100644
  /** Apply all pending schema migrations atomically. */
  export async function applySqliteMigrations(database, migrations = SQLITE_MIGRATIONS) {
 diff --git a/dist/storage/sqlite/storage.d.ts b/dist/storage/sqlite/storage.d.ts
-index 437b424..a4649d8 100644
+index 437b424..a574ade 100644
 --- a/dist/storage/sqlite/storage.d.ts
 +++ b/dist/storage/sqlite/storage.d.ts
 @@ -14,6 +14,21 @@ export type WriterFenceToken = {
@@ -55,14 +55,14 @@ index 437b424..a4649d8 100644
      acquireWriterFence(request: WriterFenceRequest): Promise<WriterFenceToken>;
      private assertWriterFence;
 +    private closures;
-+    private closing;
++    private pendingWriterClosures;
 +    /** CANDIDATE C4 (not consumable): atomically bump the fence epoch past this holder and commit a closure receipt. */
 +    closeWriterFence(request: WriterClosureRequest): Promise<WriterClosureReceipt>;
      commit(writes: readonly StorageWrite[], _context: Context): Promise<Seq>;
      commitGuarded(writes: readonly StorageWrite[], finalGuard: () => void, context: Context): Promise<Seq>;
      mintId<I extends Id<string>>(): Promise<I>;
 diff --git a/dist/storage/sqlite/storage.js b/dist/storage/sqlite/storage.js
-index eec3e34..a065f71 100644
+index eec3e34..a22c121 100644
 --- a/dist/storage/sqlite/storage.js
 +++ b/dist/storage/sqlite/storage.js
 @@ -135,6 +135,101 @@ export class SqliteStorage {
@@ -71,7 +71,7 @@ index eec3e34..a065f71 100644
      }
 +    // Immutable replay evidence per mutation for the lifetime of this storage: the receipt and the holder token it closed.
 +    closures = new Map();
-+    closing = new Map();
++    pendingWriterClosures = new Map();
 +    /**
 +     * CANDIDATE C4 (not consumable). In one transaction: confirm this storage still holds the fence, bump the epoch past it
 +     * and commit the closure receipt. Commits are serialized by the transaction, so every earlier commit of this holder has
@@ -90,14 +90,14 @@ index eec3e34..a065f71 100644
 +        const { mutationId } = request;
 +        if (typeof mutationId !== "string" || mutationId.length === 0 || mutationId.length > 8192 || mutationId.trim() !== mutationId)
 +            throw new StorageRejected("PI_STORE_CLOSURE_REQUEST_INVALID");
-+        const pending = this.closing.get(mutationId);
++        const pending = this.pendingWriterClosures.get(mutationId);
 +        if (pending !== undefined)
 +            return pending;
 +        const run = this.closeOnce(mutationId).finally(() => {
-+            if (this.closing.get(mutationId) === run)
-+                this.closing.delete(mutationId);
++            if (this.pendingWriterClosures.get(mutationId) === run)
++                this.pendingWriterClosures.delete(mutationId);
 +        });
-+        this.closing.set(mutationId, run);
++        this.pendingWriterClosures.set(mutationId, run);
 +        return run;
 +    }
 +    async closeOnce(mutationId) {
@@ -135,7 +135,7 @@ index eec3e34..a065f71 100644
 +            const row = await transaction.get("SELECT owner_key, epoch, armed, lineage_id, generation FROM durable_writer_fence WHERE singleton = 1");
 +            if (row === undefined)
 +                throw new StorageRejected("PI_STORE_FENCE_MISSING");
-+            if (row.armed !== 1 || row.owner_key !== held.ownerKey || row.epoch !== held.epoch)
++            if (row.armed !== 1 || row.owner_key !== held.ownerKey || row.epoch !== held.epoch || row.lineage_id !== held.lineageId || row.generation !== held.generation)
 +                throw new StorageRejected("PI_STORE_FENCED");
 +            if (!Number.isSafeInteger(row.epoch) || !Number.isSafeInteger(row.epoch + 1))
 +                throw new StorageRejected("PI_STORE_FENCE_EPOCH_EXHAUSTED");

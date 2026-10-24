@@ -11,8 +11,9 @@ Tests apply it only to temporary copies of the installed SDK and run on disposab
 
 - migration 3: `durable_writer_closure(mutation_id PRIMARY KEY, owner_key, lineage_id, generation,
   previous_epoch, epoch, last_seq, closed_at) STRICT`;
-- `SqliteStorage.closeWriterFence({ mutationId })`: in one transaction it confirms this storage still holds the
-  fence, bumps the epoch by one, and inserts the closure row. It returns a frozen receipt shaped as
+- `SqliteStorage.closeWriterFence({ mutationId })` (its in-flight map is `pendingWriterClosures`; the SDK's own
+  `closing` close-lifecycle field is untouched, and a test checks the patched class for name collisions): in one transaction it confirms this storage still holds the
+  fence (owner, epoch, lineage and generation all equal the held token), bumps the epoch by one, and inserts the closure row. It returns a frozen receipt shaped as
   `PiWriterClosureReceiptSchema` (`src/cancellation-registration.ts`), then unbinds this storage, so the former
   holder is fenced like any other writer. `lastSeq` is the last committed sequence, read inside the same
   transaction that bumps the epoch.

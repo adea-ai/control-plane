@@ -66,12 +66,16 @@ const load = (pkg) => import(pathToFileURL(join(pkg, 'dist/storage/sqlite/node.j
 
 let c4
 let c2only
+let c4Pkg
+let c2Pkg
 let dir
 let counter = 0
 const context = {}
 beforeAll(async () => {
-  c4 = await load(makeSdk({ c4: true }))
-  c2only = await load(makeSdk({ c4: false }))
+  c4Pkg = makeSdk({ c4: true })
+  c2Pkg = makeSdk({ c4: false })
+  c4 = await load(c4Pkg)
+  c2only = await load(c2Pkg)
   dir = mkdtempSync(join(scratchBase, 'db-'))
   roots.push(dir)
 })
@@ -110,6 +114,7 @@ const rows = (path, sql) => {
   }
 }
 const fenceEpoch = (path) => rows(path, 'SELECT epoch FROM durable_writer_fence')[0].epoch
+const fenceRow = (path) => rows(path, 'SELECT * FROM durable_writer_fence')[0]
 async function heldStorage(path = dbPath()) {
   const storage = await c4.openNodeSqliteStorage(path)
   await storage.acquireWriterFence(acquireRequest())
@@ -425,6 +430,85 @@ describe('candidate C4 closeWriterFence (disposable SQLite, patched copy only)',
     )
     expect(await storage.closeWriterFence({ mutationId: 'mutation:second' })).toBe(second)
     await storage.close(context)
+  })
+
+  test('the fresh-close fence check compares lineage and generation as well as owner and epoch', async () => {
+    for (const assignment of ["lineage_id = 'lineage:other'", "generation = 'gen:other'"]) {
+      const { storage, path } = await heldStorage()
+      await write(storage)
+      // Owner and epoch still match the held token; only the stored holder identity differs.
+      const raw = new DatabaseSync(path)
+      raw.exec(`UPDATE durable_writer_fence SET ${assignment}`)
+      raw.close()
+      const before = fenceRow(path)
+      expect(await code(storage.closeWriterFence({ mutationId: 'mutation:identity' }))).toBe(
+        'PI_STORE_FENCED'
+      )
+      expect(fenceRow(path)).toEqual(before)
+      expect(closureRows(path)).toEqual([])
+      await storage.close(context)
+    }
+  })
+
+  test('C4 state does not collide with any member of the installed class', () => {
+    const members = (source) => {
+      const names = []
+      for (const line of source.split('\n')) {
+        const match =
+          /^ {4}(?:static |async |private |readonly )*([A-Za-z_$][\w$]*)\s*(?:[=;(]|$)/.exec(line)
+        if (
+          match &&
+          !['constructor', 'if', 'for', 'while', 'return', 'else', 'try', 'throw'].includes(
+            match[1]
+          )
+        )
+          names.push(match[1])
+      }
+      return names
+    }
+    const classBody = (pkg) =>
+      readFileSync(join(pkg, 'dist/storage/sqlite/storage.js'), 'utf8').split(
+        'export class SqliteStorage'
+      )[1]
+    const withC4 = members(classBody(c4Pkg))
+    const withoutC4 = members(classBody(c2Pkg))
+    const added = withC4.filter((name) => !withoutC4.includes(name)).toSorted()
+    expect(added).toEqual(['closeOnce', 'closeWriterFence', 'closures', 'pendingWriterClosures'])
+    // Nothing is declared twice, and the storage close-lifecycle fields are still the SDK's own.
+    expect(new Set(withC4).size).toBe(withC4.length)
+    for (const own of ['closed', 'closing', 'closeDatabase', 'close']) expect(withC4).toContain(own)
+  })
+
+  test('after C4 operations the database really closes, and a repeated close stays valid', async () => {
+    const { storage, path } = await heldStorage()
+    let databaseCloses = 0
+    const closeDatabase = storage.db.close.bind(storage.db)
+    storage.db.close = (...args) => {
+      databaseCloses += 1
+      return closeDatabase(...args)
+    }
+    await write(storage)
+    // Close, a sequential replay, and a concurrent duplicate before the storage itself is closed.
+    const gate = storage.closeWriterFence({ mutationId: 'mutation:lifecycle' })
+    const duplicate = storage.closeWriterFence({ mutationId: 'mutation:lifecycle' })
+    expect(await duplicate).toBe(await gate)
+    await storage.closeWriterFence({ mutationId: 'mutation:lifecycle' })
+    expect(databaseCloses).toBe(0)
+    const closing = storage.close(context)
+    await closing
+    expect(databaseCloses).toBe(1)
+    // A repeated close returns the same settled promise and does not close the database again.
+    expect(storage.close(context)).toBe(closing)
+    await storage.close(context)
+    expect(databaseCloses).toBe(1)
+    // The storage refuses further work, including C4 calls, and the file opens cleanly under a new storage.
+    expect(await code(write(storage))).not.toBe('no error')
+    expect(await code(storage.closeWriterFence({ mutationId: 'mutation:lifecycle' }))).not.toBe(
+      'no error'
+    )
+    const reopened = await c4.openNodeSqliteStorage(path)
+    expect(closureRows(path).length).toBe(1)
+    await reopened.close(context)
   })
 
   test('an unbound storage cannot close', async () => {
