@@ -21,18 +21,18 @@ index 1d8c520..8d6a813 100644
  export declare function openNodeSqliteDatabase(path: string, options?: NodeSqliteStorageOptions): Promise<NodeSqliteDatabase>;
  /** Open or create file-backed durable storage using Node's built-in SQLite. */
 diff --git a/dist/storage/sqlite/node.js b/dist/storage/sqlite/node.js
-index 3c50d87..dd04e56 100644
+index 3c50d87..6c9de88 100644
 --- a/dist/storage/sqlite/node.js
 +++ b/dist/storage/sqlite/node.js
 @@ -1,5 +1,6 @@
 -import { mkdir } from "node:fs/promises";
-+import { access, mkdir } from "node:fs/promises";
++import { lstat, mkdir, realpath } from "node:fs/promises";
  import { dirname } from "node:path";
 +import { pathToFileURL } from "node:url";
  import { DatabaseSync } from "node:sqlite";
  import { StorageRejected } from "../../errors.js";
  import { SqliteStorage } from "./storage.js";
-@@ -180,6 +181,60 @@ export class NodeSqliteDatabase extends NodeSqliteExecutor {
+@@ -180,6 +181,77 @@ export class NodeSqliteDatabase extends NodeSqliteExecutor {
          return this.access.run(operation);
      }
  }
@@ -67,33 +67,50 @@ index 3c50d87..dd04e56 100644
 +        });
 +    }
 +}
++/** True only when the filesystem proves the path is absent; any other inspection failure is not absence. */
++async function proveAbsentOrPresent(path) {
++    try {
++        await lstat(path);
++        return true;
++    }
++    catch (error) {
++        if (error?.code === "ENOENT")
++            return false;
++        throw new StorageRejected("PI_STORE_READ_ONLY_INSPECTION_FAILED", { cause: error });
++    }
++}
 +/**
 + * CANDIDATE C7 (not consumable). Open an existing durable store for reading only. It never creates the file or its
 + * directory, issues no write PRAGMA, never migrates, and refuses a store that has -wal, -shm or -journal sidecars: an
 + * immutable connection ignores them, so reading past them could return stale data. Use a cleanly closed store.
++ * The path is resolved to its real location once, and that one path is used for the sidecar checks and for the open, so a
++ * symlink alias cannot hide sidecars that sit beside the real file. Only ENOENT counts as absent; any other failure to
++ * inspect the file or a sidecar fails closed with PI_STORE_READ_ONLY_INSPECTION_FAILED.
 + */
 +export async function openNodeSqliteReadOnlyDatabase(path) {
 +    if (typeof path !== "string" || path.length === 0 || path === ":memory:" || path.startsWith("file:"))
 +        throw new StorageRejected("PI_STORE_READ_ONLY_PATH_INVALID");
++    let real;
 +    try {
-+        await access(path);
++        real = await realpath(path);
 +    }
-+    catch {
-+        throw new StorageRejected("PI_STORE_READ_ONLY_ABSENT");
++    catch (error) {
++        if (error?.code === "ENOENT")
++            throw new StorageRejected("PI_STORE_READ_ONLY_ABSENT");
++        throw new StorageRejected("PI_STORE_READ_ONLY_INSPECTION_FAILED", { cause: error });
 +    }
 +    for (const suffix of ["-wal", "-shm", "-journal"]) {
-+        const sidecar = await access(`${path}${suffix}`).then(() => true, () => false);
-+        if (sidecar)
++        if (await proveAbsentOrPresent(`${real}${suffix}`))
 +            throw new StorageRejected("PI_STORE_READ_ONLY_SIDECARS");
 +    }
-+    const uri = pathToFileURL(path);
++    const uri = pathToFileURL(real);
 +    uri.search = "?mode=ro&immutable=1";
 +    return new NodeSqliteReadOnlyDatabase(new DatabaseSync(uri.href, { readOnly: true }));
 +}
  /** Open and configure a Node-backed SQLite database facade. */
  export async function openNodeSqliteDatabase(path, options = {}) {
      const checkpointPages = options.walAutoCheckpointPages ?? DEFAULT_WAL_AUTO_CHECKPOINT_PAGES;
-@@ -206,5 +261,9 @@ export async function openNodeSqliteDatabase(path, options = {}) {
+@@ -206,5 +278,9 @@ export async function openNodeSqliteDatabase(path, options = {}) {
  }
  /** Open or create file-backed durable storage using Node's built-in SQLite. */
  export async function openNodeSqliteStorage(path, options = {}) {

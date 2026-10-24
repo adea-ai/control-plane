@@ -12,6 +12,7 @@ import {
   realpathSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs'
 import { createRequire } from 'node:module'
@@ -268,6 +269,75 @@ describe('candidate C7 read-only open (disposable SQLite, patched copies only)',
     expect(during).toContain(`${path.split('/').at(-1)}-journal`)
     expect(fingerprint(path)).toEqual(before)
     expect(listing(path)).toEqual([path.split('/').at(-1)])
+  })
+
+  test('a symlink alias cannot hide sidecars at the real path: the reader is refused instead of reading stale main-file data', async () => {
+    const real = await makeStore(v3) // checkpointed: two conversations in the main file, no sidecars
+    const alias = join(dir, `alias-${counter++}.sqlite`)
+    symlinkSync(real, alias)
+    const writer = await v3.openNodeSqliteStorage(real)
+    await write(writer) // uncheckpointed WAL write at the real path: a third conversation lives only in the WAL
+    expect((await writer.scanConversations({}, 100, undefined, context)).items.length).toBe(3)
+    // Control: an immutable read of the main file alone, which is what a lexical sidecar check would have allowed, is stale.
+    const stale = immutableDatabase(real)
+    expect(stale.prepare('SELECT count(*) AS n FROM conversations').get().n).toBe(2)
+    stale.close()
+    const before = listing(real)
+    expect(await code(v3.openNodeSqliteStorage(alias, { mode: 'read-only' }))).toBe(
+      'PI_STORE_READ_ONLY_SIDECARS'
+    )
+    expect(await code(v3.openNodeSqliteStorage(real, { mode: 'read-only' }))).toBe(
+      'PI_STORE_READ_ONLY_SIDECARS'
+    )
+    expect(listing(real)).toEqual(before)
+    await writer.close(context)
+    // After a clean close the alias reads the real store, including the third conversation.
+    const reader = await v3.openNodeSqliteStorage(alias, { mode: 'read-only' })
+    expect((await reader.scanConversations({}, 100, undefined, context)).items.length).toBe(3)
+    await reader.close(context)
+    expect(listing(real)).toEqual([real.split('/').at(-1)])
+  })
+
+  test('a chain of symlinks resolves to the real path, and a dangling or looping alias fails closed', async () => {
+    const real = await makeStore(v3)
+    const first = join(dir, `chain-a-${counter++}`)
+    const second = join(dir, `chain-b-${counter++}`)
+    symlinkSync(real, first)
+    symlinkSync(first, second)
+    const storage = await v3.openNodeSqliteStorage(second, { mode: 'read-only' })
+    expect((await storage.scanConversations({}, 100, undefined, context)).items.length).toBe(2)
+    await storage.close(context)
+    const dangling = join(dir, `dangling-${counter++}`)
+    symlinkSync(join(dir, 'no-such-target'), dangling)
+    expect(await code(v3.openNodeSqliteStorage(dangling, { mode: 'read-only' }))).toBe(
+      'PI_STORE_READ_ONLY_ABSENT'
+    )
+    const loopA = join(dir, `loop-a-${counter++}`)
+    const loopB = join(dir, `loop-b-${counter++}`)
+    symlinkSync(loopB, loopA)
+    symlinkSync(loopA, loopB)
+    // ELOOP is an inspection failure, not proof the file is absent.
+    expect(await code(v3.openNodeSqliteStorage(loopA, { mode: 'read-only' }))).toBe(
+      'PI_STORE_READ_ONLY_INSPECTION_FAILED'
+    )
+  })
+
+  test('an error inspecting a sidecar other than "absent" fails closed and touches nothing', async () => {
+    const source = await makeStore(v3)
+    // A 252-character name is a valid file name, but its "-wal" sidecar name (256) exceeds NAME_MAX, so inspecting the
+    // sidecar fails with ENAMETOOLONG on every POSIX filesystem. That is not proof of absence.
+    const path = join(dir, 'n'.repeat(252))
+    copyFileSync(source, path)
+    const before = fingerprint(path)
+    expect(await code(v3.openNodeSqliteStorage(path, { mode: 'read-only' }))).toBe(
+      'PI_STORE_READ_ONLY_INSPECTION_FAILED'
+    )
+    expect(fingerprint(path)).toEqual(before)
+    // Control: the same bytes under an ordinary name open fine, so the refusal came from the inspection error alone.
+    const ordinary = join(dir, `ordinary-${counter++}.sqlite`)
+    copyFileSync(source, ordinary)
+    const storage = await v3.openNodeSqliteStorage(ordinary, { mode: 'read-only' })
+    await storage.close(context)
   })
 
   test('every mutating call rejects with PI_STORE_READ_ONLY and leaves bytes unchanged', async () => {
