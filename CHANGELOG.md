@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.114.10](https://github.com/adea-ai/control-plane/compare/workspace-v1.114.9...workspace-v1.114.10) (2026-10-24)
+
+
+### Tests
+
+* **pi-durable:** characterize storage backend parity for the offline candidates ([#1323](https://github.com/adea-ai/control-plane/issues/1323)) ([a705966](https://github.com/adea-ai/control-plane/commit/a70596615d676b6a2343184e038ebe4d2bd37c54))
+
 ## [1.114.9](https://github.com/adea-ai/control-plane/compare/workspace-v1.114.8...workspace-v1.114.9) (2026-10-24)
 
 
