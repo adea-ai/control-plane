@@ -18,7 +18,8 @@ fails closed on any sidecar inspection error other than a proven absent file.
 
 **Not implemented:** the "documented snapshot-consistent mode" named below. Only the default read-only mode exists; an unknown
 mode is refused (`PI_STORE_OPEN_MODE_INVALID`), and a store with `-wal`, `-shm` or `-journal` sidecars is refused
-(`PI_STORE_READ_ONLY_SIDECARS`). There is also no issuer, no quiescent-capture method, no SDK adoption and no live use. The
+(`PI_STORE_READ_ONLY_SIDECARS`). That check is sidecar presence at the real path plus the schema version; it does not establish
+owner or process liveness, and absent sidecars are not proof that no live writer exists. There is also no issuer, no quiescent-capture method, no SDK adoption and no live use. The
 C7 patch adds no migration and reads schemas 1, 2 and 3 as they are; the C2 and C4 candidates it is stacked on raise the
 store schema and are not rollback-safe.
 

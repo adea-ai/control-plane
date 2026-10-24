@@ -50,8 +50,11 @@ It is evidence that, at that epoch, the store accepted no commit after `lastSeq`
 other writer without the new token. It is committed in the store and SELECT-readable through a separate read-only connection to the live database file (this slice's tests do this).
 Two later offline candidates build on that, both test-only on temporary SDK copies and disposable files: the C7 read-only open
 (`../c7-read-only-open/`, #1318) reads a cleanly closed store without writing, and a proof test (#1319) shows the receipt ledger
-read that way equals the ledger a read-write reopen of a byte copy reads, at the closure's `lastSeq`. Neither is a capture method:
-a store with a live owner or an uncheckpointed WAL is refused, and no issuer, quiescent-capture method or live use exists.
+read that way equals the ledger a read-write reopen of a byte copy reads, at the closure's `lastSeq`. Neither is a capture method.
+The C7 open checks the schema and whether `-wal`, `-shm` or `-journal` files exist at the canonical (real) path, and refuses when
+they do. The tests show this only for their fixtures: a store held open by a writer, and a successor's uncheckpointed WAL. It does
+not establish that an owner or process is live or gone, and it gives no quiescent-capture attestation. Absence of sidecars is not
+proof that no live writer exists. No issuer, quiescent-capture method or live use exists.
 It grants no authority. A caller still checks it against what it independently holds with
 `assertPiWriterClosureReceipt`.
 
