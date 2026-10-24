@@ -1152,40 +1152,283 @@ test('runtime verification maps only the reviewed host and port and preserves ru
 
 // These are real postgres.js SSLRequest/TLS handshakes on loopback, including
 // the actual migration executor. No database, credential or external route is used.
+//
+// Every scenario and runtime still gets its own child process. Inside one child, the three operations run one after
+// another, and each builds its own contract, TLS policy and client, so nothing but the process (and its fixed
+// environment, which never depended on the operation) is shared between operations. Each child prints one labelled
+// JSON line per operation: 6 scenarios give 27 labels over 9 children.
+const TLS_OPERATIONS = ['inspection', 'runtime-verification', 'migration']
+const TLS_SCENARIOS = [
+  'trusted',
+  'untrusted',
+  'expired',
+  'wrong-host',
+  'pinned-peer',
+  'pinned-wrong-peer',
+]
+const TLS_EXPECTED_CODES = {
+  trusted: 'XX999',
+  'pinned-peer': 'XX999',
+  untrusted: 'DEPTH_ZERO_SELF_SIGNED_CERT',
+  expired: 'CERT_HAS_EXPIRED',
+  'wrong-host': 'ERR_TLS_CERT_ALTNAME_INVALID',
+  'pinned-wrong-peer': 'ERR_TLS_CERT_ALTNAME_INVALID',
+}
+const tlsRuntimes = (scenario) =>
+  scenario.startsWith('pinned-') || scenario === 'trusted'
+    ? [
+        { name: 'node', command: 'node' },
+        { name: 'host', command: process.execPath },
+      ]
+    : [{ name: 'node', command: 'node' }]
+const tlsLabel = (scenario, runtime, operation) => `${scenario}/${runtime}/${operation}`
+const tlsLabels = (scenario, runtime) =>
+  TLS_OPERATIONS.map((operation) => tlsLabel(scenario, runtime, operation))
+
+/** Parses a child's labelled JSON lines against the labels it must have printed. */
+function parseTlsResults(stdout, expectedLabels) {
+  const results = new Map()
+  const problems = []
+  for (const line of stdout.split('\n')) {
+    if (line.trim() === '') continue
+    let result
+    try {
+      result = JSON.parse(line)
+    } catch {
+      problems.push(`unparseable result line: ${line.slice(0, 80)}`)
+      continue
+    }
+    if (typeof result?.label !== 'string') {
+      problems.push(`result line without a label: ${line.slice(0, 80)}`)
+    } else if (!expectedLabels.includes(result.label)) {
+      problems.push(`unexpected result label: ${result.label}`)
+    } else if (results.has(result.label)) {
+      problems.push(`duplicate result label: ${result.label}`)
+    } else {
+      results.set(result.label, result)
+    }
+  }
+  for (const label of expectedLabels)
+    if (!results.has(label)) problems.push(`missing result label: ${label}`)
+  return { results, problems }
+}
+
+/** Runs one child to completion and keeps whatever it printed, so a failed exit never hides its results. */
+async function runTlsChild(execFile, command, args, options) {
+  try {
+    const { stdout } = await execFile(command, args, options)
+    return { stdout, failure: undefined }
+  } catch (error) {
+    return {
+      stdout: typeof error.stdout === 'string' ? error.stdout : '',
+      failure: `exit ${error.code ?? 'none'} signal ${error.signal ?? 'none'}${error.killed ? ' (killed)' : ''}`,
+    }
+  }
+}
+
+/** One accepted PostgreSQL SSLRequest per connection; the secure context may differ per connection. */
+async function startTlsServer(contextFor) {
+  const sockets = new Set()
+  const connections = []
+  const server = createServer((socket) => {
+    const connection = { sessionReused: undefined }
+    const index = connections.push(connection) - 1
+    sockets.add(socket)
+    socket.on('error', () => {})
+    socket.once('close', () => sockets.delete(socket))
+    let request = Buffer.alloc(0)
+    const receive = (chunk) => {
+      request = Buffer.concat([request, chunk])
+      if (request.length < 8) return
+      socket.off('data', receive)
+      assert.deepEqual([...request.subarray(0, 8)], [0, 0, 0, 8, 4, 210, 22, 47])
+      socket.write('S')
+      const secure = new TLSSocket(socket, { isServer: true, secureContext: contextFor(index) })
+      secure.on('error', () => {})
+      secure.once('secure', () => {
+        connection.sessionReused = secure.isSessionReused()
+      })
+      secure.once('data', () => {
+        // A trusted handshake reaches PostgreSQL startup. This synthetic
+        // error proves that success was beyond TLS, without executing SQL.
+        const fields = Buffer.from('SERROR\0CXX999\0Msynthetic TLS accepted\0\0')
+        const header = Buffer.alloc(5)
+        header[0] = 69
+        header.writeInt32BE(fields.length + 4, 1)
+        secure.end(Buffer.concat([header, fields]))
+      })
+    }
+    socket.on('data', receive)
+  })
+  await new Promise((resolve, reject) => {
+    server.once('error', reject)
+    server.listen(0, '127.0.0.1', resolve)
+  })
+  return {
+    port: server.address().port,
+    connections,
+    async close() {
+      for (const socket of sockets) socket.destroy()
+      await new Promise((resolve) => server.close(resolve))
+    },
+  }
+}
+
+/** The child program: the three operations in order, each with a fresh contract, TLS policy and client. */
+function tlsChildScript({ port, tlsIdentity, certificate, prefix }) {
+  return `
+    import { resolveProductionDatabaseTls } from './scripts/production-database-target.mjs';
+    import { createPostgresSession, runtimeVerificationUrl } from './scripts/migrate-production-schema.mjs';
+    import { migrateDatabase } from './packages/database/dist/migration.js';
+    const url = 'postgresql://synthetic:synthetic@localhost:${port}/synthetic?sslmode=require';
+    const baseContract = ${JSON.stringify(productionDatabaseContract)};
+    const tlsIdentity = ${JSON.stringify(tlsIdentity)};
+    const certificate = ${JSON.stringify(certificate) ?? 'undefined'};
+    async function attempt(operation) {
+      const label = ${JSON.stringify(prefix)} + '/' + operation;
+      const contract = structuredClone(baseContract);
+      contract.identity.migration = {hostname:'localhost', port:${port}};
+      contract.identity.runtimeVerification = {...contract.identity.migration};
+      contract.identity.tls = structuredClone(tlsIdentity);
+      const tls = resolveProductionDatabaseTls(contract, certificate);
+      let session;
+      try {
+        if (operation !== 'migration') {
+          let target = new URL(url);
+          if (operation === 'runtime-verification') {
+            target = runtimeVerificationUrl(${JSON.stringify(runtimeUrl)}, contract);
+          }
+          session = createPostgresSession(target, {connectTimeoutSeconds:2, statementTimeoutMs:1000, lockTimeoutMs:1000}, tls);
+          await session.readConnectedRole();
+        } else {
+          await migrateDatabase({role:'migration',url}, {verifyTls:true,connectTimeoutSeconds:2,...(typeof tls === 'object' ? {tls} : {})});
+        }
+        return {label, connected: true};
+      } catch (error) {
+        return {label, code: error.code ?? error.cause?.code, message: error.cause?.message ?? error.message};
+      } finally {
+        if (session) await session.close();
+      }
+    }
+    for (const operation of ${JSON.stringify(TLS_OPERATIONS)}) {
+      let result;
+      try {
+        result = await attempt(operation);
+      } catch (error) {
+        result = {label: ${JSON.stringify(prefix)} + '/' + operation, code: 'HARNESS_ERROR', message: String(error?.message ?? error)};
+      }
+      // A connection that succeeded or a harness error is never the expected outcome.
+      if (result.connected || result.code === 'HARNESS_ERROR') process.exitCode = 1;
+      console.log(JSON.stringify(result));
+    }
+  `
+}
+
+const tlsChildEnvironment = (scenario, certificatePath) => {
+  const env = { ...process.env }
+  delete env.NODE_TLS_REJECT_UNAUTHORIZED
+  delete env.NODE_EXTRA_CA_CERTS
+  if (!scenario.startsWith('pinned-') && scenario !== 'untrusted')
+    env.NODE_EXTRA_CA_CERTS = certificatePath
+  return env
+}
+const tlsChildArguments = (runtime, script) =>
+  runtime.name === 'node'
+    ? ['--dns-result-order=ipv4first', '--input-type=module', '-e', script]
+    : ['--eval', script]
+
+async function generateCertificate(execFile, directory, name, { san, days = '1' }) {
+  const key = join(directory, `${name}.key`)
+  const cert = join(directory, `${name}.crt`)
+  await execFile('openssl', [
+    'req',
+    '-x509',
+    '-newkey',
+    'rsa:2048',
+    '-nodes',
+    '-keyout',
+    key,
+    '-out',
+    cert,
+    '-days',
+    days,
+    '-subj',
+    '/CN=synthetic-local-test',
+    '-addext',
+    `subjectAltName=DNS:${san}`,
+  ])
+  return { key, cert }
+}
+
+test('TLS batch results are verified for missing, duplicate, unexpected and malformed lines', () => {
+  const labels = tlsLabels('untrusted', 'node')
+  const line = (label) => JSON.stringify({ label, code: 'X' })
+  const ok = parseTlsResults(labels.map(line).join('\n'), labels)
+  assert.deepEqual(ok.problems, [])
+  assert.equal(ok.results.size, 3)
+  assert.deepEqual(parseTlsResults(labels.slice(0, 2).map(line).join('\n'), labels).problems, [
+    `missing result label: ${labels[2]}`,
+  ])
+  assert.deepEqual(parseTlsResults([...labels, labels[0]].map(line).join('\n'), labels).problems, [
+    `duplicate result label: ${labels[0]}`,
+  ])
+  assert.deepEqual(
+    parseTlsResults([...labels, 'other/node/migration'].map((l) => line(l)).join('\n'), labels)
+      .problems,
+    ['unexpected result label: other/node/migration']
+  )
+  assert.deepEqual(
+    parseTlsResults([labels[0], labels[1]].map(line).join('\n') + '\nnot json', labels).problems,
+    ['unparseable result line: not json', `missing result label: ${labels[2]}`]
+  )
+  assert.deepEqual(parseTlsResults(`${line(labels[0])}\n{"code":"X"}`, labels).problems, [
+    'result line without a label: {"code":"X"}',
+    `missing result label: ${labels[1]}`,
+    `missing result label: ${labels[2]}`,
+  ])
+})
+
+test('a TLS child that exits non-zero or is killed is reported together with what it printed', async () => {
+  const execFile = promisify(execFileCallback)
+  const printed = JSON.stringify({ label: 'untrusted/node/inspection', code: 'X' })
+  const failed = await runTlsChild(
+    execFile,
+    'node',
+    ['-e', `console.log(${JSON.stringify(printed)}); process.exitCode = 3`],
+    { timeout: 10000 }
+  )
+  assert.equal(failed.failure, 'exit 3 signal none')
+  assert.deepEqual(
+    parseTlsResults(failed.stdout, tlsLabels('untrusted', 'node')).problems,
+    tlsLabels('untrusted', 'node')
+      .slice(1)
+      .map((label) => `missing result label: ${label}`)
+  )
+  const killed = await runTlsChild(execFile, 'node', ['-e', 'setTimeout(() => {}, 30000)'], {
+    timeout: 300,
+  })
+  assert.match(killed.failure, /signal SIGTERM \(killed\)/)
+  const clean = await runTlsChild(execFile, 'node', ['-e', '0'], { timeout: 10000 })
+  assert.equal(clean.failure, undefined)
+})
+
 test(
   'inspection, runtime verification and migration enforce certificate chain, expiry and hostname',
   { timeout: 60000 },
   async () => {
     const execFile = promisify(execFileCallback)
     const directory = await mkdtemp(join(tmpdir(), 'cp-schema-tls-'))
+    const problems = []
+    const seen = new Map()
     try {
-      for (const scenario of [
-        'trusted',
-        'untrusted',
-        'expired',
-        'wrong-host',
-        'pinned-peer',
-        'pinned-wrong-peer',
-      ]) {
-        const key = join(directory, `${scenario}.key`)
-        const cert = join(directory, `${scenario}.crt`)
-        await execFile('openssl', [
-          'req',
-          '-x509',
-          '-newkey',
-          'rsa:2048',
-          '-nodes',
-          '-keyout',
-          key,
-          '-out',
-          cert,
-          '-days',
-          '1',
-          '-subj',
-          '/CN=synthetic-local-test',
-          '-addext',
-          `subjectAltName=DNS:${scenario.startsWith('pinned-') ? 'synthetic-peer.invalid' : scenario === 'wrong-host' ? 'other.invalid' : 'localhost'}`,
-        ])
+      for (const scenario of TLS_SCENARIOS) {
+        const { key, cert } = await generateCertificate(execFile, directory, scenario, {
+          san: scenario.startsWith('pinned-')
+            ? 'synthetic-peer.invalid'
+            : scenario === 'wrong-host'
+              ? 'other.invalid'
+              : 'localhost',
+        })
         if (scenario === 'expired') {
           const request = join(directory, 'expired.csr')
           const config = join(directory, 'ca.cnf')
@@ -1265,119 +1508,137 @@ test(
           key: await readFile(key),
           cert: await readFile(cert),
         })
-        const sockets = new Set()
-        const server = createServer((socket) => {
-          sockets.add(socket)
-          socket.on('error', () => {})
-          socket.once('close', () => sockets.delete(socket))
-          let request = Buffer.alloc(0)
-          const receive = (chunk) => {
-            request = Buffer.concat([request, chunk])
-            if (request.length < 8) return
-            socket.off('data', receive)
-            assert.deepEqual([...request.subarray(0, 8)], [0, 0, 0, 8, 4, 210, 22, 47])
-            socket.write('S')
-            const secure = new TLSSocket(socket, { isServer: true, secureContext: context })
-            secure.on('error', () => {})
-            secure.once('data', () => {
-              // A trusted handshake reaches PostgreSQL startup. This synthetic
-              // error proves that success was beyond TLS, without executing SQL.
-              const fields = Buffer.from('SERROR\0CXX999\0Msynthetic TLS accepted\0\0')
-              const header = Buffer.alloc(5)
-              header[0] = 69
-              header.writeInt32BE(fields.length + 4, 1)
-              secure.end(Buffer.concat([header, fields]))
-            })
-          }
-          socket.on('data', receive)
-        })
-        await new Promise((resolve, reject) => {
-          server.once('error', reject)
-          server.listen(0, '127.0.0.1', resolve)
-        })
+        const pinnedPem = scenario.startsWith('pinned-') ? await readFile(cert, 'utf8') : undefined
+        const tlsIdentity = scenario.startsWith('pinned-')
+          ? {
+              serverName:
+                scenario === 'pinned-peer' ? 'synthetic-peer.invalid' : 'wrong-peer.invalid',
+              caSha256: createHash('sha256')
+                .update(new X509Certificate(await readFile(cert)).raw)
+                .digest('hex'),
+            }
+          : { serverName: 'localhost', caSha256: null }
+        const server = await startTlsServer(() => context)
         try {
-          for (const operation of ['inspection', 'runtime-verification', 'migration']) {
-            const script = `
-            import { resolveProductionDatabaseTls } from './scripts/production-database-target.mjs';
-            import { createPostgresSession, runtimeVerificationUrl } from './scripts/migrate-production-schema.mjs';
-            import { migrateDatabase } from './packages/database/dist/migration.js';
-            const url = 'postgresql://synthetic:synthetic@localhost:${server.address().port}/synthetic?sslmode=require';
-            const contract = ${JSON.stringify(productionDatabaseContract)};
-            contract.identity.migration = {hostname:'localhost', port:${server.address().port}};
-            contract.identity.runtimeVerification = {...contract.identity.migration};
-            contract.identity.tls = ${JSON.stringify(
-              scenario.startsWith('pinned-')
-                ? {
-                    serverName:
-                      scenario === 'pinned-peer' ? 'synthetic-peer.invalid' : 'wrong-peer.invalid',
-                    caSha256: createHash('sha256')
-                      .update(new X509Certificate(await readFile(cert)).raw)
-                      .digest('hex'),
-                  }
-                : { serverName: 'localhost', caSha256: null }
-            )};
-            const tls = resolveProductionDatabaseTls(contract, ${JSON.stringify(scenario.startsWith('pinned-') ? await readFile(cert, 'utf8') : undefined)});
-            let session;
-            try {
-              if (${JSON.stringify(operation)} !== 'migration') {
-                let target = new URL(url);
-                if (${JSON.stringify(operation)} === 'runtime-verification') {
-                  target = runtimeVerificationUrl(${JSON.stringify(runtimeUrl)}, contract);
-                }
-                session = createPostgresSession(target, {connectTimeoutSeconds:2, statementTimeoutMs:1000, lockTimeoutMs:1000}, tls);
-                await session.readConnectedRole();
-              } else {
-                await migrateDatabase({role:'migration',url}, {verifyTls:true,connectTimeoutSeconds:2,...(typeof tls === 'object' ? {tls} : {})});
-              }
-              process.exitCode = 1;
-            } catch (error) {
-              console.log(JSON.stringify({code:error.code ?? error.cause?.code, message:error.cause?.message ?? error.message}));
-            } finally { if (session) await session.close(); }
-          `
-            const env = { ...process.env }
-            delete env.NODE_TLS_REJECT_UNAUTHORIZED
-            delete env.NODE_EXTRA_CA_CERTS
-            if (!scenario.startsWith('pinned-') && scenario !== 'untrusted')
-              env.NODE_EXTRA_CA_CERTS = cert
-            for (const runtime of scenario.startsWith('pinned-') || scenario === 'trusted'
-              ? ['node', process.execPath]
-              : ['node']) {
-              const { stdout } = await execFile(
-                runtime,
-                runtime === 'node'
-                  ? ['--dns-result-order=ipv4first', '--input-type=module', '-e', script]
-                  : ['--eval', script],
-                { env, timeout: 10000 }
+          for (const runtime of tlsRuntimes(scenario)) {
+            const labels = tlsLabels(scenario, runtime.name)
+            const connectionsBefore = server.connections.length
+            const script = tlsChildScript({
+              port: server.port,
+              tlsIdentity,
+              certificate: pinnedPem,
+              prefix: `${scenario}/${runtime.name}`,
+            })
+            const { stdout, failure } = await runTlsChild(
+              execFile,
+              runtime.command,
+              tlsChildArguments(runtime, script),
+              { env: tlsChildEnvironment(scenario, cert), timeout: 10000 }
+            )
+            if (failure !== undefined)
+              problems.push(`${scenario}/${runtime.name}: child ${failure}`)
+            const parsed = parseTlsResults(stdout, labels)
+            problems.push(
+              ...parsed.problems.map((problem) => `${scenario}/${runtime.name}: ${problem}`)
+            )
+            // Each of the three operations opened its own connection, and none resumed an earlier TLS session.
+            const connections = server.connections.slice(connectionsBefore)
+            if (connections.length !== TLS_OPERATIONS.length)
+              problems.push(
+                `${scenario}/${runtime.name}: expected ${TLS_OPERATIONS.length} connections, saw ${connections.length}`
               )
-              const result = JSON.parse(stdout.trim())
-              if (scenario === 'trusted' || scenario === 'pinned-peer')
-                assert.equal(result.code, 'XX999', operation)
-              else {
-                assert.equal(
-                  result.code,
-                  {
-                    untrusted: 'DEPTH_ZERO_SELF_SIGNED_CERT',
-                    expired: 'CERT_HAS_EXPIRED',
-                    'wrong-host': 'ERR_TLS_CERT_ALTNAME_INVALID',
-                    'pinned-wrong-peer': 'ERR_TLS_CERT_ALTNAME_INVALID',
-                  }[scenario],
-                  `${operation}: ${scenario}`
+            if (connections.some((connection) => connection.sessionReused === true))
+              problems.push(`${scenario}/${runtime.name}: a TLS session was resumed`)
+            // Where the handshake completes the server can see it, so there the fresh session is observed, not assumed.
+            if (
+              TLS_EXPECTED_CODES[scenario] === 'XX999' &&
+              connections.some((connection) => connection.sessionReused !== false)
+            )
+              problems.push(
+                `${scenario}/${runtime.name}: a completed handshake was not observed fresh`
+              )
+            for (const [label, result] of parsed.results) {
+              seen.set(label, result)
+              const expected = TLS_EXPECTED_CODES[scenario]
+              if (result.code !== expected)
+                problems.push(
+                  `${label}: expected code ${expected}, got ${result.code ?? 'connected'}`
                 )
-                assert.match(
-                  `${result.code} ${result.message}`,
-                  /certificate|CERT|self.signed|hostname|altname/i
+              else if (
+                expected !== 'XX999' &&
+                !/certificate|CERT|self.signed|hostname|altname/i.test(
+                  `${result.code} ${result.message}`
                 )
-              }
+              )
+                problems.push(`${label}: unexpected message ${result.message}`)
             }
           }
         } finally {
-          for (const socket of sockets) socket.destroy()
-          await new Promise((resolve) => server.close(resolve))
+          await server.close()
         }
       }
     } finally {
       await rm(directory, { recursive: true, force: true })
     }
+    assert.equal(seen.size, 27, `expected 27 labelled results, got ${seen.size}`)
+    assert.deepEqual(problems, [])
+  }
+)
+
+test(
+  'a valid handshake earlier in the same process cannot mask an invalid certificate later',
+  { timeout: 60000 },
+  async () => {
+    // Connection 0 presents the certificate the child trusts; every later connection to the same host and port presents
+    // an untrusted one. If anything cached the first verification, a later operation would connect.
+    const execFile = promisify(execFileCallback)
+    const directory = await mkdtemp(join(tmpdir(), 'cp-schema-tls-control-'))
+    const problems = []
+    try {
+      const good = await generateCertificate(execFile, directory, 'good', { san: 'localhost' })
+      const other = await generateCertificate(execFile, directory, 'other', { san: 'localhost' })
+      const contexts = [good, other].map(({ key, cert }) =>
+        Promise.all([readFile(key), readFile(cert)]).then(([k, c]) =>
+          createSecureContext({ key: k, cert: c })
+        )
+      )
+      const [goodContext, otherContext] = await Promise.all(contexts)
+      for (const runtime of [
+        { name: 'node', command: 'node' },
+        { name: 'host', command: process.execPath },
+      ]) {
+        const server = await startTlsServer((index) => (index === 0 ? goodContext : otherContext))
+        try {
+          const prefix = `control/${runtime.name}`
+          const labels = TLS_OPERATIONS.map((operation) => `${prefix}/${operation}`)
+          const script = tlsChildScript({
+            port: server.port,
+            tlsIdentity: { serverName: 'localhost', caSha256: null },
+            certificate: undefined,
+            prefix,
+          })
+          const { stdout, failure } = await runTlsChild(
+            execFile,
+            runtime.command,
+            tlsChildArguments(runtime, script),
+            { env: tlsChildEnvironment('trusted', good.cert), timeout: 10000 }
+          )
+          if (failure !== undefined) problems.push(`${prefix}: child ${failure}`)
+          const parsed = parseTlsResults(stdout, labels)
+          problems.push(...parsed.problems)
+          if (server.connections.length !== TLS_OPERATIONS.length)
+            problems.push(`${prefix}: expected 3 connections, saw ${server.connections.length}`)
+          assert.equal(parsed.results.get(labels[0])?.code, 'XX999', labels[0])
+          for (const label of labels.slice(1))
+            assert.equal(parsed.results.get(label)?.code, 'DEPTH_ZERO_SELF_SIGNED_CERT', label)
+        } finally {
+          await server.close()
+        }
+      }
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+    assert.deepEqual(problems, [])
   }
 )
 
