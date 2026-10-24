@@ -1,0 +1,245 @@
+diff --git a/dist/storage/sqlite/node.d.ts b/dist/storage/sqlite/node.d.ts
+index 1d8c520..8d6a813 100644
+--- a/dist/storage/sqlite/node.d.ts
++++ b/dist/storage/sqlite/node.d.ts
+@@ -8,6 +8,8 @@ export type NodeSqliteStorageOptions = {
+     readonly walAutoCheckpointPages?: number;
+     /** Time SQLite waits for a competing file lock. SQLite defaults to 0; this adapter defaults to 5,000 ms. */
+     readonly busyTimeoutMs?: number;
++    /** CANDIDATE C7 (not consumable): "read-only" opens an existing, cleanly closed store without creating, migrating or writing. */
++    readonly mode?: "read-write" | "read-only";
+ };
+ /**
+  * Executes SQL on one connection. Prepared statements are cached per connection by SQL text, so the
+@@ -34,6 +36,8 @@ export declare class NodeSqliteDatabase extends NodeSqliteExecutor implements Sq
+     close(): Promise<void>;
+     protected runOperation<T>(operation: () => T): Promise<T>;
+ }
++/** CANDIDATE C7 (not consumable): open an existing store read-only; see openNodeSqliteStorage mode. */
++export declare function openNodeSqliteReadOnlyDatabase(path: string): Promise<NodeSqliteDatabase>;
+ /** Open and configure a Node-backed SQLite database facade. */
+ export declare function openNodeSqliteDatabase(path: string, options?: NodeSqliteStorageOptions): Promise<NodeSqliteDatabase>;
+ /** Open or create file-backed durable storage using Node's built-in SQLite. */
+diff --git a/dist/storage/sqlite/node.js b/dist/storage/sqlite/node.js
+index 3c50d87..6c9de88 100644
+--- a/dist/storage/sqlite/node.js
++++ b/dist/storage/sqlite/node.js
+@@ -1,5 +1,6 @@
+-import { mkdir } from "node:fs/promises";
++import { lstat, mkdir, realpath } from "node:fs/promises";
+ import { dirname } from "node:path";
++import { pathToFileURL } from "node:url";
+ import { DatabaseSync } from "node:sqlite";
+ import { StorageRejected } from "../../errors.js";
+ import { SqliteStorage } from "./storage.js";
+@@ -180,6 +181,77 @@ export class NodeSqliteDatabase extends NodeSqliteExecutor {
+         return this.access.run(operation);
+     }
+ }
++/**
++ * CANDIDATE C7 (not consumable). Read-only facade over an immutable connection: no PRAGMA writes, no checkpoint on close,
++ * transactions are plain read transactions that always roll back, and the guarded-commit capability is absent.
++ */
++class NodeSqliteReadOnlyDatabase extends NodeSqliteDatabase {
++    transaction(callback) {
++        return this.access.runAsync(async () => {
++            this.database.exec("BEGIN");
++            const scope = { active: true };
++            try {
++                return await callback(new NodeSqliteTransaction(this.database, this.statements, scope));
++            }
++            finally {
++                scope.active = false;
++                this.database.exec("ROLLBACK");
++            }
++        });
++    }
++    transactionGuarded() {
++        return Promise.reject(new StorageRejected("PI_STORE_READ_ONLY"));
++    }
++    close() {
++        return this.access.run(() => {
++            if (this.closed)
++                return;
++            this.closed = true;
++            this.statements.clear();
++            this.database.close();
++        });
++    }
++}
++/** True only when the filesystem proves the path is absent; any other inspection failure is not absence. */
++async function proveAbsentOrPresent(path) {
++    try {
++        await lstat(path);
++        return true;
++    }
++    catch (error) {
++        if (error?.code === "ENOENT")
++            return false;
++        throw new StorageRejected("PI_STORE_READ_ONLY_INSPECTION_FAILED", { cause: error });
++    }
++}
++/**
++ * CANDIDATE C7 (not consumable). Open an existing durable store for reading only. It never creates the file or its
++ * directory, issues no write PRAGMA, never migrates, and refuses a store that has -wal, -shm or -journal sidecars: an
++ * immutable connection ignores them, so reading past them could return stale data. Use a cleanly closed store.
++ * The path is resolved to its real location once, and that one path is used for the sidecar checks and for the open, so a
++ * symlink alias cannot hide sidecars that sit beside the real file. Only ENOENT counts as absent; any other failure to
++ * inspect the file or a sidecar fails closed with PI_STORE_READ_ONLY_INSPECTION_FAILED.
++ */
++export async function openNodeSqliteReadOnlyDatabase(path) {
++    if (typeof path !== "string" || path.length === 0 || path === ":memory:" || path.startsWith("file:"))
++        throw new StorageRejected("PI_STORE_READ_ONLY_PATH_INVALID");
++    let real;
++    try {
++        real = await realpath(path);
++    }
++    catch (error) {
++        if (error?.code === "ENOENT")
++            throw new StorageRejected("PI_STORE_READ_ONLY_ABSENT");
++        throw new StorageRejected("PI_STORE_READ_ONLY_INSPECTION_FAILED", { cause: error });
++    }
++    for (const suffix of ["-wal", "-shm", "-journal"]) {
++        if (await proveAbsentOrPresent(`${real}${suffix}`))
++            throw new StorageRejected("PI_STORE_READ_ONLY_SIDECARS");
++    }
++    const uri = pathToFileURL(real);
++    uri.search = "?mode=ro&immutable=1";
++    return new NodeSqliteReadOnlyDatabase(new DatabaseSync(uri.href, { readOnly: true }));
++}
+ /** Open and configure a Node-backed SQLite database facade. */
+ export async function openNodeSqliteDatabase(path, options = {}) {
+     const checkpointPages = options.walAutoCheckpointPages ?? DEFAULT_WAL_AUTO_CHECKPOINT_PAGES;
+@@ -206,5 +278,9 @@ export async function openNodeSqliteDatabase(path, options = {}) {
+ }
+ /** Open or create file-backed durable storage using Node's built-in SQLite. */
+ export async function openNodeSqliteStorage(path, options = {}) {
++    if (options.mode === "read-only")
++        return SqliteStorage.openReadOnly(await openNodeSqliteReadOnlyDatabase(path));
++    if (options.mode !== undefined && options.mode !== "read-write")
++        throw new StorageRejected("PI_STORE_OPEN_MODE_INVALID");
+     return SqliteStorage.open(await openNodeSqliteDatabase(path, options));
+ }
+diff --git a/dist/storage/sqlite/storage.d.ts b/dist/storage/sqlite/storage.d.ts
+index a574ade..4ea2a58 100644
+--- a/dist/storage/sqlite/storage.d.ts
++++ b/dist/storage/sqlite/storage.d.ts
+@@ -40,6 +40,9 @@ export declare class SqliteStorage implements Storage {
+     private readsDrained;
+     private constructor();
+     /** Initialize storage over an owned SQLite database facade. */
++    private readOnly;
++    /** CANDIDATE C7 (not consumable): initialize over a read-only facade; never migrates or writes. */
++    static openReadOnly(db: SqliteDatabase): Promise<SqliteStorage>;
+     static open(db: SqliteDatabase): Promise<SqliteStorage>;
+     private fence;
+     /** CANDIDATE C2 (not consumable): advance the store-resident writer fence and bind this storage to it. */
+@@ -96,6 +99,7 @@ export declare class SqliteStorage implements Storage {
+     private applyTableWrite;
+     private claimId;
+     private applyDocumentActions;
++    private assertWritable;
+     private assertOpen;
+ }
+ export {};
+diff --git a/dist/storage/sqlite/storage.js b/dist/storage/sqlite/storage.js
+index a22c121..ab7456a 100644
+--- a/dist/storage/sqlite/storage.js
++++ b/dist/storage/sqlite/storage.js
+@@ -2,7 +2,7 @@ import { apply } from "@earendil-works/chord/delta";
+ import { StorageRejected } from "../../errors.js";
+ import { idFromNumber, seqFromNumber } from "../../ids.js";
+ import { nextCursor, scanStart } from "../scan.js";
+-import { applySqliteMigrations } from "./migrations.js";
++import { applySqliteMigrations, CURRENT_SQLITE_SCHEMA_VERSION } from "./migrations.js";
+ const parseJson = (value) => JSON.parse(value);
+ const encodeJson = (value) => JSON.stringify(value);
+ // Some SQLite bindings replace lone UTF-16 surrogates. JSON encoding keeps indexed identities lossless.
+@@ -82,6 +82,38 @@ export class SqliteStorage {
+         this.db = db;
+         this.nextId = nextId;
+     }
++    // CANDIDATE C7 (not consumable): true only for a storage opened by openReadOnly.
++    readOnly = false;
++    /**
++     * CANDIDATE C7 (not consumable). Initialize storage over a read-only database facade without migrating or writing.
++     * A schema this code does not know (newer, or not initialized) fails closed; an older known version is read as is.
++     */
++    static async openReadOnly(db) {
++        try {
++            // A file with no durable_schema table is not an initialized store; refuse it without creating anything.
++            const schema = await db.get("SELECT version FROM durable_schema WHERE singleton = 1").catch(() => undefined);
++            const supported = CURRENT_SQLITE_SCHEMA_VERSION;
++            if (schema === undefined || !Number.isSafeInteger(schema.version) || schema.version < 1)
++                throw new StorageRejected("PI_STORE_READ_ONLY_SCHEMA_UNINITIALIZED");
++            if (schema.version > supported)
++                throw new StorageRejected("PI_STORE_READ_ONLY_SCHEMA_NEWER");
++            const metadata = await db.get("SELECT next_id FROM durable_metadata WHERE singleton = 1");
++            if (metadata === undefined)
++                throw new Error("Durable SQLite metadata is missing");
++            const storage = new SqliteStorage(db, Number(metadata.next_id));
++            storage.readOnly = true;
++            return storage;
++        }
++        catch (error) {
++            try {
++                await db.close();
++            }
++            catch {
++                // Preserve the initialization failure.
++            }
++            throw error;
++        }
++    }
+     /** Initialize storage over an owned SQLite database facade. */
+     static async open(db) {
+         try {
+@@ -106,6 +138,7 @@ export class SqliteStorage {
+      * Any earlier holder, registered or not, fails its next commit with PI_STORE_FENCED.
+      */
+     async acquireWriterFence(request) {
++        this.assertWritable();
+         this.assertOpen();
+         // Read each property exactly once, before validation and before the first await. Everything below uses only
+         // these primitives; the caller's object (or its accessors) is never read again while the transaction is pending.
+@@ -149,6 +182,7 @@ export class SqliteStorage {
+      * cross-process retries are not supported.
+      */
+     async closeWriterFence(request) {
++        this.assertWritable();
+         this.assertOpen();
+         if (request === null || typeof request !== "object")
+             throw new StorageRejected("PI_STORE_CLOSURE_REQUEST_INVALID");
+@@ -238,11 +272,13 @@ export class SqliteStorage {
+             throw new StorageRejected("PI_STORE_FENCED");
+     }
+     async commitGuarded(writes, finalGuard, context) {
++        this.assertWritable();
+         if (typeof this.db.transactionGuarded !== "function") throw new StorageRejected("PI_GUARDED_COMMIT_UNAVAILABLE");
+         if (typeof finalGuard !== "function") throw new StorageRejected("Final guard must be a synchronous function");
+         return this.commit(writes, context, finalGuard);
+     }
+     async commit(writes, _context, finalGuard) {
++        this.assertWritable();
+         this.assertOpen();
+         const documentActions = this.prepareDocumentActions(writes);
+         const candidateNextId = this.candidateNextId(writes);
+@@ -267,6 +303,7 @@ export class SqliteStorage {
+         return seq;
+     }
+     async mintId() {
++        this.assertWritable();
+         this.assertOpen();
+         if (!Number.isSafeInteger(this.nextId))
+             throw new Error("ID space is exhausted");
+@@ -810,6 +847,10 @@ export class SqliteStorage {
+             }
+         }
+     }
++    assertWritable() {
++        if (this.readOnly)
++            throw new StorageRejected("PI_STORE_READ_ONLY");
++    }
+     assertOpen() {
+         if (this.closed)
+             throw new Error("SqliteStorage is closed");
