@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.3](https://github.com/adea-ai/control-plane/compare/credential-vault-v1.4.2...credential-vault-v1.4.3) (2026-10-24)
+
+
+### Bug Fixes
+
+* reduce dependency closure and preserve budget checks ([#1270](https://github.com/adea-ai/control-plane/issues/1270)) ([01fa230](https://github.com/adea-ai/control-plane/commit/01fa230233cc796b6c7f93d020006212b89631f6))
+
 ## [1.4.2](https://github.com/adea-ai/control-plane/compare/credential-vault-v1.4.1...credential-vault-v1.4.2) (2026-10-22)
 
 

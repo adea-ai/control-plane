@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.44.1](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.44.0...sqlite-persistence-v1.44.1) (2026-10-24)
+
+
+### Bug Fixes
+
+* reconcile audit identities and declaration budget ([#1303](https://github.com/adea-ai/control-plane/issues/1303)) ([b65e2c7](https://github.com/adea-ai/control-plane/commit/b65e2c770cd5d2fa7a3007bdff71613e18748860))
+
 ## [1.44.0](https://github.com/adea-ai/control-plane/compare/sqlite-persistence-v1.43.0...sqlite-persistence-v1.44.0) (2026-10-23)
 
 

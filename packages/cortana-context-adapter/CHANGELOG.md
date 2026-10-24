@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.1](https://github.com/adea-ai/control-plane/compare/cortana-context-adapter-v1.5.0...cortana-context-adapter-v1.5.1) (2026-10-24)
+
+
+### Bug Fixes
+
+* reduce dependency closure and preserve budget checks ([#1270](https://github.com/adea-ai/control-plane/issues/1270)) ([01fa230](https://github.com/adea-ai/control-plane/commit/01fa230233cc796b6c7f93d020006212b89631f6))
+
 ## [1.5.0](https://github.com/adea-ai/control-plane/compare/cortana-context-adapter-v1.4.3...cortana-context-adapter-v1.5.0) (2026-10-17)
 
 

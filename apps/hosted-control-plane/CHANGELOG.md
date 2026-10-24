@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.21.5](https://github.com/adea-ai/control-plane/compare/hosted-control-plane-v1.21.4...hosted-control-plane-v1.21.5) (2026-10-24)
+
+
+### Tests
+
+* **profiles:** prove profile recovery and fenced rollback evidence ([#1048](https://github.com/adea-ai/control-plane/issues/1048)) ([da1a38c](https://github.com/adea-ai/control-plane/commit/da1a38cbb4f20da086313451077593d8df3e283d))
+
 ## [1.21.4](https://github.com/adea-ai/control-plane/compare/hosted-control-plane-v1.21.3...hosted-control-plane-v1.21.4) (2026-10-22)
 
 
