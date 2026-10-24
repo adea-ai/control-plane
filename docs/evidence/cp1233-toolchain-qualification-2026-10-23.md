@@ -2,6 +2,8 @@
 
 Issue: [#1233](https://github.com/adea-ai/control-plane/issues/1233). This is a partial acceptance receipt. Dependency budget acceptance remains separate in [#1230](https://github.com/adea-ai/control-plane/issues/1230).
 
+A read-only reconciliation recorded one day later is appended at [Dated status: 2026-10-24](#dated-status-2026-10-24). The October 23 receipt itself is unchanged historical evidence: every command, failure, head, count and hash below still refers to the sources recorded there.
+
 ## Source inventory
 
 GitHub main identities were read using authenticated `gh api repos/adea-ai/REPO/commits/main --jq .sha`. Inventory and command results below apply to those immutable sources, not to older shared checkouts or a future moving main.
@@ -71,3 +73,41 @@ Read-only metadata requests to `https://registry.npmjs.org/PACKAGE/VERSION` retu
 - Keep [#1230](https://github.com/adea-ai/control-plane/issues/1230) open until actual dependencies meet the unchanged ceiling. No budget waiver is implied.
 
 No version upgrades, lockfile edits, release, deployment, credentials or production changes are part of this receipt. Issue #1233 remains open.
+
+## Dated status: 2026-10-24
+
+Read-only reconciliation recorded 2026-10-24 against Control Plane main `94d14dcb5a37aff10445813596f6e86f1b42c41e`, the same base identity named in [issue #1233 comment 6380216125](https://github.com/adea-ai/control-plane/issues/1233#issuecomment-6380216125). `git rev-parse origin/main` in this checkout returns that commit, and the comment's body matches the records below. Nothing above this section was rewritten: the original failed commands, historical heads, counts and lock hashes in the October 23 receipt remain published exactly as received, and no historical failure is reinterpreted as a current pass.
+
+### Merge records superseding the pending-prerequisite wording
+
+The [Remaining acceptance](#remaining-acceptance) bullet that reports [#1239](https://github.com/adea-ai/control-plane/pull/1239) and [#1279](https://github.com/adea-ai/control-plane/pull/1279) as drafts is superseded by authoritative merge records read with `gh pr view <pr> --json mergeCommit,mergedAt,baseRefName`:
+
+| Pull request                                                | Merge commit                               | Merged (UTC)        | Ancestor of `main` |
+| ----------------------------------------------------------- | ------------------------------------------ | ------------------- | ------------------ |
+| [#1279](https://github.com/adea-ai/control-plane/pull/1279) | `3d40c23c203686bb57f75971681ed8ee2dad50f1` | 2026-10-23 19:48:27 | no                 |
+| [#1239](https://github.com/adea-ai/control-plane/pull/1239) | `9a8646ae4f7826eb96e7a0209098e7f2586facd4` | 2026-10-23 20:43:55 | yes                |
+| [#1303](https://github.com/adea-ai/control-plane/pull/1303) | `b65e2c770cd5d2fa7a3007bdff71613e18748860` | 2026-10-24 01:17:39 | yes                |
+
+[#1279](https://github.com/adea-ai/control-plane/pull/1279) merged into its base branch `fix/issue-189-integration-runner-cleanup` as `fix(testing): integrate reviewed descendant cleanup with current main` (commit date 2026-10-23 19:46:59 UTC); that branch was then squash-merged into `main` as [#1239](https://github.com/adea-ai/control-plane/pull/1239), so `3d40c23c203686bb57f75971681ed8ee2dad50f1` exists upstream but is not an ancestor of `main`. `git merge-base --is-ancestor` succeeds for `9a8646ae4f7826eb96e7a0209098e7f2586facd4` and `b65e2c770cd5d2fa7a3007bdff71613e18748860`. [#1303](https://github.com/adea-ai/control-plane/pull/1303) carries the later type/output-size qualification repair — verified full-lock receipt identity substitutions and reduced declaration expansion — and its own record states that the count assertions 591/551/547 and the ceiling are unchanged. Themes [#106](https://github.com/adea-ai/themes/pull/106) and [#107](https://github.com/adea-ai/themes/pull/107) remain merged as recorded above and are not reimplemented.
+
+### Read-only observations on this exact head
+
+- **Toolchain pins.** Root `package.json` declares `"packageManager": "bun@1.4.4"` and `.bun-version` contains `1.4.4`. No `package.json` anywhere in this workspace contains `turbo`, so no inspected root manifest carries a Turbo command. These are static observations only: they do not prove complete nested-source removal, the generated/typechecker graph, actual published dependency qualification, desktop-runtime separation, or normal commands on the other repositories' exact heads.
+- **Lock identity.** `shasum -a 256 bun.lock` on this head returns `6f4969030dcd5164864ef39360223aac0a807261d418caf89a4270466106ad75`; the worktree `bun.lock` is unmodified relative to `HEAD:bun.lock` (`git status --porcelain` reports no change). Computed read-only: no lockfile, manifest, schema or dependency was written.
+- **Dependency budget.** With the listing seam unset, the repository's own gate still fails:
+
+  ```text
+  env -u ADEA_DEPS_LISTING_FILE bun scripts/check-budgets.mjs deps
+  BUDGET EXCEEDED: {"ok":false,"ceiling":285,"measured":547,"scope":"all-platform lockfile identities",
+    "installedListing":{"command":"bun pm ls --all","runtime":"bun@1.4.4","platform":"darwin-arm64","measured":547},
+    "attribution":{"reachableIdentities":547,"declaredRootCount":40, … "overageUpperBound":262}}
+  exit 1
+  ```
+
+  Measured **547** against the unchanged ceiling **285**, residual **262** unresolved. No threshold, platform identity, artifact or required consumer is excluded or waived, and [#1230](https://github.com/adea-ai/control-plane/issues/1230) stays open.
+
+`docs/1230-dependency-budget-attribution.md` published `829196fc27f4a3e4a4e4af2b3a291d5421401b3b57c8f4976f1cf46f8f9a4535` as "the current lockfile SHA-256". That value matches no `bun.lock` of any commit reachable from the refs in this clone, including `main`, so that document now records the head hash above as current and keeps `829196fc27f4a3e4a4e4af2b3a291d5421401b3b57c8f4976f1cf46f8f9a4535` — and the earlier `6c7d01d7658c8dcb787841ce9840d177188f7942222d1a823224936119083bf4` 548-identity and `6b42afa9967a45911c55b8b4e45da6601a0bd62dbd7a42611ef6845d02517543` 551-identity receipts — as historical.
+
+### What this dated status does not establish
+
+No fresh cross-repository qualification is claimed: the UI, Themes, Plugins, Adea and Agent Sim heads, their generated declarations and types, actual published dependencies, their normal command lanes, and packaged desktop runtimes remain unverified here, and Themes still needs its exact Node `24.22.1` lane. The requirements provenance failure quoted in [Control Plane execution](#control-plane-execution) and the Themes suite timeout remain historical failures, not resolved items. [#1233](https://github.com/adea-ai/control-plane/issues/1233) remains open pending the remaining exact-head acceptance evidence; this reconciliation closes no issue and changes no code, lockfile, schema, dependency or test.
