@@ -390,13 +390,7 @@
         "@control-plane/workflow-runtime",
         "@control-plane/workflow-worker"
       ],
-      "externalDependencies": [
-        "@nestjs/common",
-        "@restatedev/restate-server",
-        "fastify",
-        "semver",
-        "zod"
-      ],
+      "externalDependencies": ["@restatedev/restate-server", "semver", "zod"],
       "developmentWorkspaceDependencies": [],
       "developmentExternalDependencies": [],
       "layer": "composition-root"
@@ -972,7 +966,7 @@
         "@control-plane/usage-ledger",
         "@control-plane/workflow-runtime"
       ],
-      "externalDependencies": ["@opentelemetry/api", "@restatedev/restate-sdk"],
+      "externalDependencies": ["@opentelemetry/api"],
       "developmentWorkspaceDependencies": [],
       "developmentExternalDependencies": [],
       "layer": "composition-root"

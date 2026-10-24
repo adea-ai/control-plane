@@ -32,8 +32,11 @@ export const DelegationToolAdmissionSchema = z
   .strictObject({
     schemaVersion: z.literal('delegation-tool-admission/v1'),
     sourceKey: DelegationToolSourceKeySchema,
-    request: DurableToolCallRequestSchema,
-    command: z.strictObject({ delegation: DelegateInputSchema, dispatch: DispatchInputSchema }),
+    request: DurableToolCallRequestSchema as typeof DurableToolCallRequestSchema,
+    command: z.strictObject<{
+      delegation: typeof DelegateInputSchema
+      dispatch: typeof DispatchInputSchema
+    }>({ delegation: DelegateInputSchema, dispatch: DispatchInputSchema }),
   })
   .superRefine((value, context) => {
     const { request, command } = value
