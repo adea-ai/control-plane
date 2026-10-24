@@ -1,10 +1,12 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
+import { createHash } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
 import {
   cpSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
+  copyFileSync,
   readFileSync,
   realpathSync,
   rmSync,
@@ -234,5 +236,37 @@ describe('candidate C2 store fence (disposable SQLite, patched copy only)', () =
     const upgraded = await candidate.openNodeSqliteStorage(path)
     await write(upgraded)
     await upgraded.close(context)
+  })
+
+  test('rollback artifact: a pre-migration copy stays byte-identical and compat-readable; the migrated file is not', async () => {
+    const path = dbPath()
+    const legacy = await compat.openNodeSqliteStorage(path)
+    await write(legacy)
+    await legacy.close(context)
+    // The preserved rollback artifact: taken after a clean close (checkpointed), before the candidate opens it.
+    const artifact = `${path}.rollback-artifact`
+    copyFileSync(path, artifact)
+    const digest = (file) => createHash('sha256').update(readFileSync(file)).digest('hex')
+    const before = digest(artifact)
+    const upgraded = await candidate.openNodeSqliteStorage(path)
+    await write(upgraded)
+    await upgraded.close(context)
+    // Opening under the candidate changed the live file, so it is not rollback-safe by itself.
+    expect(digest(path)).not.toBe(before)
+    expect(await code(compat.openNodeSqliteStorage(path))).toMatch(/newer than supported/)
+    // Only the preserved artifact is a rollback target; it is untouched and compat reads it.
+    expect(digest(artifact)).toBe(before)
+    const restored = await compat.openNodeSqliteStorage(artifact)
+    expect((await restored.scanConversations({}, 100, undefined, context)).items.length).toBe(1)
+    await restored.close(context)
+  })
+
+  test('there is no downgrade path: an armed store is refused by compat and stays refused', async () => {
+    const path = dbPath()
+    const storage = await candidate.openNodeSqliteStorage(path)
+    await storage.acquireWriterFence(request())
+    await storage.close(context)
+    for (let attempt = 0; attempt < 2; attempt++)
+      expect(await code(compat.openNodeSqliteStorage(path))).toMatch(/newer than supported/)
   })
 })

@@ -21,6 +21,13 @@ production activation is involved.
 Not in this candidate: `closeWriters` and the closure receipt (C4), the writer-surface declaration
 (C1), other backends (C6) and the read-only open (C7). See the C1–C7 contract.
 
+## Rollback status: NOT rollback-safe
+
+Do not describe this candidate as rollback-safe. The only rollback target for a store is a byte-identical
+copy preserved **before** the candidate first opens it (taken after a clean close). The tests prove: the
+live file changes on open, the compat-patched SDK refuses it, and the preserved artifact stays
+byte-identical and compat-readable. There is no downgrade path, and none is claimed.
+
 ## Known hazards (documented, not mitigated here)
 
 - **Downgrade:** migration 2 raises the store schema to version 2. The unmodified 1.1.0 SDK and the
