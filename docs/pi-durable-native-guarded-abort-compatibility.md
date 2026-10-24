@@ -136,6 +136,22 @@ checks authority/models, initializes host state and registers an owner. SDK
 `Harness.open` also reconciles surviving tasks. Calling those openers cannot be
 described as mutation-free historical observation.
 
+## Publication classifier — effect-free, unwired
+
+`classifyPiNativeCancellationPublication` (`native-cancellation-publication-recovery.ts`)
+turns a journal record, caller-held request pins and an already-observed historical
+native receipt into one label: `published`, `receipt_absent`, `receipt_unpublished`,
+`receipt_superseded` or a coded `conflict`. It reads nothing itself, performs no
+effect, and nothing calls it during construction, startup or recovery.
+
+A label is never permission. `receipt_unpublished` only says a separately authorized
+recovery path would have something to act on; it does not publish, settle, retry or
+abort. `receipt_absent` is not proof of zero native effect. Malformed identity,
+receipt binding mismatch, a published action whose digest or retained receipt
+disagrees, or a retained receipt without a published action all fail closed as
+`conflict`. How a receipt is obtained safely (an SDK-issued detached snapshot) and who
+may act on a label remain separate, unresolved decisions.
+
 ## Proposed read-only SDK reader — not implemented
 
 The proposed public SDK contract is a one-shot
