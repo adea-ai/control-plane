@@ -39,8 +39,15 @@ import {
 // Limits (see docs/pi-durable-c7c-detached-snapshot-design.md). Coherent rows, stable bytes and an empty in-process registry do
 // not show that any other process was quiescent or that the artifact came from the store the pins name; that is out-of-band
 // attestation the caller owns. No caller-supplied boolean is attestation. The result is historical evidence of one committed
-// cut and never settles a journal or authorizes an effect. `sealDetachedLedger` below is test-local glue standing in for the
-// candidate's sealing boundary: it is NOT a production issuer and is not exported anywhere.
+// cut and never settles a journal or authorizes an effect.
+//
+// Two layers are kept apart. The SDK candidate performs STRUCTURAL checks of a file and its rows (regular file, one link, no
+// sidecars, closure, fence, cut, digest); its facts say nothing about how the file was made. How it was made (writers closed
+// with C4, then a copy after a clean shutdown) is controlled FIXTURE provenance: the helpers `produce` and `copyOf` do those
+// steps and assert the file listing, and the constant `CONTROLLED_FIXTURE` below is this file's own assertion of that. It is
+// not derived by the SDK, is not production attestation, and a real issuer would need an out-of-band equivalent.
+// `sealDetachedLedger` and `readPinnedFrozenReceipt` are test-local glue standing in for the candidate's sealing and read
+// boundaries: they are NOT a production issuer and are not exported anywhere.
 const here = dirname(fileURLToPath(import.meta.url))
 const adapterRoot = resolve(here, '..')
 const repoRoot = resolve(adapterRoot, '../..')
@@ -229,12 +236,22 @@ const sealCode = async (c, path, pins) => {
   return 'sealed'
 }
 
-// Test-local stand-in for the candidate sealing boundary. Everything it asserts as detached/coherent comes from SDK-derived
-// facts, never from a caller boolean. It validates the session-level pins here, and `readPiFrozenReceipt` checks the session
-// pin again when the reader is used. It is not a production issuer.
+// Controlled fixture provenance: produced by `produce` (C4 closeWriterFence, then Harness.close, which checkpoints and removes
+// the sidecars) and `copyOf` (a plain byte copy that first asserts no sidecar exists). It is this test file's own assertion,
+// not an SDK-derived fact and not production attestation.
+const CONTROLLED_FIXTURE = Object.freeze({
+  closedWritersWithC4: true,
+  copiedAfterCleanShutdown: true,
+})
+
+// Test-local stand-in for the candidate sealing boundary. `ownerEpoch` is the SDK-derived fence epoch (a structural fact).
+// `detached` and `coherent` are taken ONLY from the fixture provenance the caller passes here, because the SDK derives neither:
+// without it the boundary refuses. It validates the session-level pins here; `readPiFrozenReceipt` later rechecks only the
+// session id and request-level pins, so `readPinnedFrozenReceipt` below rechecks the rest. It is not a production issuer.
 const SessionError = (message) => new Error(message)
-async function sealDetachedLedger(c, handle, held, authority) {
-  const { sessionId, conversationId, restoreGeneration, revision } = held
+const pinnedSessions = new WeakMap()
+function checkHeld(held) {
+  const { sessionId, conversationId, restoreGeneration, revision } = held ?? {}
   if (
     typeof sessionId !== 'string' ||
     sessionId.length === 0 ||
@@ -246,8 +263,14 @@ async function sealDetachedLedger(c, handle, held, authority) {
     revision < 0
   )
     throw SessionError('PI_SNAPSHOT_SESSION_PINS_INVALID')
+  return { sessionId, conversationId, restoreGeneration, revision }
+}
+async function sealDetachedLedgerWith(c, handle, held, authority, fixture) {
+  const pins = checkHeld(held)
+  const { sessionId, conversationId, restoreGeneration, revision } = pins
+  if (fixture?.closedWritersWithC4 !== true || fixture?.copiedAfterCleanShutdown !== true)
+    throw SessionError('PI_SNAPSHOT_FIXTURE_PROVENANCE_MISSING')
   const facts = c.snap.snapshotFacts(handle)
-  if (facts.method !== 'closed-checkpointed-copy') throw SessionError('PI_SNAPSHOT_NOT_DETACHED')
   // The held restore generation must still be the current open one for the lineage the closure names.
   await new PiRestoreGenerationEvidenceReader(authority).readCurrent({
     lineageId: facts.closure.lineageId,
@@ -270,18 +293,42 @@ async function sealDetachedLedger(c, handle, held, authority) {
   if (!Array.isArray(ledger.receipts)) throw SessionError('PI_SNAPSHOT_LEDGER_INVALID')
   if (ledger.receipts.some((receipt) => receipt?.conversationId !== conversationId))
     throw SessionError('PI_SNAPSHOT_SESSION_MISMATCH')
-  return sealPiReceiptSnapshot({
+  const sealed = sealPiReceiptSnapshot({
     provenance: {
       sessionId,
       conversationId,
       restoreGeneration,
       ownerEpoch: facts.fenceEpoch,
-      detached: true,
-      coherent: true,
+      detached: fixture.copiedAfterCleanShutdown,
+      coherent: fixture.closedWritersWithC4,
       access: 'select_only',
     },
     ledger,
   })
+  pinnedSessions.set(sealed, Object.freeze({ ...pins, lineageId: facts.closure.lineageId }))
+  return sealed
+}
+const sealDetachedLedger = (c, handle, held, authority) =>
+  sealDetachedLedgerWith(c, handle, held, authority, CONTROLLED_FIXTURE)
+
+// Test-local read boundary. It repeats, at read time, every session-level pin the seal was made with: the session id, the
+// conversation id, the restore generation and its revision, and it reads the restore generation authority again. The existing
+// reader (`readPiFrozenReceipt`) is unchanged and checks only the session id against its provenance and the request-level pins
+// (plus a foreign-conversation refusal for the requested request); it cannot carry the other three pins.
+async function readPinnedFrozenReceipt(sealed, held, identity, authority) {
+  const record =
+    typeof sealed === 'object' && sealed !== null ? pinnedSessions.get(sealed) : undefined
+  if (record === undefined) throw SessionError('PI_SNAPSHOT_READ_NOT_SEALED_HERE')
+  const pins = checkHeld(held)
+  for (const key of ['sessionId', 'conversationId', 'restoreGeneration', 'revision'])
+    if (pins[key] !== record[key]) throw SessionError('PI_SNAPSHOT_READ_PIN_MISMATCH')
+  if (identity?.sessionId !== pins.sessionId) throw SessionError('PI_SNAPSHOT_READ_PIN_MISMATCH')
+  await new PiRestoreGenerationEvidenceReader(authority).readCurrent({
+    lineageId: record.lineageId,
+    restoreGeneration: pins.restoreGeneration,
+    revision: pins.revision,
+  })
+  return readPiFrozenReceipt(sealed, identity)
 }
 const authorityFor = (lineageId, restoreGeneration, revision = 7, state = 'open') => ({
   readCurrent: async () => ({ lineageId, restoreGeneration, revision, state }),
@@ -339,6 +386,27 @@ const scenarios = {
     const { artifact, closure } = await closedArtifact(c)
     tamper(artifact, "UPDATE durable_writer_fence SET generation = 'gen:other'")
     return sealCode(c, artifact, pinsOf(closure))
+  },
+  'the fence is not armed': async (c) => {
+    const { artifact, closure } = await closedArtifact(c)
+    tamper(artifact, 'UPDATE durable_writer_fence SET armed = 0')
+    return sealCode(c, artifact, pinsOf(closure))
+  },
+  'an extra symbol pin key': async (c) => {
+    const { artifact, closure } = await closedArtifact(c)
+    return sealCode(c, artifact, { ...pinsOf(closure), [Symbol('extra')]: 1 })
+  },
+  'an extra non-enumerable pin key': async (c) => {
+    const { artifact, closure } = await closedArtifact(c)
+    const pins = pinsOf(closure)
+    Object.defineProperty(pins, 'extra', { value: 1, enumerable: false })
+    return sealCode(c, artifact, pins)
+  },
+  'a non-enumerable pin': async (c) => {
+    const { artifact, closure } = await closedArtifact(c)
+    const pins = pinsOf(closure)
+    Object.defineProperty(pins, 'epoch', { enumerable: false })
+    return sealCode(c, artifact, pins)
   },
   'epoch pin differs from the closure': async (c) => {
     const { artifact, closure } = await closedArtifact(c)
@@ -410,6 +478,10 @@ const expected = {
   'fence owner differs from the pin': 'PI_SNAPSHOT_CLOSURE_MISMATCH',
   'fence lineage differs from the pin': 'PI_SNAPSHOT_CLOSURE_MISMATCH',
   'fence generation differs from the pin': 'PI_SNAPSHOT_CLOSURE_MISMATCH',
+  'the fence is not armed': 'PI_SNAPSHOT_CLOSURE_MISMATCH',
+  'an extra symbol pin key': 'PI_SNAPSHOT_PINS_INVALID',
+  'an extra non-enumerable pin key': 'PI_SNAPSHOT_PINS_INVALID',
+  'a non-enumerable pin': 'PI_SNAPSHOT_PINS_INVALID',
   'epoch pin differs from the closure': 'PI_SNAPSHOT_CLOSURE_MISMATCH',
   'closure epoch is not previous epoch plus one': 'PI_SNAPSHOT_CLOSURE_MISMATCH',
   'fence epoch is below the closure epoch': 'PI_SNAPSHOT_CLOSURE_MISMATCH',
@@ -434,7 +506,14 @@ describe('candidate C7c detached snapshot, method A (disposable SQLite, patched 
     const artifactBefore = { sha256: digestOf(artifact), entries: listing(artifact) }
     const handle = await lab.snap.sealSnapshot(artifact, pinsOf(closure))
     const facts = lab.snap.snapshotFacts(handle)
-    expect(facts.method).toBe('closed-checkpointed-copy')
+    // Structural facts only: no constant method label and no detached or coherent claim, which the SDK cannot derive.
+    expect(Object.keys(facts).toSorted()).toEqual([
+      'closure',
+      'cutSeq',
+      'digest',
+      'fenceEpoch',
+      'schemaVersion',
+    ])
     expect(facts.closure).toMatchObject({
       mutationId: closure.mutationId,
       ownerKey: closure.ownerKey,
@@ -515,9 +594,27 @@ describe('candidate C7c detached snapshot, method A (disposable SQLite, patched 
       { ...good, lastSeq: Number.NaN },
       { ...good, lastSeq: '5' },
       Object.defineProperty({ ...good }, 'epoch', { get: () => closure.epoch, enumerable: true }),
+      // The contract is exactly six OWN keys: symbols and non-enumerable extras are keys too, and a non-enumerable pin is refused.
+      { ...good, [Symbol('extra')]: 1 },
+      Object.defineProperty({ ...good }, 'hidden', { value: 1, enumerable: false }),
+      Object.defineProperty({ ...good }, Symbol.for('hidden'), { value: 1, enumerable: false }),
+      Object.defineProperty({ ...good }, 'lastSeq', { enumerable: false }),
     ]
     for (const pins of bad)
       expect(await sealCode(lab, artifact, pins)).toBe('PI_SNAPSHOT_PINS_INVALID')
+    // Getters are never invoked, whether on a pin or on a hidden extra key.
+    let reads = 0
+    const spy = (name, enumerable) =>
+      Object.defineProperty({ ...good }, name, {
+        get() {
+          reads += 1
+          return name === 'epoch' ? closure.epoch : 1
+        },
+        enumerable,
+      })
+    for (const pins of [spy('epoch', true), spy('hidden', false), spy('visible', true)])
+      expect(await sealCode(lab, artifact, pins)).toBe('PI_SNAPSHOT_PINS_INVALID')
+    expect(reads).toBe(0)
     // A mutated pin object after the call started cannot change what was checked: pins are copied before the first await.
     const live = { ...good }
     const pending = lab.snap.sealSnapshot(artifact, live)
@@ -645,7 +742,7 @@ describe('candidate C7c detached snapshot, method A (disposable SQLite, patched 
       expect(await sealCode(lab, bad, pins)).toBe('PI_SNAPSHOT_ARTIFACT_INVALID')
   })
 
-  test('sealing never creates, migrates or writes: a missing path stays missing and an old schema stays old', async () => {
+  test('sealing a missing path refuses and creates nothing', async () => {
     const missing = join(lab.dir, 'never-created.sqlite')
     const { closure } = await closedArtifact(lab)
     expect(await sealCode(lab, missing, pinsOf(closure))).toBe('PI_SNAPSHOT_ARTIFACT_INVALID')
@@ -776,6 +873,29 @@ describe('candidate C7c sealing boundary glue and the frozen receipt reader (tes
       )
   })
 
+  test('the boundary refuses without controlled fixture provenance: the SDK derives neither detached nor coherent', async () => {
+    const { artifact, closure, conversationId } = await closedArtifact(lab)
+    const handle = await lab.snap.sealSnapshot(artifact, pinsOf(closure))
+    const authority = authorityFor(closure.lineageId, 'restore:1')
+    for (const fixture of [
+      undefined,
+      null,
+      {},
+      { closedWritersWithC4: true },
+      { copiedAfterCleanShutdown: true },
+      { closedWritersWithC4: true, copiedAfterCleanShutdown: 'yes' },
+      { closedWritersWithC4: false, copiedAfterCleanShutdown: true },
+    ])
+      expect(
+        await code(sealDetachedLedgerWith(lab, handle, heldFor(conversationId), authority, fixture))
+      ).toBe('PI_SNAPSHOT_FIXTURE_PROVENANCE_MISSING')
+    expect(
+      await code(
+        sealDetachedLedgerWith(lab, handle, heldFor(conversationId), authority, CONTROLLED_FIXTURE)
+      )
+    ).toBe('no error')
+  })
+
   test('a store with no receipts at its cut reads as absent, which is history and not proof the effect never happened', async () => {
     const written = await produce(lab, [], { mutationId: 'mutation:empty' })
     const artifact = copyOf(lab, written.path)
@@ -789,7 +909,7 @@ describe('candidate C7c sealing boundary glue and the frozen receipt reader (tes
     expect(readPiFrozenReceipt(sealed, readerPins('cancel:one'))).toEqual({ outcome: 'absent' })
   })
 
-  test('session pins are validated at the sealing boundary and again by the reader', async () => {
+  test('session pins are validated at the sealing boundary, and the existing reader rechecks the session id', async () => {
     const { artifact, closure, conversationId } = await closedArtifact(lab)
     const handle = await lab.snap.sealSnapshot(artifact, pinsOf(closure))
     const good = authorityFor(closure.lineageId, 'restore:1')
@@ -826,6 +946,102 @@ describe('candidate C7c sealing boundary glue and the frozen receipt reader (tes
     expect(() => readPiFrozenReceipt({}, readerPins('cancel:one'))).toThrow(
       'PI_FROZEN_RECEIPT_SNAPSHOT_NOT_ISSUED'
     )
+  })
+
+  test('the existing reader rechecks only the session id and request pins; the test-local wrapper rechecks all four session pins and the authority', async () => {
+    const { artifact, closure, conversationId } = await closedArtifact(lab)
+    const handle = await lab.snap.sealSnapshot(artifact, pinsOf(closure))
+    const good = authorityFor(closure.lineageId, 'restore:1')
+    const sealed = await sealDetachedLedger(lab, handle, heldFor(conversationId), good)
+    const held = heldFor(conversationId)
+
+    // The unchanged reader cannot carry a conversation id, restore generation or revision at all.
+    for (const extra of [{ conversationId }, { restoreGeneration: 'restore:1' }, { revision: 7 }])
+      expect(() => readPiFrozenReceipt(sealed, readerPins('cancel:one', extra))).toThrow(
+        'PI_FROZEN_RECEIPT_IDENTITY_INVALID'
+      )
+
+    // The wrapper reads the same evidence when every pin matches, and absent stays absent.
+    expect(
+      (await readPinnedFrozenReceipt(sealed, held, readerPins('cancel:one'), good)).outcome
+    ).toBe('found')
+    expect(await readPinnedFrozenReceipt(sealed, held, readerPins('cancel:none'), good)).toEqual({
+      outcome: 'absent',
+    })
+
+    // Each session-level pin is rechecked at read time.
+    for (const over of [
+      { sessionId: 'ses_other' },
+      { conversationId: conversationId + 1 },
+      { restoreGeneration: 'restore:2' },
+      { revision: 8 },
+    ])
+      expect(
+        await code(
+          readPinnedFrozenReceipt(
+            sealed,
+            heldFor(conversationId, over),
+            readerPins('cancel:one'),
+            good
+          )
+        )
+      ).toBe('PI_SNAPSHOT_READ_PIN_MISMATCH')
+    // The identity must name the same session as the held pins.
+    expect(
+      await code(
+        readPinnedFrozenReceipt(
+          sealed,
+          held,
+          readerPins('cancel:one', { sessionId: 'ses_other' }),
+          good
+        )
+      )
+    ).toBe('PI_SNAPSHOT_READ_PIN_MISMATCH')
+    // Malformed held pins and a handle this boundary did not seal.
+    expect(
+      await code(
+        readPinnedFrozenReceipt(
+          sealed,
+          heldFor(conversationId, { revision: -1 }),
+          readerPins('cancel:one'),
+          good
+        )
+      )
+    ).toBe('PI_SNAPSHOT_SESSION_PINS_INVALID')
+    for (const forged of [{}, null, undefined, 'sealed'])
+      expect(
+        await code(readPinnedFrozenReceipt(forged, held, readerPins('cancel:one'), good))
+      ).toBe('PI_SNAPSHOT_READ_NOT_SEALED_HERE')
+    // A handle sealed by the bare seam, without this boundary, is not accepted by the wrapper.
+    const bare = sealPiReceiptSnapshot({
+      provenance: {
+        sessionId: 'ses_snapshot',
+        conversationId,
+        restoreGeneration: 'restore:1',
+        ownerEpoch: closure.epoch,
+        detached: true,
+        coherent: true,
+        access: 'select_only',
+      },
+      ledger: { receipts: [] },
+    })
+    expect(await code(readPinnedFrozenReceipt(bare, held, readerPins('cancel:one'), good))).toBe(
+      'PI_SNAPSHOT_READ_NOT_SEALED_HERE'
+    )
+    // The restore generation authority is read again at read time: a generation closed, replaced or moved since sealing refuses.
+    for (const authority of [
+      authorityFor(closure.lineageId, 'restore:1', 7, 'closing'),
+      authorityFor(closure.lineageId, 'restore:2'),
+      authorityFor(closure.lineageId, 'restore:1', 8),
+      authorityFor('lineage:other', 'restore:1'),
+    ])
+      expect(
+        await code(readPinnedFrozenReceipt(sealed, held, readerPins('cancel:one'), authority))
+      ).toBe('PI_RESTORE_GENERATION_EVIDENCE_CONFLICT')
+    // And the unchanged reader still rejects what it does check: the session id.
+    expect(() =>
+      readPiFrozenReceipt(sealed, readerPins('cancel:one', { sessionId: 'ses_other' }))
+    ).toThrow('PI_FROZEN_RECEIPT_SESSION_MISMATCH')
   })
 
   test('a receipt from a foreign conversation in the ledger is a session mismatch, not an absent receipt', async () => {
@@ -884,6 +1100,30 @@ const mutations = [
         'if (false)',
       ],
     ],
+    becomes: 'sealed',
+  },
+  {
+    scenario: 'the fence is not armed',
+    file: SNAPSHOT,
+    replace: [['if (number(fence.armed) !== 1)', 'if (false)']],
+    becomes: 'sealed',
+  },
+  {
+    scenario: 'an extra symbol pin key',
+    file: SNAPSHOT,
+    replace: [['Reflect.ownKeys(input)', 'Object.keys(input)']],
+    becomes: 'sealed',
+  },
+  {
+    scenario: 'an extra non-enumerable pin key',
+    file: SNAPSHOT,
+    replace: [['Reflect.ownKeys(input)', 'Object.keys(input)']],
+    becomes: 'sealed',
+  },
+  {
+    scenario: 'a non-enumerable pin',
+    file: SNAPSHOT,
+    replace: [[' || descriptor.enumerable !== true', '']],
     becomes: 'sealed',
   },
   {

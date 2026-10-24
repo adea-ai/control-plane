@@ -87,10 +87,10 @@ index 0000000..b481127
 +}
 diff --git a/dist/storage/sqlite/snapshot.d.ts b/dist/storage/sqlite/snapshot.d.ts
 new file mode 100644
-index 0000000..2bf4fc5
+index 0000000..3732b83
 --- /dev/null
 +++ b/dist/storage/sqlite/snapshot.d.ts
-@@ -0,0 +1,35 @@
+@@ -0,0 +1,34 @@
 +import type { SqliteStorage } from "./storage.js";
 +/** CANDIDATE C7c (not consumable). Six pins the caller holds independently of the artifact. */
 +export interface SnapshotPins {
@@ -112,7 +112,6 @@ index 0000000..2bf4fc5
 +    readonly closedAt: unknown;
 +}
 +export interface SnapshotFacts {
-+    readonly method: "closed-checkpointed-copy";
 +    readonly closure: SnapshotClosure;
 +    readonly fenceEpoch: number;
 +    readonly cutSeq: number;
@@ -128,10 +127,10 @@ index 0000000..2bf4fc5
 +export declare function withSnapshotStorage<T>(handle: SealedSnapshot, read: (storage: SqliteStorage) => Promise<T>): Promise<T>;
 diff --git a/dist/storage/sqlite/snapshot.js b/dist/storage/sqlite/snapshot.js
 new file mode 100644
-index 0000000..d1a1f4f
+index 0000000..2ac6f3d
 --- /dev/null
 +++ b/dist/storage/sqlite/snapshot.js
-@@ -0,0 +1,244 @@
+@@ -0,0 +1,253 @@
 +import { createHash } from "node:crypto";
 +import { lstat, readFile, realpath } from "node:fs/promises";
 +import { isAbsolute, resolve } from "node:path";
@@ -139,7 +138,11 @@ index 0000000..d1a1f4f
 +import { isOpenForWrite } from "./open-registry.js";
 +import { openNodeSqliteStorage } from "./node.js";
 +/**
-+ * CANDIDATE C7c (not consumable): detached snapshot, method A (a closed-and-checkpointed disposable copy).
++ * CANDIDATE C7c (not consumable): structural checks for a detached snapshot, method A (a closed-and-checkpointed disposable copy).
++ *
++ * Everything here is a structural check of the artifact file and the rows in it. Nothing here shows that the file was made by
++ * closing the writers and copying after a clean shutdown; that is how the caller (a controlled fixture in tests) made it, and
++ * it is the caller's to attest out of band. The facts carry no "detached" or "coherent" claim, and no constant method label.
 + *
 + * `sealSnapshot` reads an artifact that the caller says is a disposable copy of a cleanly closed store, derives facts from it
 + * through the C7 read-only open, and returns an opaque frozen handle. It compares the artifact with six pins the caller holds
@@ -151,7 +154,6 @@ index 0000000..d1a1f4f
 + * is out-of-band attestation the caller owns. The handle is historical evidence of one committed cut. It never settles a
 + * journal and never authorizes an effect. No boolean the caller passes is attestation.
 + */
-+const METHOD = "closed-checkpointed-copy";
 +const MAX_BYTES = 256 * 1024 * 1024;
 +const SIDECARS = ["-wal", "-shm", "-journal"];
 +const PIN_KEYS = ["epoch", "generation", "lastSeq", "lineageId", "mutationId", "ownerKey"];
@@ -162,13 +164,17 @@ index 0000000..d1a1f4f
 +function readPins(input) {
 +    if (input === null || typeof input !== "object" || Array.isArray(input))
 +        throw refuse("PI_SNAPSHOT_PINS_INVALID");
-+    const own = Object.keys(input).sort();
++    // Every own key, symbols and non-enumerable ones included, must be exactly the six names. Descriptors are read, never getters.
++    const own = Reflect.ownKeys(input);
++    if (own.some((key) => typeof key !== "string"))
++        throw refuse("PI_SNAPSHOT_PINS_INVALID");
++    own.sort();
 +    if (own.length !== PIN_KEYS.length || own.some((key, index) => key !== PIN_KEYS[index]))
 +        throw refuse("PI_SNAPSHOT_PINS_INVALID");
 +    const pins = {};
 +    for (const key of PIN_KEYS) {
 +        const descriptor = Object.getOwnPropertyDescriptor(input, key);
-+        if (descriptor === undefined || !("value" in descriptor))
++        if (descriptor === undefined || !("value" in descriptor) || descriptor.enumerable !== true)
 +            throw refuse("PI_SNAPSHOT_PINS_INVALID");
 +        pins[key] = descriptor.value;
 +    }
@@ -289,6 +295,9 @@ index 0000000..d1a1f4f
 +    // A higher epoch means a successor acquired the fence after the closure: the artifact is not at the closed cut.
 +    if (fenceEpoch > row.epoch)
 +        throw refuse("PI_SNAPSHOT_SUPERSEDED");
++    // A closed, fenced cut is an armed fence. An unarmed fence row is a store that was never fenced or was altered.
++    if (number(fence.armed) !== 1)
++        throw refuse("PI_SNAPSHOT_CLOSURE_MISMATCH");
 +    if (fenceEpoch !== row.epoch || fence.owner_key !== pins.ownerKey || fence.lineage_id !== pins.lineageId || fence.generation !== pins.generation)
 +        throw refuse("PI_SNAPSHOT_CLOSURE_MISMATCH");
 +    if (!Number.isSafeInteger(cutSeq) || cutSeq < 0 || row.lastSeq !== pins.lastSeq || cutSeq !== pins.lastSeq)
@@ -334,7 +343,6 @@ index 0000000..d1a1f4f
 +        path: artifactPath,
 +        fingerprint: before,
 +        facts: Object.freeze({
-+            method: METHOD,
 +            closure: facts.closure,
 +            fenceEpoch: facts.fenceEpoch,
 +            cutSeq: facts.cutSeq,

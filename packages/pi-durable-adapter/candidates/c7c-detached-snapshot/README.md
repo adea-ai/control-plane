@@ -17,7 +17,9 @@ Nothing is exported from the SDK index. The default C7 read-only open is unchang
 sidecars is refused, and no mode reads a database together with its WAL.
 
 The full design, the refusal codes, method B (specified, not implemented) and the limits are in
-`docs/pi-durable-c7c-detached-snapshot-design.md`. In short, a sealed snapshot is historical evidence of one committed cut. No
+`docs/pi-durable-c7c-detached-snapshot-design.md`. The SDK candidate performs structural checks of a file and its rows only; its facts carry no `detached` or `coherent` claim and
+no method label. How an artifact was produced (writers closed with C4, then a copy after a clean shutdown) is controlled fixture
+provenance in the tests, not an SDK fact. In short, a sealed snapshot is historical evidence of one committed cut. No
 in-process registry entry and no stable bytes prove cross-process quiescence; that is out-of-band attestation. No caller-supplied
 boolean is production attestation. A snapshot never settles a journal or authorizes an effect.
 

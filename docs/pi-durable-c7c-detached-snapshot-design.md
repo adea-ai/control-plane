@@ -22,8 +22,8 @@ without implementing it.
 ## What a detached snapshot is, and what it is not
 
 A detached snapshot is a regular file that is a byte copy of a store that was closed with the C4 writer-closure and then shut
-down cleanly (so SQLite checkpointed and removed its sidecars), plus a sealed handle that records facts the SDK derived from
-that file. It is **historical evidence of one committed cut**: the receipt ledger as it stood at the closure's `lastSeq`.
+down cleanly (so SQLite checkpointed and removed its sidecars), plus a sealed handle that records structural facts the SDK
+derived from that file. How the file was made is not among them (see "Two layers" below). It is **historical evidence of one committed cut**: the receipt ledger as it stood at the closure's `lastSeq`.
 
 It is **not**:
 
@@ -32,11 +32,26 @@ It is **not**:
   a controller that stopped the owner and recorded it). The SDK neither performs nor replaces it.
 - proof that the artifact was copied from the store the pins name. The pins are compared with what the artifact says about
   itself. An artifact built to say the same things passes. Provenance of the copy is also out-of-band.
-- production attestation of any kind. No caller-supplied boolean is accepted as attestation anywhere in this candidate, and the
-  existing `detached: true` and `coherent: true` assertions of the #1312 seal are produced in the test glue only from facts the
-  SDK derived.
+- production attestation of any kind. No caller-supplied boolean is production attestation. The SDK facts carry no `detached`
+  and no `coherent` claim and no method label, because nothing the SDK can read from a file shows that it was copied after a
+  clean shutdown or that any writer was quiescent. The `detached: true` and `coherent: true` assertions that the #1312 seal
+  requires are supplied, in the test glue only, from controlled fixture provenance (below), not from the SDK.
 - authority. A sealed snapshot never settles a journal, never authorizes or releases an effect, and never proves that an effect
   did not happen. "Absent" in the snapshot means no receipt in this ledger at this cut.
+
+## Two layers: SDK structural checks and fixture provenance
+
+- **SDK structural checks** (derived from the file and its rows, repeatable by anyone with the file): absolute canonical
+  regular file, not a symlink, one link, not open for writing in this process, no sidecars, readable known schema, passes the
+  integrity check, closure row and fence row coherent with the pins (including an armed fence), cut equal to the pinned
+  `lastSeq`, bytes and identity stable across the reads. `snapshotFacts` returns only the values these produced: closure row,
+  fence epoch, cut sequence, schema version and digest. It says nothing about how the file came to exist.
+- **Controlled fixture provenance** (this candidate's tests only): the test helpers close the writers with C4, shut the storage
+  down, and copy the single file after asserting that no sidecar exists. The test file records that as the constant
+  `CONTROLLED_FIXTURE` and passes it to the test-local sealing glue, which refuses without it
+  (`PI_SNAPSHOT_FIXTURE_PROVENANCE_MISSING`). That constant is the test file's own assertion about a fixture it built. It is not
+  derived by the SDK, it is not production attestation, and a real issuer would need an out-of-band equivalent (an operator or
+  controller record that the owner stopped and the copy was made from that store).
 
 ## Method A: closed-and-checkpointed disposable copy
 
@@ -52,8 +67,10 @@ Procedure the caller follows (outside this candidate; no code here performs it a
 
 ### Pins
 
-Exactly six independently held values; extra keys, missing keys, getters and wrong types are refused
-(`PI_SNAPSHOT_PINS_INVALID`). Each is read once into a primitive before the first `await`.
+Exactly six independently held values (`PI_SNAPSHOT_PINS_INVALID` otherwise). The own keys are read with `Reflect.ownKeys`, so a
+symbol key, a non-enumerable extra key, a missing key or a non-enumerable pin is refused, and only enumerable data properties are
+accepted. Property descriptors are read and no getter is ever invoked. Each pin is read once into a primitive before the first
+`await`.
 
 | Pin                                   | Meaning                                                             |
 | ------------------------------------- | ------------------------------------------------------------------- |
@@ -63,8 +80,8 @@ Exactly six independently held values; extra keys, missing keys, getters and wro
 | `lastSeq`                             | The last committed sequence at the closure.                         |
 
 Session-level pins (`sessionId`, `conversationId`, `restoreGeneration` with its `revision`) are adapter-level facts. They are
-not in the SDK store and are not accepted by `sealSnapshot`; they are validated at the sealing boundary (below) and again by
-`readPiFrozenReceipt`.
+not in the SDK store and are not accepted by `sealSnapshot`; they are validated at the test-local sealing boundary and again at
+the test-local read boundary (below). The existing `readPiFrozenReceipt` is unchanged and rechecks less than that: see below.
 
 ### Coherence rule
 
@@ -77,16 +94,16 @@ All of the following must hold, and any failure refuses with a code and returns 
 4. It opens through the C7 read-only open, has a known schema, and passes `PRAGMA quick_check`.
 5. The closure row for `mutationId` exists, and its owner, lineage, generation and epoch equal the pins, and
    `epoch == previous_epoch + 1`.
-6. The fence row's epoch equals the closure epoch, and its owner, lineage and generation equal the pins. A **higher** fence
-   epoch means a successor acquired the fence after the closure and is `PI_SNAPSHOT_SUPERSEDED`. A lower or otherwise
-   different one is `PI_SNAPSHOT_CLOSURE_MISMATCH`.
+6. The fence row's epoch equals the closure epoch, its `armed` flag is 1, and its owner, lineage and generation equal the pins.
+   A **higher** fence epoch means a successor acquired the fence after the closure and is `PI_SNAPSHOT_SUPERSEDED`. A lower or
+   otherwise different one, or an unarmed fence, is `PI_SNAPSHOT_CLOSURE_MISMATCH`.
 7. The last committed sequence (`next_seq - 1`) and the closure row's `last_seq` both equal the `lastSeq` pin
    (`PI_SNAPSHOT_CUT_MISMATCH`).
 8. The digest (SHA-256 of the whole file) and the file identity (device, inode, size, mtime, ctime) are the same before and
    after the reads (`PI_SNAPSHOT_UNSTABLE`).
 
 The handle is opaque and frozen, exposes no path, hash, store, statement or flag, and carries derived facts retrievable with
-`snapshotFacts(handle)`: method, closure row, fence epoch, cut sequence, schema version and digest. The facts are frozen.
+`snapshotFacts(handle)`: closure row, fence epoch, cut sequence, schema version and digest. The facts are frozen.
 
 ### Reads after sealing
 
@@ -118,25 +135,36 @@ hard link or another spelling is the same entry), and forgets them when that dat
 not another process, not a second copy of the package, not a crashed owner. It exists to refuse the obvious mistake of sealing
 the live store from the process that holds it. It is not a lock and not an attestation.
 
-## Sealing boundary and the frozen receipt reader
+## Sealing boundary, read boundary and the frozen receipt reader
 
 The adapter's #1312 seam (`sealPiReceiptSnapshot`, `readPiFrozenReceipt`) is unchanged, and adapter source does not grow (the
-dist budget stays at its ceiling). The glue that would sit at a real sealing boundary is therefore test-local
-(`sealDetachedLedger` in the test file) and is not an issuer. It shows the intended shape:
+dist budget stays at its ceiling). The glue that would sit at a real sealing boundary and read boundary is therefore test-local
+(`sealDetachedLedger` and `readPinnedFrozenReceipt` in the test file) and is not an issuer. It shows the intended shape:
 
 1. Validate the session-level pins (`sessionId`, `conversationId`, `restoreGeneration`, `revision`).
-2. Take `detached`, `coherent` and `ownerEpoch` only from `snapshotFacts(handle)`; never from the caller.
+2. Take `ownerEpoch` from `snapshotFacts(handle)` (the fence epoch, a structural fact). Take `detached` and `coherent` only from
+   the controlled fixture provenance the test passes in, and refuse without it; the SDK derives neither.
 3. Read the held restore generation through the existing `PiRestoreGenerationEvidenceReader` for the lineage the closure names,
    so a closing, replaced or different-lineage generation is refused (`PI_RESTORE_GENERATION_EVIDENCE_CONFLICT`).
 4. Replay the ledger through `withSnapshotStorage`; require the pinned conversation to exist in the snapshot and every receipt
    to belong to it (`PI_SNAPSHOT_SESSION_MISMATCH`); at most one ledger document (`PI_SNAPSHOT_LEDGER_INVALID`). An absent ledger
    document is an empty ledger: a snapshot taken before any abort receipt reads as absent, which is history only.
-5. Seal through `sealPiReceiptSnapshot`. `readPiFrozenReceipt` then checks the session pin again and the whole ledger before it
-   answers `found` or `absent`.
+5. Seal through `sealPiReceiptSnapshot`, and remember the four session-level pins and the lineage the handle was sealed with.
+6. At read time, `readPinnedFrozenReceipt` requires a handle this boundary sealed, requires the held `sessionId`,
+   `conversationId`, `restoreGeneration` and `revision` to equal the ones sealed (`PI_SNAPSHOT_READ_PIN_MISMATCH`), requires the
+   identity's `sessionId` to match, reads the restore generation authority again, and only then calls `readPiFrozenReceipt`.
+
+What each layer checks, exactly:
+
+| Layer                                                  | Checks                                                                                                                                                                                                                                                                                                                                                                                                             |
+| ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `sealSnapshot` / `withSnapshotStorage` (SDK candidate) | The structural checks above and the six store-level pins. No session-level pin.                                                                                                                                                                                                                                                                                                                                    |
+| `sealDetachedLedger` (test-local)                      | All four session-level pins are well formed; fixture provenance present; restore generation current and open for the closure's lineage; pinned conversation exists in the snapshot; every receipt belongs to it.                                                                                                                                                                                                   |
+| `readPinnedFrozenReceipt` (test-local)                 | All four session-level pins equal the sealed ones; identity names the same session; restore generation authority read again.                                                                                                                                                                                                                                                                                       |
+| `readPiFrozenReceipt` (existing, unchanged)            | The identity's `sessionId` equals the provenance's; the identity is strictly shaped (it cannot carry a conversation id, restore generation or revision); the whole ledger is valid and unambiguous; the requested request is not in another conversation; and the request-level pins (digests, expiry, turn key, inference id) match. It does **not** recheck the conversation id, restore generation or revision. |
 
 The seal's `sessionId` and `restoreGeneration` are the caller's pins, bound into the handle; the store does not contain them.
-The glue guarantees only that the pins used at the boundary are the ones the reader compares, and that the restore generation
-was current when it sealed. That read is a point-in-time read, not atomic write authority.
+Both restore generation reads are point-in-time reads, not atomic write authority.
 
 ## Method B: SQLite backup (specified, not implemented)
 
@@ -148,8 +176,8 @@ than removing it. If it is ever implemented it must:
 - run only against a store whose fence epoch equals a closure epoch the caller pins, and verify, on the produced file, the same
   coherence rule above (closure row, fence epoch, cut, digest) rather than trusting the backup call;
 - write to a fresh exclusive path and never into the live directory's sidecar names;
-- produce an artifact that `sealSnapshot` seals with `method` distinct from `closed-checkpointed-copy`, so a reader can tell the
-  two apart; and
+- carry its own provenance as an out-of-band record kept beside the artifact (the SDK facts name no method, so nothing in a
+  sealed handle distinguishes how an artifact was produced); and
 - keep every statement above about quiescence, provenance and authority unchanged.
 
 It needs its own approval, tests and root review before any code.
@@ -159,23 +187,26 @@ It needs its own approval, tests and root review before any code.
 Local, on Bun 1.4.4 over temporary SDK copies and disposable files. Nothing is written outside the scratch directory, which
 the test removes by its own run directories only.
 
-- Eighteen scenarios, each pinned to the exact code it must answer with, including a clean seal, every pin-versus-row and
-  pin-versus-fence comparison on isolated tampers, epoch arithmetic, a lower fence epoch, a successor acquiring the fence,
-  the `lastSeq` and `next_seq` cut checks, hard link, symlink, symlinked directory and in-process open.
-- Pin validation (21 malformed shapes, read-once), forged handles, missing closure and missing closure table, sidecars of each
+- Twenty-two scenarios, each pinned to the exact code it must answer with, including a clean seal, every pin-versus-row and
+  pin-versus-fence comparison on isolated tampers, an unarmed fence, symbol, hidden and non-enumerable pin keys, epoch
+  arithmetic, a lower fence epoch, a successor acquiring the fence, the `lastSeq` and `next_seq` cut checks, hard link,
+  symlink, symlinked directory and in-process open.
+- Pin validation (25 malformed shapes, read-once, getters never invoked), forged handles, missing closure and missing closure table, sidecars of each
   kind, a successor's uncheckpointed WAL copied beside the file, garbage, empty, truncated and damaged artifacts, bytes changed
   between sealing and a read and during a read, a sidecar that appears later, a sealed file later opened for writing, and the
   read-only storage's write refusals.
 - The glue and reader: found and absent from a coherent snapshot, equal to a read-write reopen of a byte copy; empty ledger;
-  malformed, wrong-conversation and wrong-restore-generation pins at the boundary; the session pin again at the reader; a
-  foreign-conversation receipt; and a ledger altered after the cut.
-- Mutation proof: eighteen entries, each rebuilding an SDK copy with exactly one candidate check weakened and requiring the
-  scenario that check exists for to answer something else, with the answer pinned. Fifteen weakenings fail open to a seal. Two
+  refusal without fixture provenance; malformed, wrong-conversation and wrong-restore-generation pins at the boundary; the
+  existing reader unable to carry the conversation, restore generation or revision pins; each of the four session pins, the
+  identity session, a forged or bare-seam handle, and a changed restore generation authority refused by the read-boundary
+  wrapper; a foreign-conversation receipt; and a ledger altered after the cut.
+- Mutation proof: twenty-two entries, each rebuilding an SDK copy with exactly one candidate check weakened and requiring the
+  scenario that check exists for to answer something else, with the answer pinned. Nineteen weakenings fail open to a seal. Two
   move to a different refusal that a second check still provides (superseded falls to closure mismatch; an unregistered
   writer is caught by its sidecars), and one weakening makes a closed writer stay registered forever (refused after close).
 
 Not covered by an isolated probe, so not proven by the mutation run: `PRAGMA quick_check` (a damaged-page test covers the
-behaviour but a second layer also answers), the before/after fingerprint comparison inside `sealSnapshot` itself (a race inside
+behaviour but a second layer also answers), the symbol-key refusal (the length check also catches it), the before/after fingerprint comparison inside `sealSnapshot` itself (a race inside
 one call cannot be forced deterministically; `withSnapshotStorage`'s equivalent is probed), the sidecar presence check (the C7
 open repeats it), and the test-local glue's own checks, which are asserted directly rather than mutated.
 
