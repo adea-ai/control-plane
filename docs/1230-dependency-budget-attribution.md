@@ -24,8 +24,15 @@ actual regenerated lockfile. A real `bun install --frozen-lockfile` succeeded.
 
 This is a **net 44-identity source reduction**: 45 identities removed and one
 added relative to the 591 baseline, not a change in counting scope.
-The current lockfile SHA-256 is
-`829196fc27f4a3e4a4e4af2b3a291d5421401b3b57c8f4976f1cf46f8f9a4535`.
+The lockfile SHA-256 on `main` at
+`94d14dcb5a37aff10445813596f6e86f1b42c41e` is
+`6f4969030dcd5164864ef39360223aac0a807261d418caf89a4270466106ad75`
+(read-only `shasum -a 256 bun.lock`, 2026-10-24; the worktree file is
+unmodified against `HEAD:bun.lock`). The candidate value previously
+published here as "the current lockfile SHA-256",
+`829196fc27f4a3e4a4e4af2b3a291d5421401b3b57c8f4976f1cf46f8f9a4535`,
+matches no `bun.lock` of any commit reachable from this clone's refs and is
+historical, not current.
 The earlier 548-identity receipt remains historical at
 `6c7d01d7658c8dcb787841ce9840d177188f7942222d1a823224936119083bf4`.
 The earlier 551-identity lock receipt remains historical at
