@@ -1,0 +1,120 @@
+diff --git a/dist/storage/sqlite/migrations.js b/dist/storage/sqlite/migrations.js
+index b7c05a0..2addec6 100644
+--- a/dist/storage/sqlite/migrations.js
++++ b/dist/storage/sqlite/migrations.js
+@@ -77,7 +77,19 @@ const INITIAL_SCHEMA = [
+     "CREATE INDEX document_revisions_by_kind ON document_revisions (document_id, kind, seq DESC)",
+ ];
+ /** Immutable, ordered schema history. Append new migrations after the initial schema ships. */
+-export const SQLITE_MIGRATIONS = [{ version: 1, statements: INITIAL_SCHEMA }];
++// CANDIDATE C2 (not consumable): store-resident writer fence. Row exists unarmed so legacy writers are unchanged until a writer is acquired.
++const WRITER_FENCE_SCHEMA = [
++    `CREATE TABLE durable_writer_fence (
++		singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
++		owner_key TEXT NOT NULL,
++		epoch INTEGER NOT NULL CHECK (epoch >= 0),
++		armed INTEGER NOT NULL CHECK (armed IN (0, 1)),
++		lineage_id TEXT NOT NULL,
++		generation TEXT NOT NULL
++	) STRICT`,
++    `INSERT INTO durable_writer_fence (singleton, owner_key, epoch, armed, lineage_id, generation) VALUES (1, '', 0, 0, '', '')`,
++];
++export const SQLITE_MIGRATIONS = [{ version: 1, statements: INITIAL_SCHEMA }, { version: 2, statements: WRITER_FENCE_SCHEMA }];
+ export const CURRENT_SQLITE_SCHEMA_VERSION = SQLITE_MIGRATIONS.at(-1)?.version ?? 0;
+ /** Apply all pending schema migrations atomically. */
+ export async function applySqliteMigrations(database, migrations = SQLITE_MIGRATIONS) {
+diff --git a/dist/storage/sqlite/storage.d.ts b/dist/storage/sqlite/storage.d.ts
+index edf79b3..437b424 100644
+--- a/dist/storage/sqlite/storage.d.ts
++++ b/dist/storage/sqlite/storage.d.ts
+@@ -1,6 +1,19 @@
+ import type { Context, JsonValue } from "@earendil-works/chord";
+ import type { ConversationId, ConversationQuery, ConversationRecord, Cursor, DocumentAddress, DocumentId, DocumentPoint, DocumentQuery, DocumentRecord, EntryId, EntryQuery, EntryRecord, Id, Page, Seq, Storage, StorageWrite, StoredDocument, SubmissionId, SubmissionQuery, SubmissionRecord, TaskId, TaskQuery, TaskRecord } from "../../types.ts";
+ import type { SqliteDatabase } from "./database.ts";
++export type WriterFenceRequest = {
++    readonly ownerKey: string;
++    readonly lineageId: string;
++    readonly generation: string;
++    readonly expectedEpoch: number;
++    readonly expectedGeneration?: string;
++};
++export type WriterFenceToken = {
++    readonly ownerKey: string;
++    readonly epoch: number;
++    readonly lineageId: string;
++    readonly generation: string;
++};
+ type StoredTask = TaskRecord<JsonValue, JsonValue, JsonValue>;
+ /** Portable SQLite implementation of the Pico storage contract. */
+ export declare class SqliteStorage implements Storage {
+@@ -13,6 +26,10 @@ export declare class SqliteStorage implements Storage {
+     private constructor();
+     /** Initialize storage over an owned SQLite database facade. */
+     static open(db: SqliteDatabase): Promise<SqliteStorage>;
++    private fence;
++    /** CANDIDATE C2 (not consumable): advance the store-resident writer fence and bind this storage to it. */
++    acquireWriterFence(request: WriterFenceRequest): Promise<WriterFenceToken>;
++    private assertWriterFence;
+     commit(writes: readonly StorageWrite[], _context: Context): Promise<Seq>;
+     commitGuarded(writes: readonly StorageWrite[], finalGuard: () => void, context: Context): Promise<Seq>;
+     mintId<I extends Id<string>>(): Promise<I>;
+diff --git a/dist/storage/sqlite/storage.js b/dist/storage/sqlite/storage.js
+index 3b424e9..1507978 100644
+--- a/dist/storage/sqlite/storage.js
++++ b/dist/storage/sqlite/storage.js
+@@ -74,6 +74,7 @@ export class SqliteStorage {
+     db;
+     nextId;
+     closed = false;
++    fence;
+     closing;
+     admittedReads = 0;
+     readsDrained;
+@@ -100,6 +101,39 @@ export class SqliteStorage {
+             throw error;
+         }
+     }
++    /**
++     * CANDIDATE C2 (not consumable). Atomically advance the store-resident writer fence and bind this storage to the new epoch.
++     * Any earlier holder, registered or not, fails its next commit with PI_STORE_FENCED.
++     */
++    async acquireWriterFence(request) {
++        this.assertOpen();
++        const text = (value) => typeof value === "string" && value.length > 0 && value.length <= 8192 && value.trim() === value;
++        if (request === null || typeof request !== "object" || !text(request.ownerKey) || !text(request.lineageId) || !text(request.generation) ||
++            !Number.isSafeInteger(request.expectedEpoch) || request.expectedEpoch < 0 ||
++            (request.expectedGeneration !== undefined && !text(request.expectedGeneration)))
++            throw new StorageRejected("PI_STORE_FENCE_REQUEST_INVALID");
++        const token = await this.db.transaction(async (transaction) => {
++            const row = await transaction.get("SELECT owner_key, epoch, armed, lineage_id, generation FROM durable_writer_fence WHERE singleton = 1");
++            if (row === undefined)
++                throw new StorageRejected("PI_STORE_FENCE_MISSING");
++            if (row.epoch !== request.expectedEpoch)
++                throw new StorageRejected("PI_STORE_FENCE_STALE");
++            if (row.armed === 1 && request.expectedGeneration !== undefined && row.generation !== request.expectedGeneration)
++                throw new StorageRejected("PI_STORE_FENCE_GENERATION");
++            const epoch = row.epoch + 1;
++            await transaction.run("UPDATE durable_writer_fence SET owner_key = ?, epoch = ?, armed = 1, lineage_id = ?, generation = ? WHERE singleton = 1", request.ownerKey, epoch, request.lineageId, request.generation);
++            return Object.freeze({ ownerKey: request.ownerKey, epoch, lineageId: request.lineageId, generation: request.generation });
++        });
++        this.fence = token;
++        return token;
++    }
++    async assertWriterFence(transaction) {
++        const row = await transaction.get("SELECT owner_key, epoch, armed FROM durable_writer_fence WHERE singleton = 1");
++        if (row === undefined)
++            throw new StorageRejected("PI_STORE_FENCE_MISSING");
++        if (row.armed === 1 && (this.fence === undefined || row.owner_key !== this.fence.ownerKey || row.epoch !== this.fence.epoch))
++            throw new StorageRejected("PI_STORE_FENCED");
++    }
+     async commitGuarded(writes, finalGuard, context) {
+         if (typeof this.db.transactionGuarded !== "function") throw new StorageRejected("PI_GUARDED_COMMIT_UNAVAILABLE");
+         if (typeof finalGuard !== "function") throw new StorageRejected("Final guard must be a synchronous function");
+@@ -113,6 +147,7 @@ export class SqliteStorage {
+             ? (callback) => this.db.transaction(callback)
+             : (callback) => this.db.transactionGuarded(callback, finalGuard);
+         const seq = await transact(async (transaction) => {
++            await this.assertWriterFence(transaction);
+             const metadata = await transaction.get("SELECT next_id, next_seq FROM durable_metadata WHERE singleton = 1");
+             if (metadata === undefined)
+                 throw new Error("Durable SQLite metadata is missing");
