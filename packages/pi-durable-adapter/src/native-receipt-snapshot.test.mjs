@@ -63,9 +63,6 @@ test('finds the receipt in a sealed snapshot and returns frozen historical evide
 
 test('an absent request stays absent and says nothing about live effect', () => {
   expect(readPiFrozenReceipt(seal({ receipts: [] }), pins)).toEqual({ outcome: 'absent' })
-  expect(readPiFrozenReceipt(seal({ receipts: [receipt({ conversationId: 8 })] }), pins)).toEqual({
-    outcome: 'absent',
-  })
   expect(
     readPiFrozenReceipt(seal({ receipts: [receipt({ requestId: 'cancel:two' })] }), pins)
   ).toEqual({ outcome: 'absent' })
@@ -132,15 +129,16 @@ test('malformed, duplicate or foreign-shaped ledgers fail closed', () => {
   expect(code(() => readPiFrozenReceipt(seal({ receipts: [receipt(), receipt()] }), pins))).toBe(
     'PI_FROZEN_RECEIPT_LEDGER_INVALID'
   )
-  expect(code(() => readPiFrozenReceipt(seal({ receipts: [receipt({ version: 2 })] }), pins))).toBe(
-    'PI_FROZEN_RECEIPT_BINDING_INVALID'
-  )
-  expect(
-    code(() => readPiFrozenReceipt(seal({ receipts: [receipt({ background: true })] }), pins))
-  ).toBe('PI_FROZEN_RECEIPT_BINDING_INVALID')
-  expect(
-    code(() => readPiFrozenReceipt(seal({ receipts: [{ ...receipt(), extra: true }] }), pins))
-  ).toBe('PI_FROZEN_RECEIPT_BINDING_INVALID')
+  for (const bad of [
+    receipt({ version: 2 }),
+    receipt({ background: true }),
+    { ...receipt(), extra: true },
+    null,
+    'x',
+  ])
+    expect(code(() => readPiFrozenReceipt(seal({ receipts: [bad] }), pins))).toBe(
+      'PI_FROZEN_RECEIPT_LEDGER_INVALID'
+    )
 })
 
 test('sealing copies the ledger so later mutation cannot change the lookup', () => {
@@ -159,4 +157,56 @@ test('the default issuer refuses and no store, path or flag is ever involved', a
   const snapshot = seal({ receipts: [receipt()] })
   expect(Object.keys(snapshot)).toEqual([])
   expect(Object.getPrototypeOf(snapshot)).toBeNull()
+})
+
+test('a malformed entry anywhere in the ledger never reads as absent', () => {
+  // An unrelated-looking but malformed entry still fails the whole ledger before "absent".
+  for (const bad of [
+    receipt({ requestId: 'cancel:two', version: 2 }),
+    { requestId: pins.requestId },
+    receipt({ taskIds: [1, 1] }),
+  ])
+    expect(code(() => readPiFrozenReceipt(seal({ receipts: [bad] }), pins))).toBe(
+      'PI_FROZEN_RECEIPT_LEDGER_INVALID'
+    )
+  expect(
+    code(() =>
+      readPiFrozenReceipt(
+        seal({ receipts: [receipt({ requestId: 'cancel:two', version: 2 }), receipt()] }),
+        pins
+      )
+    )
+  ).toBe('PI_FROZEN_RECEIPT_LEDGER_INVALID')
+})
+
+test('the same request in another conversation is a cross-conversation conflict', () => {
+  expect(
+    code(() => readPiFrozenReceipt(seal({ receipts: [receipt({ conversationId: 8 })] }), pins))
+  ).toBe('PI_FROZEN_RECEIPT_CROSS_CONVERSATION')
+  expect(
+    code(() =>
+      readPiFrozenReceipt(seal({ receipts: [receipt(), receipt({ conversationId: 8 })] }), pins)
+    )
+  ).toBe('PI_FROZEN_RECEIPT_CROSS_CONVERSATION')
+  // Another request in another conversation is unrelated and stays absent.
+  expect(
+    readPiFrozenReceipt(
+      seal({ receipts: [receipt({ conversationId: 8, requestId: 'cancel:two' })] }),
+      pins
+    )
+  ).toEqual({ outcome: 'absent' })
+})
+
+test('every pin is validated against the found receipt, including cross-turn and cross-inference', () => {
+  const snapshot = seal({ receipts: [receipt()] })
+  for (const wrong of [
+    { turnKey: 'pi-turn:att_other:initial' },
+    { turnKey: 'turn:next' },
+    { inferenceId: 'native:9' },
+    { inferenceId: null },
+    { expiresAt: '2026-10-20T12:03:00.000Z' },
+  ])
+    expect(code(() => readPiFrozenReceipt(snapshot, { ...pins, ...wrong }))).toBe(
+      'PI_FROZEN_RECEIPT_BINDING_INVALID'
+    )
 })

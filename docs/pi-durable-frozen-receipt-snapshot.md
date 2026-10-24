@@ -20,9 +20,12 @@ path, hash or "coherent" boolean, never reads a live database or WAL, only reads
 - The issuer must attest, as sealed provenance and not as caller input, that the cut is
   detached, coherent and read with SELECT only, and names the session, conversation,
   restore generation and owner epoch. The ledger is copied and frozen when sealed.
-- The reader checks the session, the conversation and every request pin (digest, target,
-  expiry, turn, inference), refuses malformed or duplicate ledgers, and returns
-  `found` or `absent`. `absent` is not proof that the effect never happened live.
+- The reader validates the whole ledger before any result: every entry must be a
+  strict, well-formed receipt and `(conversation, request)` must be unique, else
+  `LEDGER_INVALID`. The same request in another conversation is
+  `CROSS_CONVERSATION`, never absent. It then checks the session and every request
+  pin (digest, target, expiry, turn, inference) and returns `found` or `absent`.
+  `absent` is not proof that the effect never happened live.
 - A result is historical evidence. It never authorizes an effect or settles a journal.
 
 ## What does not exist
@@ -36,3 +39,13 @@ path, hash or "coherent" boolean, never reads a live database or WAL, only reads
   can mint a handle. The brand is encapsulation, not cryptography, so a real issuer must
   also be trusted by construction.
 - No backup/restore, upgrade, drain or rollback acceptance (#1025, #942) is claimed.
+
+## Relationship to the publication classifier
+
+This module is independent of `classifyPiNativeCancellationPublication` (CP #1311):
+neither imports the other, and each builds and tests alone. A future consumer could feed
+a `found` receipt to the classifier, but nothing does, and neither grants authority.
+Nobody acts on a `receipt_unpublished` label in this increment; recovery stays advisory
+and unwired until all-writer coverage, fencing/authority validation and a separate
+root review exist. The caller pins carry no attempt identity, so cross-attempt checks
+belong to the classifier, which sees the journal record.

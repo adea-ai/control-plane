@@ -162,6 +162,8 @@ export function readPiFrozenReceipt(
   if (pins.sessionId !== issued.provenance.sessionId)
     throw new Error('PI_FROZEN_RECEIPT_SESSION_MISMATCH')
 
+  // The whole ledger is validated before any absent or found result, so a malformed, foreign
+  // or ambiguous entry can never read as "absent".
   const ledger = issued.ledger
   if (
     typeof ledger !== 'object' ||
@@ -169,28 +171,30 @@ export function readPiFrozenReceipt(
     !Array.isArray((ledger as { receipts?: unknown }).receipts)
   )
     throw new Error('PI_FROZEN_RECEIPT_LEDGER_INVALID')
-  const matches = (ledger as { receipts: unknown[] }).receipts.filter((item) => {
-    const candidate = item as { conversationId?: unknown; requestId?: unknown } | null
-    return (
-      candidate !== null &&
-      typeof candidate === 'object' &&
-      candidate.conversationId === issued.provenance.conversationId &&
-      candidate.requestId === pins.requestId
-    )
-  })
-  if (matches.length === 0) return Object.freeze({ outcome: 'absent' })
-  if (matches.length > 1) throw new Error('PI_FROZEN_RECEIPT_LEDGER_INVALID')
+  const entries: PiFrozenReceipt[] = []
+  const seen = new Set<string>()
+  for (const item of (ledger as { receipts: unknown[] }).receipts) {
+    const entry = ReceiptSchema.safeParse(item)
+    if (!entry.success) throw new Error('PI_FROZEN_RECEIPT_LEDGER_INVALID')
+    const key = `${entry.data.conversationId}\u0000${entry.data.requestId}`
+    if (seen.has(key)) throw new Error('PI_FROZEN_RECEIPT_LEDGER_INVALID')
+    seen.add(key)
+    entries.push(entry.data)
+  }
+  const forRequest = entries.filter((entry) => entry.requestId === pins.requestId)
+  // The same request in another conversation is a foreign container, not an absent receipt.
+  if (forRequest.some((entry) => entry.conversationId !== issued.provenance.conversationId))
+    throw new Error('PI_FROZEN_RECEIPT_CROSS_CONVERSATION')
+  const match = forRequest[0]
+  if (match === undefined) return Object.freeze({ outcome: 'absent' })
 
-  const checked = ReceiptSchema.safeParse(matches[0])
   if (
-    !checked.success ||
-    checked.data.conversationId !== issued.provenance.conversationId ||
-    checked.data.requestDigest !== pins.requestDigest ||
-    checked.data.metadata.targetDigest !== pins.targetDigest ||
-    checked.data.metadata.expiresAt !== pins.expiresAt ||
-    checked.data.metadata.turnKey !== pins.turnKey ||
-    checked.data.metadata.inferenceId !== pins.inferenceId
+    match.requestDigest !== pins.requestDigest ||
+    match.metadata.targetDigest !== pins.targetDigest ||
+    match.metadata.expiresAt !== pins.expiresAt ||
+    match.metadata.turnKey !== pins.turnKey ||
+    match.metadata.inferenceId !== pins.inferenceId
   )
     throw new Error('PI_FROZEN_RECEIPT_BINDING_INVALID')
-  return Object.freeze({ outcome: 'found', receipt: checked.data })
+  return Object.freeze({ outcome: 'found', receipt: match })
 }
