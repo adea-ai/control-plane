@@ -71,17 +71,17 @@ export const WorkspaceCatalogLifecycleSchema = z.enum([
 
 const LifecycleMetadataSchema = z
   .object({
-    publishedAt: TimestampSchema.optional(),
-    deprecatedAt: TimestampSchema.optional(),
-    revokedAt: TimestampSchema.optional(),
-    supersededAt: TimestampSchema.optional(),
-    reason: ReasonSchema.optional(),
+    publishedAt: TimestampSchema.optional() as z.ZodOptional<typeof TimestampSchema>,
+    deprecatedAt: TimestampSchema.optional() as z.ZodOptional<typeof TimestampSchema>,
+    revokedAt: TimestampSchema.optional() as z.ZodOptional<typeof TimestampSchema>,
+    supersededAt: TimestampSchema.optional() as z.ZodOptional<typeof TimestampSchema>,
+    reason: ReasonSchema.optional() as z.ZodOptional<typeof ReasonSchema>,
   })
   .strict()
 
 const PageParametersSchema = z
   .object({
-    cursor: CursorSchema.optional(),
+    cursor: CursorSchema.optional() as z.ZodOptional<typeof CursorSchema>,
     limit: z.number().int().min(1).max(100).optional(),
   })
   .strict()
@@ -106,7 +106,9 @@ export const WorkspaceSkillVersionSummarySchema = z
     contentDigest: DigestSchema as typeof DigestSchema,
     createdAt: TimestampSchema as typeof TimestampSchema,
     lifecycleMetadata: LifecycleMetadataSchema.extend({
-      supersededByVersionId: IdentifierSchemas.skillVersionId.optional(),
+      supersededByVersionId: IdentifierSchemas.skillVersionId.optional() as z.ZodOptional<
+        typeof IdentifierSchemas.skillVersionId
+      >,
     }).strict(),
   })
   .strict()
@@ -138,7 +140,9 @@ export const WorkspaceAgentProfileVersionSummarySchema = z
     contentDigest: DigestSchema as typeof DigestSchema,
     createdAt: TimestampSchema as typeof TimestampSchema,
     lifecycleMetadata: LifecycleMetadataSchema.extend({
-      supersededByVersionId: IdentifierSchemas.profileVersionId.optional(),
+      supersededByVersionId: IdentifierSchemas.profileVersionId.optional() as z.ZodOptional<
+        typeof IdentifierSchemas.profileVersionId
+      >,
     }).strict(),
   })
   .strict()
@@ -160,7 +164,9 @@ export const WorkspaceSkillListResponseSchema = catalogResponse(
           z
             .object({
               skill: WorkspaceSkillRecordSchema as typeof WorkspaceSkillRecordSchema,
-              latestVersion: WorkspaceSkillVersionSummarySchema.optional(),
+              latestVersion: WorkspaceSkillVersionSummarySchema.optional() as z.ZodOptional<
+                typeof WorkspaceSkillVersionSummarySchema
+              >,
             })
             .strict()
         )
@@ -175,7 +181,9 @@ export const WorkspaceSkillGetRequestSchema = CatalogReadContextSchema.extend({
   parameters: z
     .object({
       skillId: IdentifierSchemas.skillId as typeof IdentifierSchemas.skillId,
-      skillVersionId: IdentifierSchemas.skillVersionId.optional(),
+      skillVersionId: IdentifierSchemas.skillVersionId.optional() as z.ZodOptional<
+        typeof IdentifierSchemas.skillVersionId
+      >,
     })
     .strict(),
 }).strict()
@@ -184,8 +192,12 @@ export const WorkspaceSkillGetResponseSchema = catalogResponse(
   z
     .object({
       skill: WorkspaceSkillRecordSchema as typeof WorkspaceSkillRecordSchema,
-      versions: z.array(WorkspaceSkillVersionSummarySchema).max(1_000),
-      version: WorkspaceSkillVersionSchema.optional(),
+      versions: z.array(WorkspaceSkillVersionSummarySchema).max(1_000) as z.ZodArray<
+        typeof WorkspaceSkillVersionSummarySchema
+      >,
+      version: WorkspaceSkillVersionSchema.optional() as z.ZodOptional<
+        typeof WorkspaceSkillVersionSchema
+      >,
     })
     .strict()
 )
@@ -196,7 +208,7 @@ export const WorkspaceSkillPublishRequestSchema = CatalogCommandContextSchema.ex
     .object({
       skillId: IdentifierSchemas.skillId as typeof IdentifierSchemas.skillId,
       skillVersionId: IdentifierSchemas.skillVersionId as typeof IdentifierSchemas.skillVersionId,
-      displayName: DisplayNameSchema.optional(),
+      displayName: DisplayNameSchema.optional() as z.ZodOptional<typeof DisplayNameSchema>,
       manifest: JsonObjectSchema as typeof JsonObjectSchema,
       content: JsonObjectSchema as typeof JsonObjectSchema,
     })
@@ -204,7 +216,12 @@ export const WorkspaceSkillPublishRequestSchema = CatalogCommandContextSchema.ex
 }).strict()
 
 export const WorkspaceSkillPublishResponseSchema = catalogResponse(
-  z.object({ skill: WorkspaceSkillRecordSchema, version: WorkspaceSkillVersionSchema }).strict()
+  z
+    .object({
+      skill: WorkspaceSkillRecordSchema as typeof WorkspaceSkillRecordSchema,
+      version: WorkspaceSkillVersionSchema,
+    })
+    .strict()
 )
 
 const SkillLifecycleTargetSchema = z.union([
@@ -216,7 +233,12 @@ const SkillLifecycleTargetSchema = z.union([
       reason: ReasonSchema as typeof ReasonSchema,
     })
     .strict(),
-  z.object({ skillId: IdentifierSchemas.skillId, reason: ReasonSchema }).strict(),
+  z
+    .object({
+      skillId: IdentifierSchemas.skillId as typeof IdentifierSchemas.skillId,
+      reason: ReasonSchema,
+    })
+    .strict(),
 ])
 
 export const WorkspaceSkillDeprecationRequestSchema = CatalogCommandContextSchema.extend({
@@ -233,7 +255,9 @@ export const WorkspaceSkillLifecycleResponseSchema = catalogResponse(
   z
     .object({
       skill: WorkspaceSkillRecordSchema as typeof WorkspaceSkillRecordSchema,
-      changed: z.array(WorkspaceSkillVersionSummarySchema).max(1_000),
+      changed: z.array(WorkspaceSkillVersionSummarySchema).max(1_000) as z.ZodArray<
+        typeof WorkspaceSkillVersionSummarySchema
+      >,
     })
     .strict()
 )
@@ -252,7 +276,9 @@ export const WorkspaceAgentProfileListResponseSchema = catalogResponse(
             .object({
               profile:
                 WorkspaceAgentProfileRecordSchema as typeof WorkspaceAgentProfileRecordSchema,
-              latestVersion: WorkspaceAgentProfileVersionSummarySchema.optional(),
+              latestVersion: WorkspaceAgentProfileVersionSummarySchema.optional() as z.ZodOptional<
+                typeof WorkspaceAgentProfileVersionSummarySchema
+              >,
             })
             .strict()
         )
@@ -267,7 +293,9 @@ export const WorkspaceAgentProfileGetRequestSchema = CatalogReadContextSchema.ex
   parameters: z
     .object({
       profileId: IdentifierSchemas.profileId as typeof IdentifierSchemas.profileId,
-      profileVersionId: IdentifierSchemas.profileVersionId.optional(),
+      profileVersionId: IdentifierSchemas.profileVersionId.optional() as z.ZodOptional<
+        typeof IdentifierSchemas.profileVersionId
+      >,
     })
     .strict(),
 }).strict()
@@ -276,8 +304,12 @@ export const WorkspaceAgentProfileGetResponseSchema = catalogResponse(
   z
     .object({
       profile: WorkspaceAgentProfileRecordSchema as typeof WorkspaceAgentProfileRecordSchema,
-      versions: z.array(WorkspaceAgentProfileVersionSummarySchema).max(1_000),
-      version: WorkspaceAgentProfileVersionSchema.optional(),
+      versions: z.array(WorkspaceAgentProfileVersionSummarySchema).max(1_000) as z.ZodArray<
+        typeof WorkspaceAgentProfileVersionSummarySchema
+      >,
+      version: WorkspaceAgentProfileVersionSchema.optional() as z.ZodOptional<
+        typeof WorkspaceAgentProfileVersionSchema
+      >,
     })
     .strict()
 )
@@ -289,7 +321,7 @@ export const WorkspaceAgentProfilePublishRequestSchema = CatalogCommandContextSc
       profileId: IdentifierSchemas.profileId as typeof IdentifierSchemas.profileId,
       profileVersionId:
         IdentifierSchemas.profileVersionId as typeof IdentifierSchemas.profileVersionId,
-      displayName: DisplayNameSchema.optional(),
+      displayName: DisplayNameSchema.optional() as z.ZodOptional<typeof DisplayNameSchema>,
       version: z.number().int().positive(),
       definition: JsonObjectSchema as typeof JsonObjectSchema,
     })
@@ -315,7 +347,12 @@ const ProfileLifecycleTargetSchema = z.union([
       reason: ReasonSchema as typeof ReasonSchema,
     })
     .strict(),
-  z.object({ profileId: IdentifierSchemas.profileId, reason: ReasonSchema }).strict(),
+  z
+    .object({
+      profileId: IdentifierSchemas.profileId as typeof IdentifierSchemas.profileId,
+      reason: ReasonSchema,
+    })
+    .strict(),
 ])
 
 export const WorkspaceAgentProfileDeprecationRequestSchema = CatalogCommandContextSchema.extend({
@@ -332,7 +369,9 @@ export const WorkspaceAgentProfileLifecycleResponseSchema = catalogResponse(
   z
     .object({
       profile: WorkspaceAgentProfileRecordSchema as typeof WorkspaceAgentProfileRecordSchema,
-      changed: z.array(WorkspaceAgentProfileVersionSummarySchema).max(1_000),
+      changed: z.array(WorkspaceAgentProfileVersionSummarySchema).max(1_000) as z.ZodArray<
+        typeof WorkspaceAgentProfileVersionSummarySchema
+      >,
     })
     .strict()
 )

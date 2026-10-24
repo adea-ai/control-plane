@@ -762,14 +762,17 @@ test('the stable full-lock receipt preserves all-platform scope and the real net
   assert.deepEqual([...after].filter((pair) => !current.has(pair)).toSorted(), [
     '@smithy/core@3.33.3',
     '@smithy/types@4.17.2',
+    'fast-uri@3.1.8',
+    'fast-uri@4.2.1',
     'magic-string@0.30.21',
     'pino@10.3.1',
     'real-require@0.2.0',
+    'undici@8.11.2',
     'zod@4.6.5',
   ])
   assert.deepEqual(
     [...current].filter((pair) => !after.has(pair)),
-    ['pino@10.4.0', 'zod@4.6.6']
+    ['fast-uri@3.1.9', 'pino@10.4.0', 'undici@8.12.2', 'zod@4.6.6', 'fast-uri@4.2.3']
   )
   assert.equal([...before].filter((pair) => !after.has(pair)).length, 40)
   assert.deepEqual(
