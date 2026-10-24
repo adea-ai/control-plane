@@ -59,7 +59,7 @@ current-candidate test pass is claimed here.
 
 The published scope is the diff from the base `ab931d068142a0c5629ed4d6cc2c96a1b377a986`
 to the published head, which is the head that carries this section. The complete changed scope is
-**232 paths: 79 added, 153 modified**; no path was deleted.
+**233 paths: 80 added, 153 modified**; no path was deleted.
 `tests/pi-durable-cp1048-evidence-discipline.test.mjs` checks this list, these counts and this
 area table against the repository, so the published scope cannot drift away from the code
 without that lane failing.
@@ -90,7 +90,7 @@ without that lane failing.
 | `packages/tool-execution`     | 0     | 4        | 4     |
 | `patches`                     | 2     | 0        | 2     |
 | `scripts`                     | 1     | 6        | 7     |
-| `tests`                       | 15    | 21       | 36    |
+| `tests`                       | 16    | 21       | 37    |
 
 The complete path list, as published:
 
@@ -292,6 +292,7 @@ M  scripts/run-bun-test-group.mjs
 M  scripts/run-integration-tests.mjs
 A  scripts/security-trust-boundary-probes.mjs
 M  tests/docker-pull-backoff.test.mjs
+A  tests/fixtures/pi-durable-child-host-cleanup.mjs
 M  tests/fixtures/pi-lead-restart/host.mjs
 A  tests/fixtures/pinned-process.mjs
 A  tests/fixtures/profile-recovery-cleanup.mjs

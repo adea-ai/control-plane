@@ -9,6 +9,7 @@ import {
   ChildProgressLeadFeed,
 } from '@control-plane/orchestration'
 import { createNodePiDurableRuntime } from '../packages/pi-durable-adapter/src/composition.ts'
+import { cleanupChildHost } from './fixtures/pi-durable-child-host-cleanup.mjs'
 import { createGovernedChildCompositionFixture } from './pi-durable-governed-child-composition.fixture.mjs'
 import { createPiDurableUsageAuthority } from '../packages/pi-durable-adapter/src/usage-authority.ts'
 import { PiDurableChildProgressScanner } from '../apps/control-api/src/pi-durable/child-progress-scanner.ts'
@@ -708,49 +709,60 @@ function siblingAdmission(first, letter) {
 // and priced/retained by the production usage authority, never invented on cancel.
 test('separately governed siblings run Pi concurrently, retain responsive input and survive terminal restart', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'pi-sibling-dispatch-'))
-  const provider = new SqlitePersistenceProvider({ path: join(directory, 'canonical.sqlite') })
+  let provider
+  let server
+  let runtime
+  let reopenedCanonical
+  let primaryFailure
+  const ownedWork = []
+  const trackAll = (promises) => {
+    for (const promise of promises) {
+      ownedWork.push(promise)
+      void Promise.resolve(promise).catch(() => {})
+    }
+    return Promise.all(promises)
+  }
   const arrived = [Promise.withResolvers(), Promise.withResolvers()]
   const release = [Promise.withResolvers(), Promise.withResolvers()]
   const requests = []
-  const server = Bun.serve({
-    hostname: '127.0.0.1',
-    port: 0,
-    async fetch(request) {
-      const index = requests.length
-      requests.push(await request.json())
-      arrived[index]?.resolve()
-      await release[index]?.promise
-      const chunks = [
-        {
-          choices: [
-            {
-              index: 0,
-              delta: { role: 'assistant', content: `Sibling ${index} result` },
-              finish_reason: null,
-            },
-          ],
-        },
-        {
-          choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
-          usage: { prompt_tokens: 5, completion_tokens: 3, total_tokens: 8 },
-        },
-      ].map((chunk) => ({
-        id: `chat_${index}`,
-        object: 'chat.completion.chunk',
-        created: 1,
-        model: 'sibling-loopback',
-        ...chunk,
-      }))
-      return new Response(
-        chunks.map((chunk) => `data: ${JSON.stringify(chunk)}\n\n`).join('') + 'data: [DONE]\n\n',
-        { headers: { 'content-type': 'text/event-stream' } }
-      )
-    },
-  })
-  let runtime
-  let reopenedCanonical
-  let failTerminalPublication = false
   try {
+    provider = new SqlitePersistenceProvider({ path: join(directory, 'canonical.sqlite') })
+    server = Bun.serve({
+      hostname: '127.0.0.1',
+      port: 0,
+      async fetch(request) {
+        const index = requests.length
+        requests.push(await request.json())
+        arrived[index]?.resolve()
+        await release[index]?.promise
+        const chunks = [
+          {
+            choices: [
+              {
+                index: 0,
+                delta: { role: 'assistant', content: `Sibling ${index} result` },
+                finish_reason: null,
+              },
+            ],
+          },
+          {
+            choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
+            usage: { prompt_tokens: 5, completion_tokens: 3, total_tokens: 8 },
+          },
+        ].map((chunk) => ({
+          id: `chat_${index}`,
+          object: 'chat.completion.chunk',
+          created: 1,
+          model: 'sibling-loopback',
+          ...chunk,
+        }))
+        return new Response(
+          chunks.map((chunk) => `data: ${JSON.stringify(chunk)}\n\n`).join('') + 'data: [DONE]\n\n',
+          { headers: { 'content-type': 'text/event-stream' } }
+        )
+      },
+    })
+    let failTerminalPublication = false
     await provider.migrate()
     const publications = new SqliteDelegationEventPublisher(provider, ids.parentExecutionId)
     const makeFeed = (inbox = publications) =>
@@ -932,7 +944,7 @@ test('separately governed siblings run Pi concurrently, retain responsive input 
     runtime = await createNodePiDurableRuntime(options)
     const second = siblingAdmission(host.admission, 'C')
     await host.admissions.retain(second)
-    const outcomes = await Promise.all([
+    const outcomes = await trackAll([
       host.service.execute(host.request),
       host.service.execute(second.request),
     ])
@@ -947,7 +959,7 @@ test('separately governed siblings run Pi concurrently, retain responsive input 
           .handle
     )
     expect(new Set(handles.map((handle) => handle.externalSessionId)).size).toBe(2)
-    const returnedMappings = await Promise.all(
+    const returnedMappings = await trackAll(
       outcomes.map(async (outcome) => {
         const output = outcome.result.output
         const mapping = await records.getChildMapping(output.childAttemptId)
@@ -970,13 +982,13 @@ test('separately governed siblings run Pi concurrently, retain responsive input 
       })
     )
     expect(
-      await Promise.all(handles.map(async (handle) => (await runtime.adapter.status(handle)).state))
+      await trackAll(handles.map(async (handle) => (await runtime.adapter.status(handle)).state))
     ).toEqual(['running', 'running'])
     const scanner = new PiDurableChildProgressScanner({
       now: () => at,
       bridge: host.bridge,
       listRetainedChildren: async () =>
-        Promise.all(
+        trackAll(
           (await records.listByParent(ids.parentExecutionId)).map(async (record) => ({
             identity: {
               schemaVersion: 'delegation-runtime-admission/v1',
@@ -1094,10 +1106,10 @@ test('separately governed siblings run Pi concurrently, retain responsive input 
         parentAttemptId: siblingId('att', 'D'),
       })
     ).rejects.toThrow('DELEGATION_RUNTIME_ADMISSION_DENIED')
-    const usageBeforeRepair = await Promise.all(
+    const usageBeforeRepair = await trackAll(
       host.starts.map((request) => ledger.entries(ids.workspaceId, request.executionId))
     )
-    await Promise.all([
+    await trackAll([
       recoveryBridge.recoverTerminalPublication(completedIdentity),
       recoveryBridge.recoverTerminalPublication(completedIdentity),
     ])
@@ -1108,7 +1120,7 @@ test('separately governed siblings run Pi concurrently, retain responsive input 
       (await recoveryInbox.list()).filter((event) => event.type === 'delegation.completed')
     ).toEqual([pending.event])
     expect(
-      await Promise.all(
+      await trackAll(
         host.starts.map((request) => ledger.entries(ids.workspaceId, request.executionId))
       )
     ).toEqual(usageBeforeRepair)
@@ -1124,7 +1136,7 @@ test('separately governed siblings run Pi concurrently, retain responsive input 
     expect(packets.flatMap((packet) => packet.entries).map((entry) => entry.phase)).toContain(
       'completed'
     )
-    const entries = await Promise.all(
+    const entries = await trackAll(
       host.starts.map((request) => ledger.entries(ids.workspaceId, request.executionId))
     )
     expect(entries[0].filter((entry) => entry.kind === 'model_usage')).toEqual([])
@@ -1135,10 +1147,10 @@ test('separately governed siblings run Pi concurrently, retain responsive input 
     await runtime.close()
     runtime = await createNodePiDurableRuntime(options)
     expect(
-      await Promise.all(host.starts.map((request) => runtime.adapter.findExistingHandle(request)))
+      await trackAll(host.starts.map((request) => runtime.adapter.findExistingHandle(request)))
     ).toEqual(handles)
     expect(
-      await Promise.all(handles.map(async (handle) => (await runtime.adapter.status(handle)).state))
+      await trackAll(handles.map(async (handle) => (await runtime.adapter.status(handle)).state))
     ).toEqual(['cancelling', 'completed'])
     const restartedFeed = makeFeed()
     await restartedFeed.replay()
@@ -1146,21 +1158,28 @@ test('separately governed siblings run Pi concurrently, retain responsive input 
     await restartedFeed.replay()
     expect(restartedFeed.takeDeliveries()).toEqual([])
     expect(
-      await Promise.all(
+      await trackAll(
         host.starts.map((request) => ledger.entries(ids.workspaceId, request.executionId))
       )
     ).toEqual(entries)
     expect(requests).toHaveLength(2)
+  } catch (error) {
+    primaryFailure = error
+    throw error
   } finally {
     release.forEach((item) => item.resolve())
-    try {
-      await runtime?.close()
-      await server.stop(true)
-      await reopenedCanonical?.close()
-    } finally {
-      provider.close()
-      await rm(directory, { recursive: true, force: true })
-    }
+    await cleanupChildHost({
+      directory,
+      ownedWork,
+      primaryFailure,
+      closeSteps: [
+        () => runtime?.close(),
+        () => server?.stop(true),
+        () => reopenedCanonical?.close(),
+        () => provider?.close(),
+      ],
+      removeDirectory: (path) => rm(path, { recursive: true, force: true }),
+    })
   }
 }, 30000)
 
