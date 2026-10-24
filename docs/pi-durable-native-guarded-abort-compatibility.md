@@ -138,7 +138,7 @@ described as mutation-free historical observation.
 
 ## Publication classifier — effect-free, unwired
 
-`classifyPiNativeCancellationPublication` (`native-cancellation-publication-recovery.ts`)
+`classifyPiNativeCancellationPublication` (`cancellation-history.ts`)
 turns a journal record, caller-held request pins and an already-observed historical
 native receipt into one label: `published`, `receipt_absent`, `receipt_unpublished`,
 `receipt_superseded` or a coded `conflict`. It reads nothing itself, performs no

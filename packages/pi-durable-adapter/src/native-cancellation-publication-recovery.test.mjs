@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test'
 import {
   classifyPiNativeCancellationPublication,
   PiPublicationRecoveryIdentitySchema,
-} from './native-cancellation-publication-recovery.ts'
+} from './cancellation-history.ts'
 
 const hash = (c) => `sha256:${c.repeat(64)}`
 const attemptId = 'att_01JABCDEF0123456789ABCDEFG'
