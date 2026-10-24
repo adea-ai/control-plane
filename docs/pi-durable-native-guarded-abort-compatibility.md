@@ -121,6 +121,15 @@ receipt followed by publication failure remains a non-retryable
 reads and drains cause no second abort, provider request or journal settlement.
 The same four cases run against compiled output in pinned Node 24 SQLite.
 
+An actual Node 24 subprocess regression also parks after committed N and exact
+receipt verification, before returning to the adapter's journal publication.
+After a confirmed SIGKILL, two fresh authorized adapter processes retain
+`unknown` with the same pending inference and no second inference authorization,
+engine, provider request or usage settlement. They invent no cancellation intent,
+native receipt or terminal result. The receipt is observed only before the crash;
+this is negative no-repeat evidence, not unopened receipt recovery or positive
+cancellation settlement.
+
 This does not implement an adapter recovery consumer, complete a lost-journal
 publication recovery journey or provide read-only reopening. The ordinary engine opener
 checks authority/models, initializes host state and registers an owner. SDK

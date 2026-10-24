@@ -19,8 +19,12 @@ function deferred() {
 // journal publication is faulted; no SDK transaction/receipt or journal state is
 // fabricated. Holding run's return prevents unrelated terminal adapter writes
 // until assertions finish; it does not delay native abort/drain processing.
-export async function withPublicationFault(mode, use, { Adapter, createEngine }) {
-  const directory = await mkdtemp(join(tmpdir(), 'pi-native-publication-'))
+export async function withPublicationFault(
+  mode,
+  use,
+  { Adapter, createEngine, directory: suppliedDirectory, afterNativeCommit }
+) {
+  const directory = suppliedDirectory ?? (await mkdtemp(join(tmpdir(), 'pi-native-publication-')))
   const providerEntered = deferred()
   const releaseProvider = deferred()
   const releaseAdapterRun = deferred()
@@ -101,6 +105,13 @@ export async function withPublicationFault(mode, use, { Adapter, createEngine })
           assert.ok(committed.taskIds.length > 0)
           nativePins = structuredClone(preparation)
           nativeReceipt = structuredClone(committed)
+          await afterNativeCommit?.({
+            adapter,
+            nativePins,
+            nativeReceipt,
+            providerRequests: faux.state.callCount,
+            streamAborts,
+          })
           const handleId = adapter.journal.list()[0].handleId
           if (mode === 'successor') {
             const before = adapter.journal.get(handleId)
@@ -138,7 +149,7 @@ export async function withPublicationFault(mode, use, { Adapter, createEngine })
         if (originalClaim) adapter.journal.claim = originalClaim
         if (originalUpdate) adapter.journal.update = originalUpdate
         await adapter.close()
-        await rm(directory, { recursive: true, force: true })
+        if (suppliedDirectory === undefined) await rm(directory, { recursive: true, force: true })
       } catch (error) {
         if (primaryFailure !== undefined)
           throw new AggregateError(
