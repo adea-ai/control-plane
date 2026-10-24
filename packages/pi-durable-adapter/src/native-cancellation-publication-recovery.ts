@@ -59,6 +59,17 @@ const TERMINAL = ['completed', 'failed', 'timed_out', 'cancelled']
 function digest(value: unknown): string {
   return `sha256:${createHash('sha256').update(canonicalJsonStringify(value)).digest('hex')}`
 }
+/** Every pin the caller holds must match the receipt, observed or retained. */
+function bindsPins(receipt: z.infer<typeof ReceiptSchema>, pins: PiPublicationRecoveryIdentity) {
+  return (
+    receipt.requestId === pins.requestId &&
+    receipt.requestDigest === pins.requestDigest &&
+    receipt.metadata.targetDigest === pins.targetDigest &&
+    receipt.metadata.expiresAt === pins.expiresAt &&
+    receipt.metadata.turnKey === pins.turnKey &&
+    receipt.metadata.inferenceId === pins.inferenceId
+  )
+}
 function conflict(code: string): PiPublicationRecoveryDecision {
   return Object.freeze({ outcome: 'conflict', code })
 }
@@ -79,39 +90,65 @@ export function classifyPiNativeCancellationPublication(
   const identity = PiPublicationRecoveryIdentitySchema.safeParse(identityInput)
   if (!identity.success) return conflict('PI_PUBLICATION_RECOVERY_IDENTITY_INVALID')
   const pins = identity.data
+
+  // Container and generation identity are validated before any classification, including
+  // `receipt_absent` and `published`, so a malformed or foreign record never reads as absent.
   const detail = record.detail
-  if (typeof detail !== 'object' || detail === null || Array.isArray(detail))
+  if (
+    typeof record.handleId !== 'string' ||
+    record.handleId.length === 0 ||
+    typeof record.attemptId !== 'string' ||
+    record.attemptId.length === 0 ||
+    typeof record.state !== 'string' ||
+    typeof detail !== 'object' ||
+    detail === null ||
+    Array.isArray(detail)
+  )
     return conflict('PI_PUBLICATION_RECOVERY_RECORD_INVALID')
+  for (const key of ['actions', 'inferenceReceipts', 'turn'] as const) {
+    const value = detail[key]
+    if (
+      value !== undefined &&
+      (typeof value !== 'object' || value === null || Array.isArray(value))
+    )
+      return conflict('PI_PUBLICATION_RECOVERY_RECORD_INVALID')
+  }
+  const turnRequestId = (detail['turn'] as { requestId?: unknown } | undefined)?.requestId
+  if (turnRequestId !== undefined && (typeof turnRequestId !== 'string' || turnRequestId === ''))
+    return conflict('PI_PUBLICATION_RECOVERY_RECORD_INVALID')
+  const currentTurn = (turnRequestId as string | undefined) ?? `pi-turn:${record.attemptId}:initial`
+  let active: z.infer<typeof PiDurableCancellationGenerationSchema> | undefined
+  if (detail['activeInference'] !== undefined) {
+    const parsedActive = PiDurableCancellationGenerationSchema.safeParse(detail['activeInference'])
+    if (!parsedActive.success) return conflict('PI_PUBLICATION_RECOVERY_GENERATION_INVALID')
+    // Same identity rule the adapter applies to its own active generation.
+    if (parsedActive.data.attemptId !== record.attemptId)
+      return conflict('PI_PUBLICATION_RECOVERY_CROSS_ATTEMPT')
+    if (parsedActive.data.turnKey !== currentTurn)
+      return conflict('PI_PUBLICATION_RECOVERY_CROSS_TURN')
+    active = parsedActive.data
+  }
+  // A pinned turn that names another attempt's initial turn is a foreign request, not a successor.
+  const pinnedAttempt = /^pi-turn:(.+):initial$/.exec(pins.turnKey)?.[1]
+  if (pinnedAttempt !== undefined && pinnedAttempt !== record.attemptId)
+    return conflict('PI_PUBLICATION_RECOVERY_CROSS_ATTEMPT')
 
   let receipt: z.infer<typeof ReceiptSchema> | undefined
   if (receiptInput !== undefined) {
     const parsed = ReceiptSchema.safeParse(receiptInput)
-    if (
-      !parsed.success ||
-      parsed.data.requestId !== pins.requestId ||
-      parsed.data.requestDigest !== pins.requestDigest ||
-      parsed.data.metadata.targetDigest !== pins.targetDigest ||
-      parsed.data.metadata.expiresAt !== pins.expiresAt ||
-      parsed.data.metadata.turnKey !== pins.turnKey ||
-      parsed.data.metadata.inferenceId !== pins.inferenceId
-    )
+    if (!parsed.success || !bindsPins(parsed.data, pins))
       return conflict('PI_PUBLICATION_RECOVERY_RECEIPT_BINDING_INVALID')
     receipt = parsed.data
   }
 
-  const actions = detail['actions']
-  if (actions !== undefined && (typeof actions !== 'object' || actions === null))
-    return conflict('PI_PUBLICATION_RECOVERY_RECORD_INVALID')
-  const published = (actions as Record<string, unknown> | undefined)?.[pins.requestId]
+  const published = (detail['actions'] as Record<string, unknown> | undefined)?.[pins.requestId]
   if (published !== undefined) {
     // The journal says this request was published. Its digest and retained receipt must agree.
     if (published !== pins.requestDigest) return conflict('PI_PUBLICATION_RECOVERY_ACTION_DIGEST')
     const retained = ReceiptSchema.safeParse(detail['nativeCancellationReceipt'])
     if (
       !retained.success ||
-      retained.data.requestId !== pins.requestId ||
-      retained.data.requestDigest !== pins.requestDigest ||
-      retained.data.metadata.targetDigest !== pins.targetDigest ||
+      !bindsPins(retained.data, pins) ||
       (receipt && digest(receipt) !== digest(retained.data))
     )
       return conflict('PI_PUBLICATION_RECOVERY_RETAINED_RECEIPT')
@@ -121,16 +158,6 @@ export function classifyPiNativeCancellationPublication(
     return conflict('PI_PUBLICATION_RECOVERY_RETAINED_RECEIPT')
   if (receipt === undefined) return Object.freeze({ outcome: 'receipt_absent' })
 
-  const currentTurn =
-    (detail['turn'] as { requestId?: string } | undefined)?.requestId ??
-    `pi-turn:${record.attemptId}:initial`
-  const rawActive = detail['activeInference']
-  let active: z.infer<typeof PiDurableCancellationGenerationSchema> | undefined
-  if (rawActive !== undefined) {
-    const parsedActive = PiDurableCancellationGenerationSchema.safeParse(rawActive)
-    if (!parsedActive.success) return conflict('PI_PUBLICATION_RECOVERY_RECORD_INVALID')
-    active = parsedActive.data
-  }
   if (
     currentTurn !== pins.turnKey ||
     TERMINAL.includes(record.state) ||

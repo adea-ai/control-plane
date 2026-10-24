@@ -138,7 +138,7 @@ test('contradictory or malformed evidence fails closed as a coded conflict', () 
     )
   ).toBe('PI_PUBLICATION_RECOVERY_RETAINED_RECEIPT')
   expect(code(classify(record({ activeInference: { bad: true } })))).toBe(
-    'PI_PUBLICATION_RECOVERY_RECORD_INVALID'
+    'PI_PUBLICATION_RECOVERY_GENERATION_INVALID'
   )
   expect(code(classify({ ...record(), detail: null }))).toBe(
     'PI_PUBLICATION_RECOVERY_RECORD_INVALID'
@@ -153,4 +153,120 @@ test('classification is frozen, does not mutate inputs and grants no authority',
   expect(JSON.stringify(rec)).toBe(before)
   expect(Object.keys(decision)).toEqual(['outcome'])
   expect(PiPublicationRecoveryIdentitySchema.safeParse(identity).success).toBe(true)
+})
+
+const publishedDetail = (extra = {}) => ({
+  actions: { [identity.requestId]: identity.requestDigest },
+  nativeCancellationReceipt: receipt(),
+  ...extra,
+})
+const metadata = (over) => ({ ...receipt().metadata, ...over })
+const codeOf = (decision) => (decision.outcome === 'conflict' ? decision.code : decision.outcome)
+
+test('a retained receipt must match every pin, not only request and target', () => {
+  for (const wrong of [
+    { requestId: 'cancel:two' },
+    { requestDigest: hash('d') },
+    { metadata: metadata({ targetDigest: hash('d') }) },
+    { metadata: metadata({ expiresAt: '2026-10-20T12:02:00.000Z' }) },
+    { metadata: metadata({ turnKey: 'pi-turn:next' }) },
+    { metadata: metadata({ inferenceId: 'native:2' }) },
+    { metadata: metadata({ inferenceId: null }) },
+  ])
+    for (const observed of [none, receipt()])
+      expect(
+        codeOf(
+          classify(
+            record(publishedDetail({ nativeCancellationReceipt: receipt(wrong) })),
+            identity,
+            observed
+          )
+        )
+      ).toBe('PI_PUBLICATION_RECOVERY_RETAINED_RECEIPT')
+})
+
+test('a mismatched observed pin conflicts for every pin on every journal shape', () => {
+  for (const wrong of [
+    { requestDigest: hash('d') },
+    { metadata: metadata({ targetDigest: hash('d') }) },
+    { metadata: metadata({ expiresAt: '2026-10-20T12:02:00.000Z' }) },
+    { metadata: metadata({ turnKey: 'pi-turn:next' }) },
+    { metadata: metadata({ inferenceId: 'native:2' }) },
+  ])
+    for (const rec of [
+      record(),
+      record(publishedDetail()),
+      record({ activeInference: generation() }),
+    ])
+      expect(codeOf(classify(rec, identity, receipt(wrong)))).toBe(
+        'PI_PUBLICATION_RECOVERY_RECEIPT_BINDING_INVALID'
+      )
+})
+
+test('malformed generation or container identity conflicts before absent or published', () => {
+  const bad = [
+    { activeInference: { bad: true } },
+    { activeInference: generation({ inferenceKey: 'wrong' }) },
+    { activeInference: generation({ inferenceId: '' }) },
+    { activeInference: null },
+    { actions: [] },
+    { actions: 'x' },
+    { inferenceReceipts: [] },
+    { turn: [] },
+    { turn: { requestId: 7 } },
+    { turn: { requestId: '' } },
+  ]
+  for (const detail of bad)
+    for (const [rec, observed] of [
+      [record(detail), none],
+      [record({ ...publishedDetail(), ...detail }), receipt()],
+      [record({ ...publishedDetail(), ...detail }), none],
+      [record(detail), receipt()],
+    ])
+      expect(codeOf(classify(rec, identity, observed))).toMatch(/^PI_PUBLICATION_RECOVERY_/)
+  for (const detail of bad)
+    expect(codeOf(classify(record(detail), identity, none))).not.toBe('receipt_absent')
+  expect(codeOf(classify({ ...record(), handleId: '' }, identity, none))).toBe(
+    'PI_PUBLICATION_RECOVERY_RECORD_INVALID'
+  )
+  expect(codeOf(classify({ ...record(), state: undefined }, identity, none))).toBe(
+    'PI_PUBLICATION_RECOVERY_RECORD_INVALID'
+  )
+})
+
+test('cross-attempt and cross-turn identity is a conflict, never absent or published', () => {
+  const other = 'att_01JZZZZZZZZZZZZZZZZZZZZZZZ'
+  const foreign = generation({
+    attemptId: other,
+    turnKey: `pi-turn:${other}:initial`,
+    inferenceKey: `pi-turn:${other}:initial:native:1`,
+  })
+  for (const observed of [none, receipt()])
+    expect(codeOf(classify(record({ activeInference: foreign }), identity, observed))).toBe(
+      'PI_PUBLICATION_RECOVERY_CROSS_ATTEMPT'
+    )
+  // Same attempt but a generation belonging to another turn than the journal's current turn.
+  const otherTurn = generation({ turnKey: 'pi-turn:next', inferenceKey: 'pi-turn:next:native:1' })
+  for (const observed of [none, receipt()])
+    expect(codeOf(classify(record({ activeInference: otherTurn }), identity, observed))).toBe(
+      'PI_PUBLICATION_RECOVERY_CROSS_TURN'
+    )
+  expect(
+    codeOf(
+      classify(record({ ...publishedDetail(), activeInference: otherTurn }), identity, receipt())
+    )
+  ).toBe('PI_PUBLICATION_RECOVERY_CROSS_TURN')
+  // Pins that name another attempt's initial turn are a foreign request, not a successor.
+  const foreignPins = { ...identity, turnKey: `pi-turn:${other}:initial` }
+  const foreignReceipt = receipt({ metadata: metadata({ turnKey: foreignPins.turnKey }) })
+  expect(codeOf(classify(record(), foreignPins, foreignReceipt))).toBe(
+    'PI_PUBLICATION_RECOVERY_CROSS_ATTEMPT'
+  )
+  expect(codeOf(classify(record(), foreignPins, none))).toBe(
+    'PI_PUBLICATION_RECOVERY_CROSS_ATTEMPT'
+  )
+  // A genuine successor turn of this attempt is still superseded.
+  expect(classify(record({ turn: { requestId: 'pi-turn:next' } }))).toEqual({
+    outcome: 'receipt_superseded',
+  })
 })
