@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.3](https://github.com/adea-ai/control-plane/compare/pi-durable-adapter-v0.11.2...pi-durable-adapter-v0.11.3) (2026-10-24)
+
+
+### Tests
+
+* **pi:** cover crash after native cancellation before journal publication ([#1307](https://github.com/adea-ai/control-plane/issues/1307)) ([8265104](https://github.com/adea-ai/control-plane/commit/8265104c0c4ffea5e74586b5863e6799b60f0906))
+
 ## [0.11.2](https://github.com/adea-ai/control-plane/compare/pi-durable-adapter-v0.11.1...pi-durable-adapter-v0.11.2) (2026-10-24)
 
 
