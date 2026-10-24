@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test'
 import {
   assertPiWriterClosureReceipt,
   PiWriterClosureReceiptSchema,
-} from './native-writer-closure-receipt.ts'
+} from './cancellation-registration.ts'
 
 const expected = {
   mutationId: 'mutation:one',
