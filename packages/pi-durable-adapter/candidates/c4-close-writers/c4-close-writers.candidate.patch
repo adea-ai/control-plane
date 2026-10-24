@@ -1,0 +1,169 @@
+diff --git a/dist/storage/sqlite/migrations.js b/dist/storage/sqlite/migrations.js
+index 2addec6..12b1bb6 100644
+--- a/dist/storage/sqlite/migrations.js
++++ b/dist/storage/sqlite/migrations.js
+@@ -89,7 +89,20 @@ const WRITER_FENCE_SCHEMA = [
+ 	) STRICT`,
+     `INSERT INTO durable_writer_fence (singleton, owner_key, epoch, armed, lineage_id, generation) VALUES (1, '', 0, 0, '', '')`,
+ ];
+-export const SQLITE_MIGRATIONS = [{ version: 1, statements: INITIAL_SCHEMA }, { version: 2, statements: WRITER_FENCE_SCHEMA }];
++// CANDIDATE C4 (not consumable): closure receipts, committed in the same transaction that bumps the fence epoch.
++const WRITER_CLOSURE_SCHEMA = [
++    `CREATE TABLE durable_writer_closure (
++		mutation_id TEXT PRIMARY KEY,
++		owner_key TEXT NOT NULL,
++		lineage_id TEXT NOT NULL,
++		generation TEXT NOT NULL,
++		previous_epoch INTEGER NOT NULL CHECK (previous_epoch >= 0),
++		epoch INTEGER NOT NULL CHECK (epoch >= 1),
++		last_seq INTEGER NOT NULL CHECK (last_seq >= 0),
++		closed_at TEXT NOT NULL
++	) STRICT`,
++];
++export const SQLITE_MIGRATIONS = [{ version: 1, statements: INITIAL_SCHEMA }, { version: 2, statements: WRITER_FENCE_SCHEMA }, { version: 3, statements: WRITER_CLOSURE_SCHEMA }];
+ export const CURRENT_SQLITE_SCHEMA_VERSION = SQLITE_MIGRATIONS.at(-1)?.version ?? 0;
+ /** Apply all pending schema migrations atomically. */
+ export async function applySqliteMigrations(database, migrations = SQLITE_MIGRATIONS) {
+diff --git a/dist/storage/sqlite/storage.d.ts b/dist/storage/sqlite/storage.d.ts
+index 437b424..a574ade 100644
+--- a/dist/storage/sqlite/storage.d.ts
++++ b/dist/storage/sqlite/storage.d.ts
+@@ -14,6 +14,21 @@ export type WriterFenceToken = {
+     readonly lineageId: string;
+     readonly generation: string;
+ };
++export type WriterClosureRequest = {
++    readonly mutationId: string;
++};
++export type WriterClosureReceipt = {
++    readonly schemaVersion: "pi-writer-closure-receipt/v1";
++    readonly mutationId: string;
++    readonly ownerKey: string;
++    readonly lineageId: string;
++    readonly generation: string;
++    readonly previousEpoch: number;
++    readonly epoch: number;
++    readonly lastSeq: number;
++    readonly settledInFlight: true;
++    readonly closedAt: string;
++};
+ type StoredTask = TaskRecord<JsonValue, JsonValue, JsonValue>;
+ /** Portable SQLite implementation of the Pico storage contract. */
+ export declare class SqliteStorage implements Storage {
+@@ -30,6 +45,10 @@ export declare class SqliteStorage implements Storage {
+     /** CANDIDATE C2 (not consumable): advance the store-resident writer fence and bind this storage to it. */
+     acquireWriterFence(request: WriterFenceRequest): Promise<WriterFenceToken>;
+     private assertWriterFence;
++    private closures;
++    private pendingWriterClosures;
++    /** CANDIDATE C4 (not consumable): atomically bump the fence epoch past this holder and commit a closure receipt. */
++    closeWriterFence(request: WriterClosureRequest): Promise<WriterClosureReceipt>;
+     commit(writes: readonly StorageWrite[], _context: Context): Promise<Seq>;
+     commitGuarded(writes: readonly StorageWrite[], finalGuard: () => void, context: Context): Promise<Seq>;
+     mintId<I extends Id<string>>(): Promise<I>;
+diff --git a/dist/storage/sqlite/storage.js b/dist/storage/sqlite/storage.js
+index eec3e34..a22c121 100644
+--- a/dist/storage/sqlite/storage.js
++++ b/dist/storage/sqlite/storage.js
+@@ -135,6 +135,101 @@ export class SqliteStorage {
+         this.fence = token;
+         return token;
+     }
++    // Immutable replay evidence per mutation for the lifetime of this storage: the receipt and the holder token it closed.
++    closures = new Map();
++    pendingWriterClosures = new Map();
++    /**
++     * CANDIDATE C4 (not consumable). In one transaction: confirm this storage still holds the fence, bump the epoch past it
++     * and commit the closure receipt. Commits are serialized by the transaction, so every earlier commit of this holder has
++     * settled before the receipt's lastSeq is read; any later commit, from this storage or another, fails PI_STORE_FENCED.
++     * Session admission sealing is not done here.
++     * Same-storage replay only: a repeat of a mutationId this storage closed, a concurrent duplicate, and a retry after the
++     * commit succeeded but its response was lost all return the persisted receipt after its holder identity is checked
++     * against retained evidence. None of them writes a second row or bumps the epoch again. Cross-storage and
++     * cross-process retries are not supported.
++     */
++    async closeWriterFence(request) {
++        this.assertOpen();
++        if (request === null || typeof request !== "object")
++            throw new StorageRejected("PI_STORE_CLOSURE_REQUEST_INVALID");
++        // Read the property once; only this primitive is used below.
++        const { mutationId } = request;
++        if (typeof mutationId !== "string" || mutationId.length === 0 || mutationId.length > 8192 || mutationId.trim() !== mutationId)
++            throw new StorageRejected("PI_STORE_CLOSURE_REQUEST_INVALID");
++        const pending = this.pendingWriterClosures.get(mutationId);
++        if (pending !== undefined)
++            return pending;
++        const run = this.closeOnce(mutationId).finally(() => {
++            if (this.pendingWriterClosures.get(mutationId) === run)
++                this.pendingWriterClosures.delete(mutationId);
++        });
++        this.pendingWriterClosures.set(mutationId, run);
++        return run;
++    }
++    async closeOnce(mutationId) {
++        const retained = this.closures.get(mutationId);
++        if (retained !== undefined) {
++            // The whole stored row must still equal the retained receipt; any changed field is a conflict, never cached evidence.
++            const stored = await this.db.get("SELECT mutation_id, owner_key, lineage_id, generation, previous_epoch, epoch, last_seq, closed_at FROM durable_writer_closure WHERE mutation_id = ?", mutationId);
++            const cached = retained.receipt;
++            if (stored !== undefined && stored.mutation_id === cached.mutationId && stored.owner_key === cached.ownerKey && stored.lineage_id === cached.lineageId && stored.generation === cached.generation && stored.previous_epoch === cached.previousEpoch && stored.epoch === cached.epoch && stored.last_seq === cached.lastSeq && stored.closed_at === cached.closedAt)
++                return cached;
++            throw new StorageRejected("PI_STORE_CLOSURE_CONFLICT");
++        }
++        const held = this.fence;
++        if (held === undefined)
++            throw new StorageRejected("PI_STORE_FENCE_NOT_HELD");
++        const receipt = await this.db.transaction(async (transaction) => {
++            // A row already persisted for this mutationId is a lost response only if it matches the holder this storage held.
++            const existing = await transaction.get("SELECT mutation_id, owner_key, lineage_id, generation, previous_epoch, epoch, last_seq, closed_at FROM durable_writer_closure WHERE mutation_id = ?", mutationId);
++            if (existing !== undefined) {
++                if (existing.mutation_id !== mutationId || existing.owner_key !== held.ownerKey || existing.lineage_id !== held.lineageId || existing.generation !== held.generation || existing.previous_epoch !== held.epoch || !Number.isSafeInteger(held.epoch + 1) || existing.epoch !== held.epoch + 1 || !Number.isSafeInteger(existing.last_seq) || existing.last_seq < 0 || typeof existing.closed_at !== "string")
++                    throw new StorageRejected("PI_STORE_CLOSURE_CONFLICT");
++                return Object.freeze({
++                    schemaVersion: "pi-writer-closure-receipt/v1",
++                    mutationId,
++                    ownerKey: existing.owner_key,
++                    lineageId: existing.lineage_id,
++                    generation: existing.generation,
++                    previousEpoch: existing.previous_epoch,
++                    epoch: existing.epoch,
++                    lastSeq: existing.last_seq,
++                    settledInFlight: true,
++                    closedAt: existing.closed_at,
++                });
++            }
++            const row = await transaction.get("SELECT owner_key, epoch, armed, lineage_id, generation FROM durable_writer_fence WHERE singleton = 1");
++            if (row === undefined)
++                throw new StorageRejected("PI_STORE_FENCE_MISSING");
++            if (row.armed !== 1 || row.owner_key !== held.ownerKey || row.epoch !== held.epoch || row.lineage_id !== held.lineageId || row.generation !== held.generation)
++                throw new StorageRejected("PI_STORE_FENCED");
++            if (!Number.isSafeInteger(row.epoch) || !Number.isSafeInteger(row.epoch + 1))
++                throw new StorageRejected("PI_STORE_FENCE_EPOCH_EXHAUSTED");
++            const metadata = await transaction.get("SELECT next_seq FROM durable_metadata WHERE singleton = 1");
++            if (metadata === undefined)
++                throw new Error("Durable SQLite metadata is missing");
++            const lastSeq = Number(metadata.next_seq) - 1;
++            const epoch = row.epoch + 1;
++            const closedAt = new Date().toISOString();
++            await transaction.run("UPDATE durable_writer_fence SET epoch = ? WHERE singleton = 1", epoch);
++            await transaction.run("INSERT INTO durable_writer_closure (mutation_id, owner_key, lineage_id, generation, previous_epoch, epoch, last_seq, closed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", mutationId, held.ownerKey, held.lineageId, held.generation, row.epoch, epoch, lastSeq, closedAt);
++            return Object.freeze({
++                schemaVersion: "pi-writer-closure-receipt/v1",
++                mutationId,
++                ownerKey: held.ownerKey,
++                lineageId: held.lineageId,
++                generation: held.generation,
++                previousEpoch: row.epoch,
++                epoch,
++                lastSeq,
++                settledInFlight: true,
++                closedAt,
++            });
++        });
++        this.closures.set(mutationId, Object.freeze({ receipt, holder: held }));
++        this.fence = undefined;
++        return receipt;
++    }
+     async assertWriterFence(transaction) {
+         const row = await transaction.get("SELECT owner_key, epoch, armed FROM durable_writer_fence WHERE singleton = 1");
+         if (row === undefined)
