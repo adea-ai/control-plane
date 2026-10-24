@@ -114,8 +114,15 @@ pins can identify historical evidence; they do not grant permission for a new
 effect. Neither operation settles a journal or supplies current authority.
 
 A discarded native reply can therefore be observed through its existing owner.
-This does not implement an adapter recovery consumer, an executed lost-journal
-publication recovery journey or read-only reopening. The ordinary engine opener
+The publication regression also commits actual native cancellation, then faults
+journal record lookup, claim or update, or races a successor. A validated native
+receipt followed by publication failure remains a non-retryable
+`PI_NATIVE_CANCELLATION_PUBLICATION_UNKNOWN`; an existing owner's repeated receipt
+reads and drains cause no second abort, provider request or journal settlement.
+The same four cases run against compiled output in pinned Node 24 SQLite.
+
+This does not implement an adapter recovery consumer, complete a lost-journal
+publication recovery journey or provide read-only reopening. The ordinary engine opener
 checks authority/models, initializes host state and registers an owner. SDK
 `Harness.open` also reconciles surviving tasks. Calling those openers cannot be
 described as mutation-free historical observation.

@@ -468,3 +468,134 @@ test('non-BMP and BMP scope names use the same canonical order across SQLite and
   expect(before.owners).toHaveLength(1)
   expect((await f.connect().coordinator.installFences('unicode')).status).toBe('fenced')
 })
+
+function pausedGenerationAuthority() {
+  let entered
+  let resume
+  const reading = new Promise((resolve) => {
+    entered = resolve
+  })
+  const released = new Promise((resolve) => {
+    resume = resolve
+  })
+  return {
+    reading,
+    resume,
+    authority: {
+      async readCurrent() {
+        entered()
+        await released
+        return { ...generation, state: 'open' }
+      },
+    },
+  }
+}
+
+for (const operation of ['unregister', 'rebind']) {
+  test(`${operation} suspended in generation read cannot escape a concurrent old-scope closure`, async () => {
+    const f = fixture()
+    const original = structuredClone(owner())
+    await f.coordinator.register(original)
+    const gate = pausedGenerationAuthority()
+    const suspended = f.connect(f.native, gate.authority).coordinator
+    const pending =
+      operation === 'unregister'
+        ? suspended.unregister(structuredClone(original))
+        : suspended.register(
+            owner({
+              processClaimId: 'process:successor',
+              ownerEpoch: 2,
+              generation: { ...generation },
+              scopes: ['scope:unaffected'],
+            })
+          )
+    const settled = pending.then(
+      () => undefined,
+      () => undefined
+    )
+    let cut
+    let epochs
+    try {
+      await gate.reading
+      cut = await f.coordinator.beginMutation(mutation())
+      epochs = f.database.prepare('SELECT * FROM pi_cancel_proto_epochs ORDER BY owner_key').all()
+      expect(cut.owners.map(({ owner: retained }) => retained)).toEqual([original])
+      expect(cut.status).toBe('pending')
+      expect(cut.qualifiedAuthorization).toBe(false)
+    } finally {
+      gate.resume()
+      await settled
+    }
+    await expect(pending).rejects.toThrow('PI_CANCELLATION_SCOPE_CLOSED')
+    expect(await f.coordinator.readEvidence('mutation:one')).toEqual(cut)
+    expect(
+      f.database.prepare('SELECT * FROM pi_cancel_proto_epochs ORDER BY owner_key').all()
+    ).toEqual(epochs)
+    expect(
+      f.database
+        .prepare('SELECT body FROM pi_cancel_proto_owners')
+        .all()
+        .map(({ body }) => JSON.parse(body))
+    ).toEqual([original])
+    expect(f.calls).toHaveLength(0)
+    expect(
+      (await f.coordinator.beginMutation(mutation('unaffected', ['scope:unaffected']))).owners
+    ).toHaveLength(0)
+    expect(
+      f.database.prepare('SELECT * FROM pi_cancel_proto_epochs ORDER BY owner_key').all()
+    ).toEqual(epochs)
+  })
+}
+
+for (const operation of ['register', 'unregister']) {
+  test(`${operation} captures caller identity, nested generation and scopes before the generation await`, async () => {
+    const f = fixture()
+    const original = structuredClone(owner())
+    const alias = owner({
+      ownerId: 'owner:alias',
+      processClaimId: 'process:alias',
+      scopes: ['scope:alias'],
+    })
+    if (operation === 'unregister') {
+      await f.coordinator.register(original)
+      await f.coordinator.register(alias)
+    }
+    const input = structuredClone(original)
+    const gate = pausedGenerationAuthority()
+    const suspended = f.connect(f.native, gate.authority).coordinator
+    const pending =
+      operation === 'register' ? suspended.register(input) : suspended.unregister(input)
+    const settled = pending.then(
+      () => undefined,
+      () => undefined
+    )
+    try {
+      await gate.reading
+      input.ownerId = alias.ownerId
+      input.processClaimId = alias.processClaimId
+      input.ownerEpoch = 99
+      input.generation.lineageId = 'lineage:forged'
+      input.generation.restoreGeneration = 'G:forged'
+      input.generation.revision = 99
+      input.scopes.splice(0, input.scopes.length, 'scope:alias')
+    } finally {
+      gate.resume()
+      await settled
+    }
+    await pending
+    const retained = f.database
+      .prepare('SELECT body FROM pi_cancel_proto_owners ORDER BY owner_id')
+      .all()
+      .map(({ body }) => JSON.parse(body))
+    expect(retained).toEqual(operation === 'register' ? [original] : [alias])
+    expect(f.database.prepare('SELECT * FROM pi_cancel_proto_epochs').all()).toEqual([])
+    expect(f.database.prepare('SELECT * FROM pi_cancel_proto_fences').all()).toEqual([])
+    expect(f.calls).toHaveLength(0)
+    const cut = await f.coordinator.beginMutation(mutation())
+    expect(cut.owners.map(({ owner: retainedOwner }) => retainedOwner)).toEqual(
+      operation === 'register' ? [original] : []
+    )
+    expect(cut.qualifiedAuthorization).toBe(false)
+    expect(f.calls).toHaveLength(0)
+  })
+}
